@@ -2,6 +2,20 @@
 
 <!-- version list -->
 
+## v1.1.0 (2026-04-20)
+
+### Bug Fixes
+
+- Upgrade uv to 0.9.0 and update dependency installation to include dev group in CI
+  ([`241400c`](https://github.com/billsioros/stonks/commit/241400ce1f81edf7baf67c7486187dee0cf77971))
+
+### Features
+
+- Migrate sidebar filters to a grid-based top-level filter UI and remove redundant dataset loading
+  logic
+  ([`e7731dd`](https://github.com/billsioros/stonks/commit/e7731dd2bbf1380b5caf2bd6ffd37a898efd4dd6))
+
+
 ## v1.0.2 (2026-04-20)
 
 ### Bug Fixes
