@@ -81,3 +81,12 @@ hooks = "prek"
 
 [tool.bandit]
 exclude_dirs = [ "tests" ]
+
+[tool.semantic_release]
+version_variable = "src/stonks/__init__.py:__version__"
+version_toml = [ "pyproject.toml:project.version" ]
+major_on_zero = true
+branch = "master"
+upload_to_PyPI = false
+upload_to_release = true
+build_command = "uv build"

@@ -1,77 +1,87 @@
-# Stonks — Streamlit Stock Screener
+<h1 align="center">📈 Stonks Screener 💰</h1>
 
-A powerful stock screener built with Streamlit, powered by [Finnhub](https://finnhub.io) free-tier API.
+<p align="center"><em>A powerful, modular stock screener REST API & Dashboard powered by Finnhub 🔗</em></p>
 
-## Features
+<p align="center">
+    <a href="https://github.com/billsioros/stonks/actions/workflows/ci.yml">
+        <img src="https://github.com/billsioros/stonks/actions/workflows/ci.yml/badge.svg" alt="CI" />
+    </a>
+    <a href="https://github.com/billsioros/stonks/actions/workflows/cd.yml">
+        <img src="https://github.com/billsioros/stonks/actions/workflows/cd.yml/badge.svg" alt="CD" />
+    </a>
+</p>
 
-- 📊 **Screener Table** — Sort, paginate, search across ~30 fundamental metrics
-- 🎯 **Filter Builder** — Numeric thresholds (min/max) + enum filters (exchange, type, currency)
-- 📋 **Column Presets** — Overview, Valuation, Profitability, Growth, Financial Health views
-- 🌟 **Popular Screens** — 8 predefined screens (Quality Compounders, Dividend Champions, etc.)
-- 💾 **Saved Screens** — Save and load your custom filter configurations
-- ⭐ **Watchlist** — Track symbols across sessions (SQLite-persisted)
-- 📥 **CSV Download** — Export filtered results or your watchlist
+## :rocket: Features
 
-## Quick Start
+- 📊 **Dynamic Screener** — Filter, sort, and paginate through thousands of stocks.
+- 🎯 **Advanced Filtering** — P/E, ROE, Market Cap, Growth, and 20+ other fundamental metrics.
+- 📋 **Smarter Views** — Switch between Valuation, Profitability, Growth, and Financial Health presets.
+- 🌟 **One-Click Screens** — Quality Compounders, Dividend Champions, Growth Machines, and more.
+- ⭐ **Persistent Watchlist** — Track your favorite symbols across sessions (SQLite backed).
+- 💾 **Saved Configurations** — Save your complex filter setups for later use.
+- 📥 **Export Ready** — Download your results or watchlist to CSV.
+
+## 🛠️ Getting Started
 
 ### Prerequisites
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) package manager
-- [Finnhub API key](https://finnhub.io/) (free tier)
+- [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
+- [Finnhub API Key](https://finnhub.io/) (Free tier works great)
 
-### Install
+### Running with Docker
+
+1. **Create a `.env` file** in the root directory:
+
+    ```env
+    FINNHUB_API_KEY='your_api_key_here'
+    ```
+
+2. **Build and start the services**:
+
+   ```shell
+   docker compose up -d --build
+   ```
+
+3. **Access the Dashboard**:
+   Open [http://localhost:8501](http://localhost:8501) in your browser.
+
+## 💻 Local Development
+
+### Installation
+
+We use [uv](https://docs.astral.sh/uv/) for lightning-fast dependency management:
 
 ```bash
-uv sync
+uv sync --all-groups
 ```
 
-### Run
+### Running the App
 
 ```bash
-# Set your API key
-export FINNHUB_API_KEY="your_key_here"
-
-# Launch the app
+export FINNHUB_API_KEY="your_key"
 uv run poe app
-# or
-uv run streamlit run src/stonks/app.py
 ```
 
-## Architecture
+### Running Tests
+
+```bash
+uv run poe test      # Run full suite
+uv run poe coverage  # Run with coverage report
+```
+
+## 🏗️ Architecture
 
 ```
 src/stonks/
-├── app.py          # Streamlit entry point
-├── universe.py     # Symbol list loader (Finnhub stock_symbols)
-├── metrics.py      # Fundamental metrics fetcher (Finnhub basic_financials)
-├── cache.py        # Disk-based JSON cache with TTL
-├── store.py        # SQLite persistence (saved screens, watchlist)
-├── engine.py       # Filter/sort/paginate engine
-├── presets.py      # Predefined popular screens
-└── config.py       # Configuration constants
+├── app.py          # Dashboard UI (Streamlit)
+├── engine.py       # Filtering/Sorting Logic
+├── metrics.py      # Finnhub API Client & Normalizers
+├── universe.py     # Stock Universe Management
+├── cache.py        # SQLite-based KV Cache
+├── store.py        # Persistence (Screens, Watchlist)
+└── worker.py       # Background Sync Service
 ```
 
-## Metrics Available
+## 📄 License
 
-| Category | Metrics |
-|----------|---------|
-| **Valuation** | P/E, P/B, P/S, PEG, EV/EBITDA |
-| **Profitability** | Gross Margin, Operating Margin, Net Margin, ROA, ROE, ROIC |
-| **Growth** | Revenue Growth 3Y/5Y, EPS Growth 3Y/5Y |
-| **Financial Health** | Current Ratio, D/E, LT D/E, FCF Margin, FCF/Share |
-| **Other** | Market Cap, Dividend Yield, Beta, 52W High/Low, Price |
-
-## Development
-
-```bash
-# Run tests
-uv run poe test
-
-# Type checking
-uv run poe lint
-```
-
-## License
-
-MIT
+This project is licensed under the MIT License.
