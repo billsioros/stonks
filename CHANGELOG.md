@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.0.3 (2026-04-20)
+
+### Bug Fixes
+
+- Upgrade uv to 0.9.0 and update dependency installation to include dev group in CI
+  ([`241400c`](https://github.com/billsioros/stonks/commit/241400ce1f81edf7baf67c7486187dee0cf77971))
+
+
 ## v1.0.2 (2026-04-20)
 
 ### Bug Fixes
