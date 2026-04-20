@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.1.1 (2026-04-20)
+
+### Bug Fixes
+
+- Remove unused filter variables and ignore mypy cache files
+  ([`b7ab6ce`](https://github.com/billsioros/stonks/commit/b7ab6ce3fe1fd2782af4465e62d850409daf9fa6))
+
+
 ## v1.1.0 (2026-04-20)
 
 ### Bug Fixes
