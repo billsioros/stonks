@@ -223,12 +223,47 @@ section[data-testid="stSidebar"] .block-container {
     margin-bottom: 0.75rem;
 }
 
-/* Table styling */
-.dataframe-container {
-    background: var(--bg-card);
+.filter-controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1rem;
+    padding: 0.5rem 0;
+}
+
+.filter-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.filter-item {
+    background: var(--bg-secondary);
     border: 1px solid var(--border-color);
-    border-radius: 12px;
-    overflow: hidden;
+    border-radius: 8px;
+    padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.filter-label-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.filter-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.filter-inputs {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
 }
 
 /* Streamlit element overrides */
@@ -291,7 +326,7 @@ div[data-testid="stMetricValue"] {
     border: 1px solid rgba(99, 102, 241, 0.3);
     border-radius: 8px;
     padding: 0.5rem 0.75rem;
-    margin-bottom: 0.5rem;
+    margin-bottom: 1.5rem;
     color: var(--text-secondary);
     font-size: 0.8rem;
 }
@@ -337,6 +372,8 @@ div[data-testid="stMetricValue"] {
 .streamlit-expanderHeader {
     font-weight: 600 !important;
     font-size: 0.9rem !important;
+    background: var(--bg-secondary) !important;
+    border-radius: 8px !important;
 }
 
 /* Number input styling */
@@ -528,52 +565,6 @@ def load_full_dataset(api_key: str | None = None) -> pd.DataFrame:
     return result
 
 
-def load_dataset_with_progress(api_key: str) -> pd.DataFrame:
-    """Load dataset with a visible progress bar for the full universe."""
-    cache = LocalCache()
-    loader = UniverseLoader(api_key=api_key, cache=cache)
-    provider = MetricsProvider(api_key=api_key, cache=cache)
-
-    symbols_df = loader.get_common_stocks()
-    if symbols_df.empty:
-        return pd.DataFrame()
-
-    if "symbol" in symbols_df.columns:
-        symbols_df = symbols_df.sort_values("symbol")
-
-    symbol_list = symbols_df["symbol"].tolist()
-    total = len(symbol_list)
-
-    progress_bar = st.progress(0, text="Fetching fundamentals...")
-    rows: list[dict[str, Any]] = []
-
-    for i, sym in enumerate(symbol_list):
-        raw = provider.fetch_metrics_raw(sym)
-        if raw:
-            row = provider.normalize_metrics(sym, raw)
-            rows.append(row)
-        pct = (i + 1) / total
-        progress_bar.progress(pct, text=f"Fetching {sym} ({i + 1}/{total})...")
-
-    progress_bar.empty()
-
-    metrics_df = pd.DataFrame(rows)
-    if metrics_df.empty:
-        return symbols_df
-
-    result = symbols_df.merge(metrics_df, on="symbol", how="left")
-    drop_cols = [
-        c
-        for c in result.columns
-        if c.startswith("_") or c in ("fcf_raw", "revenue_raw")
-    ]
-    result = result.drop(
-        columns=[c for c in drop_cols if c in result.columns], errors="ignore"
-    )
-
-    return result
-
-
 # ── Render functions ─────────────────────────────────────────────────
 
 
@@ -650,8 +641,6 @@ def render_summary_cards(df: pd.DataFrame) -> None:
 
 def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, Any]:
     """Render the sidebar filter builder and return active filters."""
-    filters: dict[str, Any] = {}
-
     with st.sidebar:
         # ── API Key (if not set) ─────────────────────────────────
         if not get_api_key():
@@ -771,159 +760,6 @@ def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, An
                 else:
                     st.warning("Please enter a name.")
 
-        st.divider()
-
-        # ── Enum Filters ─────────────────────────────────────────
-        with st.expander("🏷️ Category Filters", expanded=False):
-            for col in ENUM_FILTER_COLUMNS:
-                if col not in df.columns:
-                    continue
-                display_name = COLUMN_DISPLAY_NAMES.get(col, col)
-                unique_vals = sorted(df[col].dropna().unique().tolist())
-                if not unique_vals:
-                    continue
-                selected = st.multiselect(
-                    display_name,
-                    options=unique_vals,
-                    default=st.session_state.get("active_filters", {})
-                    .get(col, {})
-                    .get("values", []),
-                    key=f"filter_enum_{col}",
-                )
-                if selected:
-                    filters[col] = {"values": selected}
-
-        # ── Numeric Filters ──────────────────────────────────────
-        with st.expander("📊 Numeric Filters", expanded=True):
-            active_numeric = st.session_state.get("active_filters", {})
-
-            # Group numeric filters by category
-            valuation_cols = [
-                "pe_ratio",
-                "pb_ratio",
-                "ps_ratio",
-                "peg_ratio",
-                "ev_to_ebitda",
-            ]
-            profitability_cols = [
-                "gross_margin_pct",
-                "operating_margin_pct",
-                "net_margin_pct",
-                "roa_pct",
-                "roe_pct",
-                "roic_pct",
-                "roa_5y_avg_pct",
-                "roe_5y_avg_pct",
-                "roic_5y_avg_pct",
-            ]
-            growth_cols = [
-                "revenue_growth_5y_pct",
-                "eps_growth_5y_pct",
-                "revenue_growth_3y_pct",
-                "eps_growth_3y_pct",
-                "fcf_growth_5y_pct",
-                "net_income_growth_5y_pct",
-            ]
-            health_cols = [
-                "current_ratio",
-                "debt_to_equity",
-                "long_term_debt_to_equity",
-                "fcf_margin_pct",
-                "free_cash_flow_per_share",
-                "total_debt_to_total_equity",
-            ]
-            cagr_cols = [
-                "return_cagr_5y_pct",
-                "return_cagr_10y_pct",
-                "return_cagr_15y_pct",
-            ]
-            other_cols = [
-                "market_cap",
-                "dividend_yield_pct",
-                "beta",
-                "price",
-                "net_income",
-                "free_cash_flow",
-                "shares_insiders_pct",
-                "revenue_per_share",
-                "book_value_per_share",
-                "asset_turnover",
-                "eps_ttm",
-            ]
-
-            filter_groups = [
-                ("💹 Valuation", valuation_cols),
-                ("📈 Profitability", profitability_cols),
-                ("🚀 Growth", growth_cols),
-                ("🕙 Price Returns (CAGR)", cagr_cols),
-                ("🏦 Financial Health", health_cols),
-                ("📋 Other", other_cols),
-            ]
-
-            for group_name, cols in filter_groups:
-                available_cols = [
-                    c for c in cols if c in df.columns and c in NUMERIC_FILTER_COLUMNS
-                ]
-                if not available_cols:
-                    continue
-
-                st.markdown(f"**{group_name}**")
-
-                for col in available_cols:
-                    display_name = COLUMN_DISPLAY_NAMES.get(col, col)
-                    existing = active_numeric.get(col, {})
-
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        min_val = st.number_input(
-                            f"Min {display_name}",
-                            value=float(existing.get("min", 0))
-                            if "min" in existing
-                            else None,
-                            key=f"filter_min_{col}",
-                            format="%.2f",
-                        )
-                    with col_b:
-                        max_val = st.number_input(
-                            f"Max {display_name}",
-                            value=float(existing.get("max", 0))
-                            if "max" in existing
-                            else None,
-                            key=f"filter_max_{col}",
-                            format="%.2f",
-                        )
-
-                    spec: dict[str, Any] = {}
-                    if min_val is not None:
-                        spec["min"] = min_val
-                    if max_val is not None:
-                        spec["max"] = max_val
-                    if spec:
-                        filters[col] = spec
-
-                st.markdown("---")
-
-        st.divider()
-
-        # ── Filter actions ───────────────────────────────────────
-        col_apply, col_clear = st.columns(2)
-        with col_apply:
-            if st.button(
-                "✅ Apply Filters",
-                key="apply_filters",
-                use_container_width=True,
-                type="primary",
-            ):
-                st.session_state["active_filters"] = filters
-                st.session_state["current_page"] = 1
-                st.rerun()
-        with col_clear:
-            if st.button("🧹 Clear All", key="clear_filters", use_container_width=True):
-                st.session_state["active_filters"] = {}
-                st.session_state["search_query"] = ""
-                st.session_state["current_page"] = 1
-                st.rerun()
-
         # ── Data management ──────────────────────────────────────
         st.divider()
         with st.expander("⚙️ Settings", expanded=False):
@@ -936,6 +772,160 @@ def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, An
                 st.rerun()
 
     return st.session_state.get("active_filters", {})
+
+
+def render_top_filters(df: pd.DataFrame) -> dict[str, Any]:
+    """Render numeric and category filters in a grid above the stock view."""
+    filters = st.session_state.get("active_filters", {}).copy()
+
+    with st.expander("🎯 Filters", expanded=False):
+        # ── Filter Top Bar ───────────────────────────────────────
+        ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1, 2, 1])
+
+        with ctrl_col1:
+            # Dropdown to add a new filter
+            available_numeric = [c for c in NUMERIC_FILTER_COLUMNS if c in df.columns]
+            filter_to_add = st.selectbox(
+                "➕ Add Filter",
+                options=[""]
+                + [COLUMN_DISPLAY_NAMES.get(c, c) for c in available_numeric],
+                key="add_filter_dropdown",
+            )
+            if filter_to_add:
+                # Find the column key for the display name
+                col_key = next(
+                    (k for k, v in COLUMN_DISPLAY_NAMES.items() if v == filter_to_add),
+                    filter_to_add,
+                )
+                if col_key not in filters:
+                    filters[col_key] = {"min": None, "max": None}
+                    st.session_state["active_filters"] = filters
+                    st.rerun()
+
+        with ctrl_col2:
+            search_query = st.text_input(
+                "🔍 Search symbols",
+                value=st.session_state.get("search_query", ""),
+                placeholder="Symbol or company name...",
+                key="search_input_top",
+            )
+            st.session_state["search_query"] = search_query
+
+        with ctrl_col3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button(
+                "🧹 Reset All", key="reset_filters_top", use_container_width=True
+            ):
+                st.session_state["active_filters"] = {}
+                st.session_state["search_query"] = ""
+                st.session_state["current_page"] = 1
+                st.rerun()
+
+        # ── Category Filters ──────────────────────────────────────
+        col_cat1, col_cat2, col_cat3, col_cat4 = st.columns(4)
+        cat_cols = [col_cat1, col_cat2, col_cat3, col_cat4]
+
+        for i, col in enumerate(ENUM_FILTER_COLUMNS):
+            if col not in df.columns:
+                continue
+            display_name = COLUMN_DISPLAY_NAMES.get(col, col)
+            unique_vals = sorted(df[col].dropna().unique().tolist())
+            if not unique_vals:
+                continue
+
+            with cat_cols[i % 4]:
+                selected = st.multiselect(
+                    display_name,
+                    options=unique_vals,
+                    default=filters.get(col, {}).get("values", []),
+                    key=f"top_filter_enum_{col}",
+                )
+                if selected:
+                    filters[col] = {"values": selected}
+                elif col in filters and "values" in filters[col]:
+                    del filters[col]
+
+        st.divider()
+
+        # ── Filter Grid ──────────────────────────────────────────
+        st.markdown('<div class="filter-grid">', unsafe_allow_html=True)
+
+        # We'll use columns to simulate a grid because Streamlit doesn't support raw grid well
+        active_cols = sorted([c for c in filters.keys() if c in NUMERIC_FILTER_COLUMNS])
+
+        if active_cols:
+            rows = (len(active_cols) + 2) // 3  # 3 columns
+            for i in range(rows):
+                cols = st.columns(3)
+                for j in range(3):
+                    idx = i * 3 + j
+                    if idx < len(active_cols):
+                        col = active_cols[idx]
+                        display_name = COLUMN_DISPLAY_NAMES.get(col, col)
+                        spec = filters.get(col, {})
+
+                        with cols[j]:
+                            st.markdown(f"**{display_name}**")
+                            c_min, c_max, c_del = st.columns([4, 4, 1])
+                            with c_min:
+                                min_val = st.number_input(
+                                    "Min",
+                                    value=float(spec.get("min"))
+                                    if spec.get("min") is not None
+                                    else None,
+                                    key=f"top_min_{col}",
+                                    label_visibility="collapsed",
+                                    placeholder="Min",
+                                )
+                            with c_max:
+                                max_val = st.number_input(
+                                    "Max",
+                                    value=float(spec.get("max"))
+                                    if spec.get("max") is not None
+                                    else None,
+                                    key=f"top_max_{col}",
+                                    label_visibility="collapsed",
+                                    placeholder="Max",
+                                )
+                            with c_del:
+                                # Spacer
+                                st.markdown(
+                                    '<div style="height: 0.5rem"></div>',
+                                    unsafe_allow_html=True,
+                                )
+                                if st.button(
+                                    "✕",
+                                    key=f"del_filter_{col}",
+                                    help=f"Remove {display_name} filter",
+                                ):
+                                    del filters[col]
+                                    st.session_state["active_filters"] = filters
+                                    st.rerun()
+
+                            # Update filters dict
+                            new_spec = {}
+
+                            if min_val is not None:
+                                new_spec["min"] = min_val
+
+                            if max_val is not None:
+                                new_spec["max"] = max_val
+
+                            # Update local filters dict; caller will sync to session state
+                            filters[col] = new_spec
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Apply button & Update session state
+        st.session_state["active_filters"] = filters
+
+        if st.button(
+            "Apply", key="apply_top", type="primary", use_container_width=True
+        ):
+            st.session_state["current_page"] = 1
+            st.rerun()
+
+    return filters
 
 
 def render_screener_table(
@@ -1489,15 +1479,11 @@ def main() -> None:
             st.rerun()
             return
         else:
-            # Try progress-bar fallback
-            try:
-                df = load_dataset_with_progress(api_key)
-            except Exception as e2:
-                st.error(f"❌ Failed to load data: {e2}")
-                if st.button("🔄 Retry", key="retry_generic"):
-                    st.cache_data.clear()
-                    st.rerun()
-                return
+            st.error(f"❌ Failed to load data: {e}")
+            if st.button("🔄 Retry", key="retry_generic"):
+                st.cache_data.clear()
+                st.rerun()
+            return
 
     if df.empty:
         st.error("❌ No data loaded. Check your API key and try again.")
@@ -1516,67 +1502,8 @@ def main() -> None:
     # Render sidebar filters (also handles Popular/Saved screens)
     active_filters = render_sidebar_filters(df, store)
 
-    # 1. Apply BASIC filters first (those not needing heavy candles)
+    # Apply all filters
     engine = ScreenerEngine(df)
-
-    # Identify which filters need heavy data
-    heavy_cols = ["return_cagr_5y_pct", "return_cagr_10y_pct", "return_cagr_15y_pct"]
-    needs_heavy_filter = any(c in active_filters for c in heavy_cols)
-    needs_heavy_view = any(
-        c in VIEW_PRESETS.get(st.session_state.get("view_preset", ""), [])
-        for c in heavy_cols
-    )
-
-    # Filter by basic criteria first to narrow down candidates for heavy fetching
-    basic_filters = {k: v for k, v in active_filters.items() if k not in heavy_cols}
-    df_filtered = engine.apply_filters(basic_filters)
-
-    # 2. ENRICH with heavy data if needed for survivors
-    if needs_heavy_filter or needs_heavy_view:
-        # Limit to top 100 survivors for tiered enrichment
-        candidates = df_filtered.head(100)
-
-        # Check if we already enriched (simple check: any non-null CAGR)
-        enriched_count = (
-            candidates[heavy_cols[0]].notnull().sum()
-            if heavy_cols[0] in candidates.columns
-            else 0
-        )
-
-        if enriched_count < len(candidates) * 0.5:  # If mostly empty
-            with st.status(
-                "🏗️ Enriching high-quality candidates with historical performance..."
-            ) as status:
-                provider = MetricsProvider(api_key=api_key)
-                # Ensure we have the latest DF from session if possible or just update current
-                df_enriched = provider.enrich_with_candles(
-                    candidates,
-                    progress_callback=lambda current, total: status.update(
-                        label=f"🏗️ Analyzing {current}/{total} survivors..."
-                    ),
-                )
-                # Update main DF with enriched data
-                df.set_index("symbol", inplace=True)
-                df.update(df_enriched.set_index("symbol"))
-                df.reset_index(inplace=True)
-                status.update(label="✅ Enrichment complete!", state="complete")
-
-            # Save enriched data to disk cache immediately
-            from stonks.config import CACHE_DIR
-
-            cache_file = CACHE_DIR / "universe_data_full.parquet"
-            try:
-                df.to_parquet(cache_file)
-            except Exception:  # nosec B110
-                pass
-
-            # Re-initialize engine with enriched data
-            engine = ScreenerEngine(df)
-            df_filtered = engine.apply_filters(active_filters)
-        else:
-            df_filtered = engine.apply_filters(active_filters)
-    else:
-        df_filtered = df_filtered
 
     # Summary cards
     render_summary_cards(df)
@@ -1585,6 +1512,9 @@ def main() -> None:
     tab_screener, tab_watchlist = st.tabs(["📊 Screener", "⭐ Watchlist"])
 
     with tab_screener:
+        # Render the new top-level filters grid
+        active_filters = render_top_filters(df)
+
         # engine is already initialized, but we need to pass the CURRENT filtered DF to the table renderer
         # or let the table renderer do its own filtering/search
         render_screener_table(df, engine, store)

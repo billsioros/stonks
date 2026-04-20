@@ -120,24 +120,6 @@ class TestMetricsProvider:
         assert provider._calculate_cagr(100, 0, 2) is None
         assert provider._calculate_cagr(100, 121, 0) is None
 
-    def test_enrich_with_candles(
-        self, provider: MetricsProvider, mock_cache: MagicMock
-    ) -> None:
-        df = pd.DataFrame([{"symbol": "AAPL"}])
-
-        # Mock candles response
-        candles = {
-            "s": "ok",
-            "c": [100] * 2000 + [200],  # 2001 points, last one is 200
-        }
-        mock_cache.get.return_value = candles
-
-        enriched = provider.enrich_with_candles(df, years=5)
-
-        assert "price" in enriched.columns
-        assert enriched.iloc[0]["price"] == 200
-        assert "return_cagr_5y_pct" in enriched.columns
-
     def test_get_metrics_for_symbols_cache_only(
         self, provider: MetricsProvider, mock_cache: MagicMock
     ) -> None:

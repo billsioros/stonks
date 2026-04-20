@@ -213,46 +213,6 @@ class MetricsProvider:
 
         return row
 
-    def enrich_with_candles(
-        self, df: pd.DataFrame, years: int = 15, progress_callback: Any | None = None
-    ) -> pd.DataFrame:
-        """Fetch candles for each ticker in the DF and add CAGR columns."""
-        if df.empty:
-            return df
-
-        symbols = df["symbol"].tolist()
-        total = len(symbols)
-
-        cagr_rows: list[dict[str, Any]] = []
-        for i, sym in enumerate(symbols):
-            candles = self.fetch_candles_cached(sym, years)
-            ext: dict[str, Any] = {"symbol": sym}
-
-            if candles and candles.get("s") == "ok":
-                c = candles.get("c", [])
-                if c:
-                    current_price = c[-1]
-                    ext["price"] = current_price
-                    for yrs in [5, 10, 15]:
-                        idx = -(yrs * 252)
-                        if abs(idx) < len(c):
-                            ext[f"return_cagr_{yrs}y_pct"] = self._calculate_cagr(
-                                c[idx], current_price, yrs
-                            )
-
-            cagr_rows.append(ext)
-            if progress_callback:
-                progress_callback(i + 1, total)
-
-        cagr_df = pd.DataFrame(cagr_rows)
-        # Combine with original DF, prioritizing the new price and CAGR data
-        for col in cagr_df.columns:
-            if col == "symbol":
-                continue
-            df[col] = cagr_df.set_index("symbol")[col].reindex(df["symbol"]).values
-
-        return df
-
     def get_metrics_for_symbols(
         self,
         symbols: list[str],
@@ -273,17 +233,50 @@ class MetricsProvider:
         total = len(symbols)
 
         if cache_only:
-            # Bulk fetch from cache
+            # Bulk fetch basic metrics from cache
             all_raw = self._cache.get_many([f"metrics_{s}" for s in symbols])
+            # Bulk fetch candles from cache
+            all_candles = self._cache.get_many([f"candles_{s}_15y" for s in symbols])
+
             for sym in symbols:
                 raw = all_raw.get(f"metrics_{sym}")
-                if raw:
-                    rows.append(self.normalize_metrics(sym, raw))
+                row = self.normalize_metrics(sym, raw) if raw else {"symbol": sym}
+
+                # Check candles
+                candles = all_candles.get(f"candles_{sym}_15y")
+                if candles and candles.get("s") == "ok":
+                    c = candles.get("c", [])
+                    if c:
+                        current_price = c[-1]
+                        row["price"] = current_price
+                        for yrs in [5, 10, 15]:
+                            idx = -(yrs * 252)
+                            if abs(idx) < len(c):
+                                row[f"return_cagr_{yrs}y_pct"] = self._calculate_cagr(
+                                    c[idx], current_price, yrs
+                                )
+
+                if len(row) > 1:  # If it has more than just 'symbol'
+                    rows.append(row)
         else:
             for i, sym in enumerate(symbols):
                 raw = self.fetch_metrics_raw(sym)
                 if raw:
-                    rows.append(self.normalize_metrics(sym, raw))
+                    row = self.normalize_metrics(sym, raw)
+                    # Also fetch candles if not cache_only (but worker should have done this)
+                    candles = self.fetch_candles_cached(sym, years=15)
+                    if candles and candles.get("s") == "ok":
+                        c = candles.get("c", [])
+                        if c:
+                            current_price = c[-1]
+                            row["price"] = current_price
+                            for yrs in [5, 10, 15]:
+                                idx = -(yrs * 252)
+                                if abs(idx) < len(c):
+                                    row[f"return_cagr_{yrs}y_pct"] = (
+                                        self._calculate_cagr(c[idx], current_price, yrs)
+                                    )
+                    rows.append(row)
 
                 if progress_callback:
                     progress_callback(i + 1, total)
