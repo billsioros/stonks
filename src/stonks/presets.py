@@ -14,6 +14,29 @@ from typing import Any
 
 POPULAR_SCREENS: list[dict[str, Any]] = [
     {
+        "name": "💎 The Quality Screen",
+        "description": "Premium stocks with high ROIC, high margins, and strong FCF growth",
+        "filters": {
+            "roic_5y_avg_pct": {"min": 10},
+            "gross_margin_pct": {"min": 10},
+            "free_cash_flow": {"min": 1},
+            "return_cagr_5y_pct": {"min": 10},
+            "operating_margin_pct": {"min": 10},
+            "net_income": {"min": 1},
+            "fcf_growth_5y_pct": {"min": 10},
+            "debt_to_equity": {"max": 1.0},
+            "return_cagr_15y_pct": {"min": 10},
+            "return_cagr_10y_pct": {"min": 10},
+            "roa_5y_avg_pct": {"min": 10},
+            "roe_5y_avg_pct": {"min": 10},
+            "net_income_growth_5y_pct": {"min": 10},
+            "shares_insiders_pct": {"min": 0.01},
+        },
+        "view_preset": "Quality",
+        "sort_column": "roic_5y_avg_pct",
+        "sort_ascending": False,
+    },
+    {
         "name": "🏆 Quality Compounders",
         "description": "High ROE, high margins, low debt — the Buffett picks",
         "filters": {

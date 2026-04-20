@@ -46,7 +46,35 @@ class UniverseLoader:
             df = pd.DataFrame(cached)
         else:
             logger.info("Fetching symbols from Finnhub for exchange=%s", exchange)
-            raw: list[dict[str, Any]] = self._client.stock_symbols(exchange)
+            raw: list[dict[str, Any]] = []
+            retries = 3
+            backoff = 2.0
+
+            for attempt in range(retries):
+                try:
+                    raw = self._client.stock_symbols(exchange)
+                    break
+                except Exception as e:
+                    if hasattr(e, "status_code") and e.status_code == 429:
+                        wait = backoff * (2**attempt)
+                        logger.warning(
+                            "Rate limit hit fetching symbols for %s. Retrying in %.1fs",
+                            exchange,
+                            wait,
+                        )
+                        import time
+
+                        time.sleep(wait)
+                        continue
+                    logger.error("Failed to fetch symbols for %s: %s", exchange, e)
+                    return pd.DataFrame()
+
+            if not raw:
+                logger.error(
+                    "Could not fetch symbols for %s after %d retries", exchange, retries
+                )
+                return pd.DataFrame()
+
             self._cache.set(cache_key, raw)
             logger.info("Fetched and cached %d symbols for %s", len(raw), exchange)
             df = pd.DataFrame(raw)

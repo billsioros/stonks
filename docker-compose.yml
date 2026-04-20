@@ -1,0 +1,25 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+    restart: unless-stopped
+    networks:
+      - stonks-network
+  worker:
+    build: .
+    volumes:
+      - ./data:/app/data
+    environment:
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+    command: ["uv", "run", "python", "-m", "stonks.worker"]
+    restart: unless-stopped
+    networks:
+      - stonks-network
+networks:
+  stonks-network:
+    driver: bridge
