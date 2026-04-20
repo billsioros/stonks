@@ -5,7 +5,7 @@ requires = [ "uv-build>=0.9,<0.10" ]
 
 [project]
 name = "stonks"
-version = "1.0.1"
+version = "1.0.2"
 description = "Streamlit Stock Screener powered by Finnhub free tier"
 readme = "README.md"
 authors = [
