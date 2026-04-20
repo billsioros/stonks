@@ -131,6 +131,28 @@ class SQLiteStore:
             conn.execute("DELETE FROM saved_screens WHERE name=?", (name,))
             conn.commit()
 
+    def get_screen(self, name: str) -> dict[str, Any] | None:
+        """Retrieve a specific saved screen by name."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, name, filters, view_preset, sort_column, sort_ascending, created_at, updated_at FROM saved_screens WHERE name=?",
+                (name,),
+            ).fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "name": row[1],
+            "filters": json.loads(row[2]),
+            "view_preset": row[3],
+            "sort_column": row[4],
+            "sort_ascending": bool(row[5]),
+            "created_at": row[6],
+            "updated_at": row[7],
+        }
+
     # ── Watchlist ────────────────────────────────────────────────────
 
     def add_to_watchlist(self, symbol: str, notes: str = "") -> None:
@@ -159,6 +181,20 @@ class SQLiteStore:
                 "SELECT symbol, added_at, notes FROM watchlist ORDER BY added_at DESC"
             ).fetchall()
         return [{"symbol": r[0], "added_at": r[1], "notes": r[2]} for r in rows]
+
+    def get_watchlist_symbols(self) -> list[str]:
+        """Return just the list of ticker symbols in the watchlist."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT symbol FROM watchlist").fetchall()
+        return [r[0] for r in rows]
+
+    def is_in_watchlist(self, symbol: str) -> bool:
+        """Check if a symbol is in the watchlist."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM watchlist WHERE symbol=?", (symbol,)
+            ).fetchone()
+        return row is not None
 
     # ── Sync Status ──────────────────────────────────────────────────
 

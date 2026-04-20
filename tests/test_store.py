@@ -78,3 +78,35 @@ class TestSQLiteStore:
         symbols = store.get_watchlist_symbols()
         assert "MSFT" in symbols
         assert "AAPL" in symbols
+
+    # ── Sync Status ──────────────────────────────────────────────
+
+    def test_sync_status(self, store: SQLiteStore) -> None:
+        store.update_sync_status("AAPL", "basic", "success")
+        store.update_sync_status("GOOGL", "basic", "failed", error="429")
+
+        failed = store.get_failed_symbols("basic")
+        assert failed == ["GOOGL"]
+
+        info = store.get_last_sync_info()
+        assert info["total_symbols"] == 2
+        assert info["success_count"] == 1
+        assert info["failed_count"] == 1
+
+    def test_last_sync_info_with_metadata(self, store: SQLiteStore) -> None:
+        store.save_metadata("universe_size", 1000)
+        store.update_sync_status("AAPL", "basic", "success")
+
+        info = store.get_last_sync_info()
+        assert info["total_symbols"] == 1000
+        assert info["success_count"] == 1
+
+    # ── Metadata ──────────────────────────────────────────────────
+
+    def test_metadata(self, store: SQLiteStore) -> None:
+        store.save_metadata("version", "1.0.0")
+        assert store.get_metadata("version") == "1.0.0"
+        assert store.get_metadata("no_such_key") is None
+
+        store.save_metadata("version", "1.1.0")
+        assert store.get_metadata("version") == "1.1.0"

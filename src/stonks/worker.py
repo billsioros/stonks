@@ -100,6 +100,10 @@ def job():
         all_symbols = symbols_df["symbol"].sort_values().tolist()
         store.save_metadata("universe_size", len(all_symbols))
 
+        # 0. Maintenance
+        logger.info("🧹 Cleaning up expired cache entries...")
+        cache.delete_expired()
+
         # 2. Sync Basic Metrics
         logger.info(
             f"📊 Phase 1: Syncing basic financials for {len(all_symbols)} symbols..."

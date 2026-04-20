@@ -1074,8 +1074,7 @@ def render_screener_table(
     display_df = page_df[visible_cols].copy()
 
     # ── Watchlist highlighting ───────────────────────────────────
-    watchlist = store.get_watchlist()
-    watchlist_symbols = {item["symbol"] for item in watchlist}
+    watchlist_symbols = set(store.get_watchlist_symbols())
 
     if "symbol" in display_df.columns:
         display_df["symbol"] = display_df["symbol"].apply(

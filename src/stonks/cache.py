@@ -19,6 +19,8 @@ class LocalCache:
 
     def __init__(self, db_path: Path = DB_PATH) -> None:
         self._db_path = db_path
+        # Ensure the directory for the database exists
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _init_db(self) -> None:
@@ -119,3 +121,25 @@ class LocalCache:
                 conn.commit()
         except sqlite3.Error as e:
             logger.error("Cache clear error: %s", e)
+
+    def delete(self, key: str) -> None:
+        """Remove a specific key from the cache."""
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute("DELETE FROM kv_cache WHERE key = ?", (key,))
+                conn.commit()
+        except sqlite3.Error as e:
+            logger.error("Cache delete error for key %s: %s", key, e)
+
+    def delete_expired(self) -> None:
+        """Remove all expired entries from the cache."""
+        now = time.time()
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(
+                    "DELETE FROM kv_cache WHERE expires_at IS NOT NULL AND expires_at < ?",
+                    (now,),
+                )
+                conn.commit()
+        except sqlite3.Error as e:
+            logger.error("Cache delete_expired error: %s", e)

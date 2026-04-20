@@ -75,5 +75,9 @@ warn_unused_configs = true
 [tool.poe.tasks]
 app = "streamlit run src/stonks/app.py"
 test = "pytest tests/ -v"
+coverage = "pytest --cov=stonks --cov-report=term-missing"
 lint = "mypy src/"
 hooks = "prek"
+
+[tool.bandit]
+exclude_dirs = [ "tests" ]
