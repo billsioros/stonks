@@ -75,7 +75,9 @@ class ScreenerEngine:
         try:
             sort_vals = pd.to_numeric(df[column], errors="coerce")
             df = df.assign(**{f"_sort_{column}": sort_vals})
-            df = df.sort_values(f"_sort_{column}", ascending=ascending, na_position="last")
+            df = df.sort_values(
+                f"_sort_{column}", ascending=ascending, na_position="last"
+            )
             df = df.drop(columns=[f"_sort_{column}"])
         except Exception:
             df = df.sort_values(column, ascending=ascending, na_position="last")

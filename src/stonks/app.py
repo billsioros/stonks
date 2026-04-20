@@ -1500,7 +1500,7 @@ def main() -> None:
         return
 
     # Render sidebar filters (also handles Popular/Saved screens)
-    active_filters = render_sidebar_filters(df, store)
+    render_sidebar_filters(df, store)
 
     # Apply all filters
     engine = ScreenerEngine(df)
@@ -1513,7 +1513,7 @@ def main() -> None:
 
     with tab_screener:
         # Render the new top-level filters grid
-        active_filters = render_top_filters(df)
+        render_top_filters(df)
 
         # engine is already initialized, but we need to pass the CURRENT filtered DF to the table renderer
         # or let the table renderer do its own filtering/search
