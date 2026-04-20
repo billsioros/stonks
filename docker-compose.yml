@@ -7,6 +7,7 @@ services:
       - ./data:/app/data
     environment:
       - FINNHUB_API_KEY=${FINNHUB_API_KEY}
+    command: ["streamlit", "run", "src/stonks/app.py"]
     restart: unless-stopped
     networks:
       - stonks-network
@@ -16,7 +17,7 @@ services:
       - ./data:/app/data
     environment:
       - FINNHUB_API_KEY=${FINNHUB_API_KEY}
-    command: ["uv", "run", "python", "-m", "stonks.worker"]
+    command: ["python", "-m", "stonks.worker"]
     restart: unless-stopped
     networks:
       - stonks-network

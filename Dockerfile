@@ -9,12 +9,15 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies (use system python for simplicity in container)
-RUN uv sync --frozen --no-dev
+# Install dependencies only (cache this layer)
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy source code
 COPY src ./src
 COPY README.md ./
+
+# Install the project itself
+RUN uv sync --frozen --no-dev
 
 # Create data directory
 RUN mkdir -p data/cache
@@ -24,6 +27,7 @@ ENV PYTHONUNBUFFERED=1
 ENV STREAMLIT_SERVER_PORT=8501
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
 ENV FINNHUB_API_KEY=""
+ENV PATH="/app/.venv/bin:$PATH"
 
-# Default command (can be overridden in docker-compose)
-CMD ["uv", "run", "streamlit", "run", "src/stonks/app.py"]
+# Default command
+CMD ["streamlit", "run", "src/stonks/app.py"]

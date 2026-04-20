@@ -57,8 +57,3 @@ class LocalCache:
         """Remove all cache files."""
         for f in self._cache_dir.glob("*.json"):
             f.unlink(missing_ok=True)
-
-    def clear_key(self, key: str) -> None:
-        """Remove a specific cache entry."""
-        path = self._key_path(key)
-        path.unlink(missing_ok=True)

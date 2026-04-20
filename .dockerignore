@@ -1,0 +1,16 @@
+.git
+.venv
+.pytest_cache
+.mypy_cache
+.coverage
+__pycache__
+data
+*.pyc
+*.pyo
+*.pyd
+.db
+.log
+.parquet
+*.egg-info
+dist
+build

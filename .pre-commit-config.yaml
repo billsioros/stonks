@@ -29,11 +29,7 @@ repos:
       - id: mixed-line-ending
       - id: trailing-whitespace
       - id: end-of-file-fixer
-        exclude: \.(yml|yaml)$
       - id: check-yaml
-        exclude: mkdocs.yml
-      - id: check-json
-        exclude: launch.json
       - id: check-toml
       - id: debug-statements
   - repo: https://github.com/commitizen-tools/commitizen
@@ -56,6 +52,7 @@ repos:
     rev: v2.14
     hooks:
       - id: vulture
+        args: ["src"]
   - repo: https://github.com/PyCQA/bandit
     rev: 1.8.2
     hooks:

@@ -38,24 +38,34 @@ def job():
             logger.warning("No symbols found.")
             return
 
-        # Limit symbols for free tier safety, but worker can be more patient
-        # We'll fetch top 500 symbols
-        symbol_list = symbols_df["symbol"].sort_values().head(500).tolist()
+        # Fetch ALL symbols (no limit)
+        symbol_list = symbols_df["symbol"].sort_values().tolist()
         total = len(symbol_list)
-        logger.info(f"Preparing to fetch metrics for {total} symbols...")
+        logger.info(
+            f"Preparing to sync metrics for {total} symbols (respecting 1-day TTL)..."
+        )
 
-        # 2. Fetch basic metrics (one by one, rate limited by MetricsProvider)
+        # 2. Fetch basic metrics
+        # provider.fetch_metrics_raw checks internal SQLite cache with METRICS_CACHE_TTL (24h)
+        # It will only hit the API if the data is missing or stale.
+        fetched = 0
         for i, sym in enumerate(symbol_list):
-            logger.info(f"[{i + 1}/{total}] Fetching metrics for {sym}...")
-            provider.fetch_metrics_raw(sym)
+            if i % 100 == 0 and i > 0:
+                logger.info(f"Progress: {i}/{total} ({i / total:.1%})")
 
-            # Additional safety sleep for worker (1s between base calls)
-            # This ensures we stay well within 60/min
-            time.sleep(1.1)
+            # Check if cached first to avoid even rate limit wait if we don't need to hit API
+            cache_key = f"metrics_{sym}"
+            cached = cache.get(cache_key, ttl=86400)  # 24h
 
-        # 3. Enrichment (only for very high quality ones to save time)
-        # We'll skip candle enrichment in background worker to avoid excessive calls
-        # Unless specifically requested. For now, basic financials are enough.
+            if cached is None:
+                provider.fetch_metrics_raw(sym)
+                fetched += 1
+                # Small optional sleep if we actually fetched,
+                # but MetricsProvider handled rate limiting anyway.
+
+        logger.info(
+            f"Daily sync completed. Symbols processed: {total}. Actual API calls made: {fetched}."
+        )
 
         logger.info("Daily data fetch job completed successfully.")
 

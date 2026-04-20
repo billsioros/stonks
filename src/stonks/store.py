@@ -69,7 +69,15 @@ class SQLiteStore:
                      sort_ascending=excluded.sort_ascending,
                      updated_at=excluded.updated_at
                 """,
-                (name, filters_json, view_preset, sort_column, int(sort_ascending), now, now),
+                (
+                    name,
+                    filters_json,
+                    view_preset,
+                    sort_column,
+                    int(sort_ascending),
+                    now,
+                    now,
+                ),
             )
             conn.commit()
 
@@ -92,24 +100,6 @@ class SQLiteStore:
             }
             for r in rows
         ]
-
-    def get_screen(self, name: str) -> dict[str, Any] | None:
-        """Get a single screen by name."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT id, name, filters, view_preset, sort_column, sort_ascending FROM saved_screens WHERE name=?",
-                (name,),
-            ).fetchone()
-        if row is None:
-            return None
-        return {
-            "id": row[0],
-            "name": row[1],
-            "filters": json.loads(row[2]),
-            "view_preset": row[3],
-            "sort_column": row[4],
-            "sort_ascending": bool(row[5]),
-        }
 
     def delete_screen(self, name: str) -> None:
         """Delete a saved screen."""
@@ -144,19 +134,4 @@ class SQLiteStore:
             rows = conn.execute(
                 "SELECT symbol, added_at, notes FROM watchlist ORDER BY added_at DESC"
             ).fetchall()
-        return [
-            {"symbol": r[0], "added_at": r[1], "notes": r[2]}
-            for r in rows
-        ]
-
-    def is_in_watchlist(self, symbol: str) -> bool:
-        """Check if a symbol is in the watchlist."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM watchlist WHERE symbol=?", (symbol,)
-            ).fetchone()
-        return row is not None
-
-    def get_watchlist_symbols(self) -> list[str]:
-        """Return just the symbol list."""
-        return [item["symbol"] for item in self.get_watchlist()]
+        return [{"symbol": r[0], "added_at": r[1], "notes": r[2]} for r in rows]

@@ -1014,9 +1014,14 @@ def render_screener_table(
         page_size=page_size,
     )
 
+    if total_matching == 0 and (active_filters or search_query):
+        st.warning("⚠️ **No stocks match your current filters.**")
+
     # ── Active filters info bar ──────────────────────────────────
-    if active_filters:
+    if active_filters or search_query:
         filter_parts = []
+
+        # Human-readable filter descriptions
         for col, spec in active_filters.items():
             display = COLUMN_DISPLAY_NAMES.get(col, col)
             parts = []
@@ -1026,23 +1031,31 @@ def render_screener_table(
                 parts.append(f"≤ {spec['max']}")
             if "values" in spec:
                 parts.append(f"∈ {spec['values']}")
-            filter_parts.append(f"**{display}**: {', '.join(parts)}")
 
-        st.markdown(
-            f"""<div class="active-filters">
-            🎯 <strong>Active filters:</strong> {" · ".join(filter_parts)}
-            &nbsp;|&nbsp; Matching: <strong>{total_matching:,}</strong> stocks
-            </div>""",
-            unsafe_allow_html=True,
-        )
-    elif search_query:
-        st.markdown(
-            f"""<div class="active-filters">
-            🔍 Search: <strong>"{search_query}"</strong>
-            &nbsp;|&nbsp; Matching: <strong>{total_matching:,}</strong> stocks
-            </div>""",
-            unsafe_allow_html=True,
-        )
+            if parts:
+                filter_parts.append(f"**{display}**: {', '.join(parts)}")
+
+        # Add search query if present
+        if search_query:
+            filter_parts.append(f'🔍 **Search**: "{search_query}"')
+
+        # Render the bar
+        if filter_parts:
+            # Use raw HTML tags for reliable rendering inside the div
+            html_parts = []
+            for p in filter_parts:
+                # Replace ** with <strong> for the parts
+                html_parts.append(
+                    p.replace("**", "<strong>").replace("**", "</strong>")
+                )
+
+            st.markdown(
+                f"""<div class="active-filters">
+                🎯 <strong>Active filters:</strong> {" · ".join(html_parts)}
+                &nbsp;|&nbsp; Matching: <strong>{total_matching:,}</strong> stocks
+                </div>""",
+                unsafe_allow_html=True,
+            )
 
     # ── Select visible columns ───────────────────────────────────
     preset_cols = VIEW_PRESETS.get(view_preset, [])
@@ -1055,6 +1068,15 @@ def render_screener_table(
         visible_cols = list(page_df.columns)
 
     display_df = page_df[visible_cols].copy()
+
+    # ── Watchlist highlighting ───────────────────────────────────
+    watchlist = store.get_watchlist()
+    watchlist_symbols = {item["symbol"] for item in watchlist}
+
+    if "symbol" in display_df.columns:
+        display_df["symbol"] = display_df["symbol"].apply(
+            lambda x: f"⭐ {x}" if x in watchlist_symbols else x
+        )
 
     # Rename columns for display
     rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in visible_cols}
@@ -1311,7 +1333,7 @@ def main() -> None:
         st.session_state["page_size"] = DEFAULT_PAGE_SIZE
 
     # Load data
-    max_symbols = st.session_state.get("max_symbols", 200)
+    max_symbols = st.session_state.get("max_symbols", 500)
 
     df = pd.DataFrame()
     try:
@@ -1412,7 +1434,7 @@ def main() -> None:
             cache_file = CACHE_DIR / f"universe_data_{max_symbols}.parquet"
             try:
                 df.to_parquet(cache_file)
-            except Exception:
+            except Exception:  # nosec B110
                 pass
 
             # Re-initialize engine with enriched data

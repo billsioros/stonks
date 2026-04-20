@@ -34,7 +34,7 @@ _METRIC_MAP: dict[str, str] = {
     "roicTTM": "roic_pct",
     "currentRatioQuarterly": "current_ratio",
     "totalDebt/totalEquityQuarterly": "debt_to_equity",
-    "freeCashFlowTTM": "fcf_raw",
+    "freeCashFlowTTM": "free_cash_flow",
     "revenueTTM": "revenue_raw",
     "revenueGrowth5Y": "revenue_growth_5y_pct",
     "epsGrowth5Y": "eps_growth_5y_pct",
@@ -49,7 +49,6 @@ _METRIC_MAP: dict[str, str] = {
     "revenuePerShareTTM": "revenue_per_share",
     "bookValuePerShareQuarterly": "book_value_per_share",
     "tangibleBookValuePerShareQuarterly": "tangible_book_value_per_share",
-    "totalDebt/totalEquityQuarterly": "total_debt_to_total_equity",
     "longTermDebt/equityQuarterly": "long_term_debt_to_equity",
     "inventoryTurnoverTTM": "inventory_turnover",
     "receivablesTurnoverTTM": "receivables_turnover",
@@ -58,7 +57,6 @@ _METRIC_MAP: dict[str, str] = {
     "epsGrowth3Y": "eps_growth_3y_pct",
     "revenueGrowth3Y": "revenue_growth_3y_pct",
     "netIncomeEmployeeTTM": "net_income",
-    "freeCashFlowTTM": "free_cash_flow",
     "sharesInsiders": "shares_insiders_pct",
 }
 
@@ -283,19 +281,3 @@ class MetricsProvider:
 
         df = pd.DataFrame(rows)
         return df
-
-    def get_quote(self, symbol: str) -> dict[str, Any]:
-        """Get a real-time quote for a symbol."""
-        cache_key = f"quote_{symbol}"
-        cached = self._cache.get(cache_key, ttl=300)  # 5 min TTL for quotes
-        if cached is not None:
-            return cached
-
-        self._rate_limit()
-        try:
-            data = self._client.quote(symbol)
-            self._cache.set(cache_key, data)
-            return data
-        except Exception:
-            logger.warning("Failed to fetch quote for %s", symbol, exc_info=True)
-            return {}
