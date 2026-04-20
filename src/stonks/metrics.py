@@ -257,12 +257,14 @@ class MetricsProvider:
         self,
         symbols: list[str],
         progress_callback: Any | None = None,
+        cache_only: bool = False,
     ) -> pd.DataFrame:
         """Fetch and normalize metrics for a list of symbols.
 
         Args:
             symbols: List of ticker symbols.
             progress_callback: Optional callable(current, total) for progress tracking.
+            cache_only: If True, only return data from cache; never hit the API.
 
         Returns:
             DataFrame with one row per symbol.
@@ -270,14 +272,21 @@ class MetricsProvider:
         rows: list[dict[str, Any]] = []
         total = len(symbols)
 
-        for i, sym in enumerate(symbols):
-            raw = self.fetch_metrics_raw(sym)
-            if raw:
-                row = self.normalize_metrics(sym, raw)
-                rows.append(row)
+        if cache_only:
+            # Bulk fetch from cache
+            all_raw = self._cache.get_many([f"metrics_{s}" for s in symbols])
+            for sym in symbols:
+                raw = all_raw.get(f"metrics_{sym}")
+                if raw:
+                    rows.append(self.normalize_metrics(sym, raw))
+        else:
+            for i, sym in enumerate(symbols):
+                raw = self.fetch_metrics_raw(sym)
+                if raw:
+                    rows.append(self.normalize_metrics(sym, raw))
 
-            if progress_callback:
-                progress_callback(i + 1, total)
+                if progress_callback:
+                    progress_callback(i + 1, total)
 
         df = pd.DataFrame(rows)
         return df

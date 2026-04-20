@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -455,13 +456,13 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
 
 # ── Load universe + metrics (cached) ────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_full_dataset(api_key: str, max_symbols: int = 200) -> pd.DataFrame:
-    """Load symbols and fetch metrics for the universe with disk caching."""
+def load_full_dataset(api_key: str | None = None) -> pd.DataFrame:
+    """Load symbols and fetch metrics for the entire universe with local-first logic."""
     from stonks.config import CACHE_DIR
 
-    cache_file = CACHE_DIR / f"universe_data_{max_symbols}.parquet"
+    cache_file = CACHE_DIR / "universe_data_full.parquet"
 
-    # Check disk cache (TTL 1 hour)
+    # 1. High-speed disk cache (TTL 1 hour for the merged parquet)
     if cache_file.exists():
         mtime = cache_file.stat().st_mtime
         if (time.time() - mtime) < 3600:
@@ -473,34 +474,41 @@ def load_full_dataset(api_key: str, max_symbols: int = 200) -> pd.DataFrame:
             except Exception as e:
                 logger.warning("Failed to read parquet cache: %s", e)
 
+    # 2. Local-First: Try building from SQLite metrics cache
     cache = LocalCache()
-    loader = UniverseLoader(api_key=api_key, cache=cache)
-    provider = MetricsProvider(api_key=api_key, cache=cache)
+    loader = UniverseLoader(api_key=api_key or "DUMMY", cache=cache)
+    provider = MetricsProvider(api_key=api_key or "DUMMY", cache=cache)
 
-    # Load symbols
-    symbols_df = loader.get_common_stocks()
+    try:
+        # get_common_stocks handles its own cache internally
+        symbols_df = loader.get_common_stocks()
+    except Exception as e:
+        logger.warning(f"Failed to load symbols: {e}")
+        symbols_df = pd.DataFrame()
 
     if symbols_df.empty:
+        # If no symbols and no API key, we are stuck
+        if cache_file.exists():
+            return pd.read_parquet(cache_file)
         return pd.DataFrame()
 
-    # Sort by symbol and take top N
-    if "symbol" in symbols_df.columns:
-        # Prioritize some known high-quality symbols if possible,
-        # but for now just alphabetical top N
-        symbols_df = symbols_df.sort_values("symbol").head(max_symbols)
-
+    # Sort
+    symbols_df = symbols_df.sort_values("symbol")
     symbol_list = symbols_df["symbol"].tolist()
 
-    # Fetch metrics (this uses internal symbol-level caching)
-    metrics_df = provider.get_metrics_for_symbols(symbol_list)
+    # get_metrics_for_symbols with cache_only=True ensures we don't spam API
+    # if the worker hasn't reached these symbols yet.
+    metrics_df = provider.get_metrics_for_symbols(symbol_list, cache_only=True)
 
-    if metrics_df.empty:
+    if metrics_df.empty and not api_key:
+        if cache_file.exists():
+            return pd.read_parquet(cache_file)
         return symbols_df
 
     # Merge
     result = symbols_df.merge(metrics_df, on="symbol", how="left")
 
-    # Clean up: drop internal columns
+    # Clean up
     drop_cols = [
         c
         for c in result.columns
@@ -511,16 +519,17 @@ def load_full_dataset(api_key: str, max_symbols: int = 200) -> pd.DataFrame:
     )
 
     # Save to disk
-    try:
-        result.to_parquet(cache_file)
-    except Exception as e:
-        logger.warning("Failed to save parquet cache: %s", e)
+    if not result.empty:
+        try:
+            result.to_parquet(cache_file)
+        except Exception as e:
+            logger.warning("Failed to save parquet cache: %s", e)
 
     return result
 
 
-def load_dataset_with_progress(api_key: str, max_symbols: int = 200) -> pd.DataFrame:
-    """Load dataset with a visible progress bar."""
+def load_dataset_with_progress(api_key: str) -> pd.DataFrame:
+    """Load dataset with a visible progress bar for the full universe."""
     cache = LocalCache()
     loader = UniverseLoader(api_key=api_key, cache=cache)
     provider = MetricsProvider(api_key=api_key, cache=cache)
@@ -530,7 +539,7 @@ def load_dataset_with_progress(api_key: str, max_symbols: int = 200) -> pd.DataF
         return pd.DataFrame()
 
     if "symbol" in symbols_df.columns:
-        symbols_df = symbols_df.sort_values("symbol").head(max_symbols)
+        symbols_df = symbols_df.sort_values("symbol")
 
     symbol_list = symbols_df["symbol"].tolist()
     total = len(symbol_list)
@@ -646,17 +655,19 @@ def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, An
     with st.sidebar:
         # ── API Key (if not set) ─────────────────────────────────
         if not get_api_key():
-            st.markdown("### 🔑 API Key Required")
-            api_key_input = st.text_input(
-                "Finnhub API Key",
-                type="password",
-                help="Get a free key at https://finnhub.io",
-                key="api_key_input",
-            )
-            if api_key_input:
-                st.session_state["finnhub_api_key"] = api_key_input
-                st.rerun()
-            st.stop()
+            with st.expander("🔑 API Key (Limited Mode)", expanded=False):
+                st.info(
+                    "Operating in **Local-First mode**. Enter a Finnhub API key to enable live enrichment and real-time data fetching."
+                )
+                api_key_input = st.text_input(
+                    "Finnhub API Key",
+                    type="password",
+                    help="Get a free key at https://finnhub.io",
+                    key="api_key_input",
+                )
+                if api_key_input:
+                    st.session_state["finnhub_api_key"] = api_key_input
+                    st.rerun()
 
         # ── Logo / branding ──────────────────────────────────────
         st.markdown(
@@ -916,16 +927,9 @@ def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, An
         # ── Data management ──────────────────────────────────────
         st.divider()
         with st.expander("⚙️ Settings", expanded=False):
-            max_sym = st.number_input(
-                "Max symbols to load",
-                min_value=10,
-                max_value=5000,
-                value=st.session_state.get("max_symbols", 200),
-                step=50,
-                key="max_symbols_input",
-            )
-            if st.button("🔄 Reload Data", key="reload_data", use_container_width=True):
-                st.session_state["max_symbols"] = max_sym
+            if st.button(
+                "🧹 Clear All Cache", key="reload_data", use_container_width=True
+            ):
                 st.cache_data.clear()
                 cache = get_cache()
                 cache.clear()
@@ -1270,6 +1274,133 @@ def render_watchlist_tab(df: pd.DataFrame, store: SQLiteStore) -> None:
 # ── Main App ─────────────────────────────────────────────────────────
 
 
+def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
+    """Render a premium HUD showing data pipeline metrics."""
+    if not sync_info or not sync_info.get("last_run"):
+        return
+
+    last_dt = datetime.fromtimestamp(sync_info["last_run"]).strftime("%H:%M:%S")
+    success = sync_info["success_count"]
+    candles = sync_info["candles_count"]
+    failed = sync_info["failed_count"]
+    total = sync_info["total_symbols"]
+    completion = (success / max(1, total)) * 100
+    candle_completion = (candles / max(1, total)) * 100
+
+    st.markdown(
+        """
+        <style>
+        .hud-card {
+            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+        .hud-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        .hud-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .hud-status {
+            font-size: 0.8rem;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            background: rgba(34, 197, 94, 0.2);
+            color: #4ade80;
+            border: 1px solid rgba(34, 197, 94, 0.3);
+        }
+        .hud-metrics {
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+        }
+        .metric-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .metric-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #f8fafc;
+            line-height: 1;
+            margin-bottom: 0.25rem;
+        }
+        .metric-label {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+        .progress-container {
+            width: 100%;
+            height: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 3px;
+            margin-top: 1rem;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #3b82f6 0%, #2dd4bf 100%);
+            border-radius: 3px;
+            transition: width 0.5s ease-in-out;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    with st.container():
+        st.markdown(
+            f"""
+            <div class="hud-card">
+                <div class="hud-header">
+                    <div class="hud-title">📡 Data Pipeline HUD</div>
+                    <div class="hud-status">● Live Sync Active</div>
+                </div>
+                <div class="hud-metrics">
+                    <div class="metric-group">
+                        <div class="metric-value">{completion:.1f}%</div>
+                        <div class="metric-label">Universe Coverage</div>
+                    </div>
+                    <div class="metric-group">
+                        <div class="metric-value">{candle_completion:.1f}%</div>
+                        <div class="metric-label">Historical Data</div>
+                    </div>
+                    <div class="metric-group">
+                        <div class="metric-value">{success:,}</div>
+                        <div class="metric-label">Local Hits</div>
+                    </div>
+                    <div class="metric-group">
+                        <div class="metric-value">{failed}</div>
+                        <div class="metric-label">Sync Misses</div>
+                    </div>
+                    <div class="metric-group">
+                        <div class="metric-value">{last_dt}</div>
+                        <div class="metric-label">Last Last Heartbeat</div>
+                    </div>
+                    <div class="metric-group">
+                        <div class="metric-value">{total:,}</div>
+                        <div class="metric-label">Universe</div>
+                    </div>
+                </div>
+                <div class="progress-container">
+                    <div class="progress-bar" style="width: {completion}%"></div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
 def main() -> None:
     """Main Streamlit app entry point."""
     render_header()
@@ -1333,15 +1464,18 @@ def main() -> None:
         st.session_state["page_size"] = DEFAULT_PAGE_SIZE
 
     # Load data
-    max_symbols = st.session_state.get("max_symbols", 500)
+
+    # UI for sync status
+    sync_info = store.get_last_sync_info()
+    render_pipeline_hud(sync_info)
 
     df = pd.DataFrame()
     try:
-        # Try cached first
-        df = load_full_dataset(api_key, max_symbols)
+        # Try local-first loading
+        df = load_full_dataset(api_key)
     except Exception as e:
         err_msg = str(e)
-        if "401" in err_msg or "Invalid API key" in err_msg:
+        if ("401" in err_msg or "Invalid API key" in err_msg) and api_key:
             st.error(
                 "❌ **Invalid API key.** Please check your Finnhub API key and try again."
             )
@@ -1358,7 +1492,7 @@ def main() -> None:
         else:
             # Try progress-bar fallback
             try:
-                df = load_dataset_with_progress(api_key, max_symbols)
+                df = load_dataset_with_progress(api_key)
             except Exception as e2:
                 st.error(f"❌ Failed to load data: {e2}")
                 if st.button("🔄 Retry", key="retry_generic"):
@@ -1431,7 +1565,7 @@ def main() -> None:
             # Save enriched data to disk cache immediately
             from stonks.config import CACHE_DIR
 
-            cache_file = CACHE_DIR / f"universe_data_{max_symbols}.parquet"
+            cache_file = CACHE_DIR / "universe_data_full.parquet"
             try:
                 df.to_parquet(cache_file)
             except Exception:  # nosec B110

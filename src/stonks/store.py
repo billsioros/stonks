@@ -43,6 +43,30 @@ class SQLiteStore:
                     notes TEXT DEFAULT ''
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS sync_status (
+                    symbol TEXT,
+                    sync_type TEXT,
+                    status TEXT,
+                    error TEXT,
+                    last_attempt REAL,
+                    PRIMARY KEY (symbol, sync_type)
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at REAL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS kv_cache (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    expires_at REAL
+                )
+            """)
             conn.commit()
 
     # ── Saved Screens ────────────────────────────────────────────────
@@ -135,3 +159,90 @@ class SQLiteStore:
                 "SELECT symbol, added_at, notes FROM watchlist ORDER BY added_at DESC"
             ).fetchall()
         return [{"symbol": r[0], "added_at": r[1], "notes": r[2]} for r in rows]
+
+    # ── Sync Status ──────────────────────────────────────────────────
+
+    def update_sync_status(
+        self, symbol: str, sync_type: str, status: str, error: str | None = None
+    ) -> None:
+        """Update the sync status for a symbol."""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO sync_status (symbol, sync_type, status, error, last_attempt)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(symbol, sync_type) DO UPDATE SET
+                     status=excluded.status,
+                     error=excluded.error,
+                     last_attempt=excluded.last_attempt
+                """,
+                (symbol, sync_type, status, error, now),
+            )
+            conn.commit()
+
+    def get_failed_symbols(self, sync_type: str) -> list[str]:
+        """Return symbols that failed the last sync attempt."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT symbol FROM sync_status WHERE sync_type=? AND status='failed'",
+                (sync_type,),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_last_sync_info(self) -> dict[str, Any]:
+        """Return general stats about the last sync."""
+        with self._connect() as conn:
+            # Prefer the explicit universe size from metadata if available
+            stored_universe = self.get_metadata("universe_size")
+            if stored_universe:
+                total_universe = int(stored_universe)
+            else:
+                total_universe = conn.execute(
+                    "SELECT COUNT(DISTINCT symbol) FROM sync_status"
+                ).fetchone()[0]
+
+            success_basic = conn.execute(
+                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='basic'"
+            ).fetchone()[0]
+            success_candles = conn.execute(
+                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='candles'"
+            ).fetchone()[0]
+            failed = conn.execute(
+                "SELECT COUNT(*) FROM sync_status WHERE status='failed'"
+            ).fetchone()[0]
+            last_run = conn.execute(
+                "SELECT MAX(last_attempt) FROM sync_status"
+            ).fetchone()[0]
+
+        return {
+            "total_symbols": total_universe,
+            "success_count": success_basic,
+            "candles_count": success_candles,
+            "failed_count": failed,
+            "last_run": last_run,
+        }
+
+    # ── Metadata ─────────────────────────────────────────────────────
+
+    def save_metadata(self, key: str, value: Any) -> None:
+        """Save a piece of global metadata."""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO metadata (key, value, updated_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                     value=excluded.value,
+                     updated_at=excluded.updated_at
+                """,
+                (key, str(value), now),
+            )
+            conn.commit()
+
+    def get_metadata(self, key: str) -> str | None:
+        """Retrieve a piece of global metadata."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key=?", (key,)
+            ).fetchone()
+        return row[0] if row else None
