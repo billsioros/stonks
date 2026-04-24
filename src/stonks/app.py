@@ -3,8 +3,7 @@
 Run with: streamlit run src/stonks/app.py
 """
 
-from __future__ import annotations
-
+from stonks.presets import POPULAR_SCREENS
 import logging
 import time
 from datetime import datetime
@@ -13,21 +12,15 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from stonks.cache import LocalCache
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
     DEFAULT_PAGE_SIZE,
     ENUM_FILTER_COLUMNS,
-    FINNHUB_API_KEY,
     NUMERIC_FILTER_COLUMNS,
     PAGE_SIZE_OPTIONS,
     VIEW_PRESETS,
 )
-from stonks.engine import ScreenerEngine
-from stonks.metrics import MetricsProvider
-from stonks.presets import POPULAR_SCREENS
 from stonks.store import SQLiteStore
-from stonks.universe import UniverseLoader
 
 logger = logging.getLogger(__name__)
 
@@ -454,18 +447,6 @@ def get_store() -> SQLiteStore:
     return SQLiteStore()
 
 
-@st.cache_resource
-def get_cache() -> LocalCache:
-    return LocalCache()
-
-
-def get_api_key() -> str:
-    """Get API key from env or session state."""
-    if FINNHUB_API_KEY:
-        return FINNHUB_API_KEY
-    return st.session_state.get("finnhub_api_key", "")
-
-
 def _fmt_market_cap(val: float | None) -> str:
     """Format market cap in human-readable form."""
     if val is None:
@@ -491,81 +472,25 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
     return f"{val:,.{decimals}f}"
 
 
-# ── Load universe + metrics (cached) ────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_full_dataset(api_key: str | None = None) -> pd.DataFrame:
-    """Load symbols and fetch metrics for the entire universe with local-first logic."""
-    from stonks.config import CACHE_DIR
-
-    cache_file = CACHE_DIR / "universe_data_full.parquet"
-
-    # 1. High-speed disk cache (TTL 1 hour for the merged parquet)
-    if cache_file.exists():
-        mtime = cache_file.stat().st_mtime
-        if (time.time() - mtime) < 3600:
-            try:
-                df = pd.read_parquet(cache_file)
-                if not df.empty:
-                    logger.info("Loaded full dataset from disk cache")
-                    return df
-            except Exception as e:
-                logger.warning("Failed to read parquet cache: %s", e)
-
-    # 2. Local-First: Try building from SQLite metrics cache
-    cache = LocalCache()
-    loader = UniverseLoader(api_key=api_key or "DUMMY", cache=cache)
-    provider = MetricsProvider(api_key=api_key or "DUMMY", cache=cache)
-
-    try:
-        # get_common_stocks handles its own cache internally
-        symbols_df = loader.get_common_stocks()
-    except Exception as e:
-        logger.warning(f"Failed to load symbols: {e}")
-        symbols_df = pd.DataFrame()
-
-    if symbols_df.empty:
-        # If no symbols and no API key, we are stuck
-        if cache_file.exists():
-            return pd.read_parquet(cache_file)
-        return pd.DataFrame()
-
-    # Sort
-    symbols_df = symbols_df.sort_values("symbol")
-    symbol_list = symbols_df["symbol"].tolist()
-
-    # get_metrics_for_symbols with cache_only=True ensures we don't spam API
-    # if the worker hasn't reached these symbols yet.
-    metrics_df = provider.get_metrics_for_symbols(symbol_list, cache_only=True)
-
-    if metrics_df.empty and not api_key:
-        if cache_file.exists():
-            return pd.read_parquet(cache_file)
-        return symbols_df
-
-    # Merge
-    result = symbols_df.merge(metrics_df, on="symbol", how="left")
-
-    # Clean up
-    drop_cols = [
-        c
-        for c in result.columns
-        if c.startswith("_") or c in ("fcf_raw", "revenue_raw")
-    ]
-    result = result.drop(
-        columns=[c for c in drop_cols if c in result.columns], errors="ignore"
+def get_stocks_from_db(
+    filters: dict[str, Any] | None = None,
+    search_query: str = "",
+    sort_column: str | None = None,
+    sort_ascending: bool = True,
+    page: int = 1,
+    page_size: int = 25,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Fetch stocks from SQLite with filters, search, sort, pagination at DB level."""
+    store = SQLiteStore()
+    return store.get_stocks(
+        filters=filters,
+        search_query=search_query,
+        sort_column=sort_column,
+        sort_ascending=sort_ascending,
+        page=page,
+        page_size=page_size,
     )
-
-    # Save to disk
-    if not result.empty:
-        try:
-            result.to_parquet(cache_file)
-        except Exception as e:
-            logger.warning("Failed to save parquet cache: %s", e)
-
-    return result
-
-
-# ── Render functions ─────────────────────────────────────────────────
 
 
 def render_header() -> None:
@@ -583,8 +508,11 @@ def render_header() -> None:
     )
 
 
-def render_summary_cards(df: pd.DataFrame) -> None:
+def render_summary_cards() -> None:
     """Render summary metric cards."""
+    store = get_store()
+    total = store.get_stock_count()
+
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -592,72 +520,49 @@ def render_summary_cards(df: pd.DataFrame) -> None:
             f"""
         <div class="metric-card">
             <div class="label">Total Stocks</div>
-            <div class="value">{len(df):,}</div>
+            <div class="value">{total:,}</div>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
     with col2:
-        avg_pe = df["pe_ratio"].median() if "pe_ratio" in df.columns else None
         st.markdown(
-            f"""
+            """
         <div class="metric-card">
             <div class="label">Median P/E</div>
-            <div class="value">{_fmt_number(avg_pe)}</div>
+            <div class="value">—</div>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
     with col3:
-        avg_roe = df["roe_pct"].median() if "roe_pct" in df.columns else None
         st.markdown(
-            f"""
+            """
         <div class="metric-card">
             <div class="label">Median ROE</div>
-            <div class="value">{_fmt_pct(avg_roe)}</div>
+            <div class="value">—</div>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
     with col4:
-        avg_div = (
-            df["dividend_yield_pct"].median()
-            if "dividend_yield_pct" in df.columns
-            else None
-        )
         st.markdown(
-            f"""
+            """
         <div class="metric-card">
             <div class="label">Median Div Yield</div>
-            <div class="value">{_fmt_pct(avg_div)}</div>
+            <div class="value">—</div>
         </div>
         """,
             unsafe_allow_html=True,
         )
 
 
-def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, Any]:
-    """Render the sidebar filter builder and return active filters."""
+def render_sidebar_filters() -> dict[str, Any]:
+    """Render the sidebar filter builder without requiring df."""
     with st.sidebar:
-        # ── API Key (if not set) ─────────────────────────────────
-        if not get_api_key():
-            with st.expander("🔑 API Key (Limited Mode)", expanded=False):
-                st.info(
-                    "Operating in **Local-First mode**. Enter a Finnhub API key to enable live enrichment and real-time data fetching."
-                )
-                api_key_input = st.text_input(
-                    "Finnhub API Key",
-                    type="password",
-                    help="Get a free key at https://finnhub.io",
-                    key="api_key_input",
-                )
-                if api_key_input:
-                    st.session_state["finnhub_api_key"] = api_key_input
-                    st.rerun()
-
         # ── Logo / branding ──────────────────────────────────────
         st.markdown(
             """
@@ -707,6 +612,7 @@ def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, An
                         st.rerun()
 
         # ── Saved Screens ────────────────────────────────────────
+        store = get_store()
         with st.expander("💾 Saved Screens", expanded=False):
             saved = store.list_screens()
             if saved:
@@ -763,20 +669,17 @@ def render_sidebar_filters(df: pd.DataFrame, store: SQLiteStore) -> dict[str, An
         # ── Data management ──────────────────────────────────────
         st.divider()
         with st.expander("⚙️ Settings", expanded=False):
-            if st.button(
-                "🧹 Clear All Cache", key="reload_data", use_container_width=True
-            ):
-                st.cache_data.clear()
-                cache = get_cache()
-                cache.clear()
-                st.rerun()
+            st.info("Cache is managed by the worker.")
 
     return st.session_state.get("active_filters", {})
 
 
-def render_top_filters(df: pd.DataFrame) -> dict[str, Any]:
+def render_top_filters() -> dict[str, Any]:
     """Render numeric and category filters in a grid above the stock view."""
     filters = st.session_state.get("active_filters", {}).copy()
+    store = get_store()
+    available_numeric = [c for c in NUMERIC_FILTER_COLUMNS]
+    available_enum = [c for c in ENUM_FILTER_COLUMNS]
 
     with st.expander("🎯 Filters", expanded=False):
         # ── Filter Top Bar ───────────────────────────────────────
@@ -784,7 +687,6 @@ def render_top_filters(df: pd.DataFrame) -> dict[str, Any]:
 
         with ctrl_col1:
             # Dropdown to add a new filter
-            available_numeric = [c for c in NUMERIC_FILTER_COLUMNS if c in df.columns]
             filter_to_add = st.selectbox(
                 "➕ Add Filter",
                 options=[""]
@@ -825,17 +727,14 @@ def render_top_filters(df: pd.DataFrame) -> dict[str, Any]:
         col_cat1, col_cat2, col_cat3, col_cat4 = st.columns(4)
         cat_cols = [col_cat1, col_cat2, col_cat3, col_cat4]
 
-        for i, col in enumerate(ENUM_FILTER_COLUMNS):
-            if col not in df.columns:
-                continue
-            display_name = COLUMN_DISPLAY_NAMES.get(col, col)
-            unique_vals = sorted(df[col].dropna().unique().tolist())
+        for i, col in enumerate(available_enum):
+            unique_vals = store.get_unique_values(col)
             if not unique_vals:
                 continue
 
             with cat_cols[i % 4]:
                 selected = st.multiselect(
-                    display_name,
+                    COLUMN_DISPLAY_NAMES.get(col, col),
                     options=unique_vals,
                     default=filters.get(col, {}).get("values", []),
                     key=f"top_filter_enum_{col}",
@@ -928,14 +827,10 @@ def render_top_filters(df: pd.DataFrame) -> dict[str, Any]:
     return filters
 
 
-def render_screener_table(
-    df: pd.DataFrame,
-    engine: ScreenerEngine,
-    store: SQLiteStore,
-) -> None:
-    """Render the main screener table with controls."""
+def render_screener_table() -> None:
+    """Render the main screener table with controls using DB-level filtering."""
+    store = get_store()
 
-    # ── View preset selector ─────────────────────────────────────
     ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1, 1])
 
     with ctrl_col1:
@@ -950,11 +845,10 @@ def render_screener_table(
         st.session_state["view_preset"] = view_preset
 
     with ctrl_col2:
-        available_cols = [c for c in df.columns if c in COLUMN_DISPLAY_NAMES]
         sort_options = ["None"] + [
-            COLUMN_DISPLAY_NAMES.get(c, c) for c in available_cols
+            COLUMN_DISPLAY_NAMES.get(c, c) for c in NUMERIC_FILTER_COLUMNS[:15]
         ]
-        sort_keys = ["None"] + available_cols
+        sort_keys = ["None"] + NUMERIC_FILTER_COLUMNS[:15]
 
         current_sort = st.session_state.get("sort_column")
         sort_idx = 0
@@ -994,12 +888,11 @@ def render_screener_table(
         )
         st.session_state["page_size"] = page_size
 
-    # ── Run screen ───────────────────────────────────────────────
     active_filters = st.session_state.get("active_filters", {})
     search_query = st.session_state.get("search_query", "")
     current_page = st.session_state.get("current_page", 1)
 
-    page_df, total_pages, total_matching = engine.run_screen(
+    page_rows, total_pages, total_matching = store.get_stocks(
         filters=active_filters,
         search_query=search_query,
         sort_column=sort_column,
@@ -1011,11 +904,9 @@ def render_screener_table(
     if total_matching == 0 and (active_filters or search_query):
         st.warning("⚠️ **No stocks match your current filters.**")
 
-    # ── Active filters info bar ──────────────────────────────────
     if active_filters or search_query:
         filter_parts = []
 
-        # Human-readable filter descriptions
         for col, spec in active_filters.items():
             display = COLUMN_DISPLAY_NAMES.get(col, col)
             parts = []
@@ -1029,16 +920,12 @@ def render_screener_table(
             if parts:
                 filter_parts.append(f"**{display}**: {', '.join(parts)}")
 
-        # Add search query if present
         if search_query:
             filter_parts.append(f'🔍 **Search**: "{search_query}"')
 
-        # Render the bar
         if filter_parts:
-            # Use raw HTML tags for reliable rendering inside the div
             html_parts = []
             for p in filter_parts:
-                # Replace ** with <strong> for the parts
                 html_parts.append(
                     p.replace("**", "<strong>").replace("**", "</strong>")
                 )
@@ -1051,62 +938,47 @@ def render_screener_table(
                 unsafe_allow_html=True,
             )
 
-    # ── Select visible columns ───────────────────────────────────
     preset_cols = VIEW_PRESETS.get(view_preset, [])
-    if preset_cols:
-        visible_cols = [c for c in preset_cols if c in page_df.columns]
+    if not preset_cols:
+        visible_cols = [
+            "symbol",
+            "description",
+            "exchange",
+            "market_cap",
+            "price",
+            "pe_ratio",
+            "dividend_yield_pct",
+            "beta",
+        ]
     else:
-        visible_cols = [c for c in page_df.columns if not c.startswith("_")]
+        visible_cols = [c for c in preset_cols]
 
-    if not visible_cols:
-        visible_cols = list(page_df.columns)
+    if not page_rows:
+        st.info("No stocks to display. Run the worker to populate data.")
+        return
 
-    display_df = page_df[visible_cols].copy()
+    page_df = pd.DataFrame(page_rows)
 
-    # ── Watchlist highlighting ───────────────────────────────────
     watchlist_symbols = set(store.get_watchlist_symbols())
-
-    if "symbol" in display_df.columns:
-        display_df["symbol"] = display_df["symbol"].apply(
+    if "symbol" in page_df.columns:
+        page_df["symbol"] = page_df["symbol"].apply(
             lambda x: f"⭐ {x}" if x in watchlist_symbols else x
         )
 
-    # Rename columns for display
-    rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in visible_cols}
-    display_df = display_df.rename(columns=rename_map)
+    rename_map = {
+        c: COLUMN_DISPLAY_NAMES.get(c, c) for c in visible_cols if c in page_df.columns
+    }
+    visible_cols = [c for c in visible_cols if c in page_df.columns]
+    display_df = page_df[visible_cols].rename(columns=rename_map)
 
-    # ── Format numeric columns ───────────────────────────────────
     for col in display_df.columns:
         if col == "Market Cap":
             display_df[col] = display_df[col].apply(_fmt_market_cap)
         elif "%" in col:
             display_df[col] = display_df[col].apply(_fmt_pct)
-        elif col in (
-            "P/E",
-            "P/B",
-            "P/S",
-            "PEG",
-            "EV/EBITDA",
-            "Current Ratio",
-            "D/E",
-            "Beta",
-            "Total D/E",
-            "LT D/E",
-        ):
-            display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
-        elif col in (
-            "Price",
-            "52W High",
-            "52W Low",
-            "FCF/Share",
-            "Rev/Share",
-            "BV/Share",
-            "TBV/Share",
-            "EPS (TTM)",
-        ):
+        elif col in ("P/E", "P/B", "P/S", "PEG", "EV/EBITDA", "Beta"):
             display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
 
-    # ── Render table ─────────────────────────────────────────────
     st.dataframe(
         display_df,
         width="stretch",
@@ -1114,7 +986,6 @@ def render_screener_table(
         height=min(35 * len(display_df) + 38, 800),
     )
 
-    # ── Pagination controls ──────────────────────────────────────
     if total_pages > 1:
         pag_col1, pag_col2, pag_col3, pag_col4, pag_col5 = st.columns([1, 1, 3, 1, 1])
         with pag_col1:
@@ -1143,17 +1014,16 @@ def render_screener_table(
                 st.session_state["current_page"] = total_pages
                 st.rerun()
 
-    # ── Download CSV ─────────────────────────────────────────────
-    # Get full filtered data (not just current page) for download
-    full_filtered_df = (
-        engine.apply_filters(active_filters) if active_filters else engine.raw_df
+    full_rows, _, full_count = store.get_stocks(
+        filters=active_filters,
+        search_query=search_query,
+        page=1,
+        page_size=10000,
     )
-    if search_query:
-        full_filtered_df = engine.search(full_filtered_df, search_query)
-
-    csv_data = full_filtered_df.to_csv(index=False).encode("utf-8")
+    full_df = pd.DataFrame(full_rows)
+    csv_data = full_df.to_csv(index=False).encode("utf-8")
     st.download_button(
-        label=f"📥 Download CSV ({len(full_filtered_df):,} rows)",
+        label=f"📥 Download CSV ({full_count:,} rows)",
         data=csv_data,
         file_name=f"stonks_screener_{time.strftime('%Y%m%d_%H%M%S')}.csv",
         mime="text/csv",
@@ -1161,19 +1031,22 @@ def render_screener_table(
     )
 
 
-def render_watchlist_tab(df: pd.DataFrame, store: SQLiteStore) -> None:
+def render_watchlist_tab() -> None:
     """Render the watchlist management tab."""
+    store = get_store()
     st.markdown(
         '<div class="section-header">⭐ Watchlist</div>', unsafe_allow_html=True
     )
 
-    # Add to watchlist
+    all_symbols = store.get_unique_values("symbol")
+    if not all_symbols:
+        all_symbols = []
+
     col_add, col_btn = st.columns([3, 1])
     with col_add:
-        symbols_in_df = sorted(df["symbol"].tolist()) if "symbol" in df.columns else []
         add_symbol = st.selectbox(
             "Add to watchlist",
-            options=[""] + symbols_in_df,
+            options=[""] + sorted(all_symbols),
             key="watchlist_add_symbol",
             label_visibility="collapsed",
             placeholder="Select a symbol to add...",
@@ -1187,6 +1060,75 @@ def render_watchlist_tab(df: pd.DataFrame, store: SQLiteStore) -> None:
                 st.toast(f"⭐ Added {add_symbol} to watchlist!", icon="✅")
                 time.sleep(0.5)
                 st.rerun()
+
+    st.divider()
+
+    watchlist = store.get_watchlist()
+    if not watchlist:
+        st.info(
+            "Your watchlist is empty. Add stocks using the selector above or from the screener."
+        )
+        return
+
+    watchlist_symbols = [item["symbol"] for item in watchlist]
+
+    if watchlist_symbols:
+        page_rows, _, _ = store.get_stocks(
+            filters={"symbol": {"values": watchlist_symbols}},
+            page=1,
+            page_size=len(watchlist_symbols),
+        )
+        watchlist_df = pd.DataFrame(page_rows)
+    else:
+        watchlist_df = pd.DataFrame()
+
+    if not watchlist_df.empty:
+        view_cols = [
+            "symbol",
+            "description",
+            "market_cap",
+            "pe_ratio",
+            "roe_pct",
+            "dividend_yield_pct",
+            "price",
+            "beta",
+        ]
+        view_cols = [c for c in view_cols if c in watchlist_df.columns]
+        display_wl = watchlist_df[view_cols].copy()
+
+        rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
+        display_wl = display_wl.rename(columns=rename_map)
+
+        if "Market Cap" in display_wl.columns:
+            display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
+        for col in display_wl.columns:
+            if "%" in col:
+                display_wl[col] = display_wl[col].apply(_fmt_pct)
+            elif col in ("P/E", "Beta"):
+                display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
+
+        st.dataframe(display_wl, width="stretch", hide_index=True)
+
+        csv = watchlist_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label=f"📥 Download Watchlist CSV ({len(watchlist_df)} stocks)",
+            data=csv,
+            file_name=f"stonks_watchlist_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            key="download_watchlist",
+        )
+
+    st.divider()
+    st.markdown("**Remove from watchlist:**")
+    cols_per_row = 6
+    for i in range(0, len(watchlist_symbols), cols_per_row):
+        row_syms = watchlist_symbols[i : i + cols_per_row]
+        cols = st.columns(cols_per_row)
+        for j, sym in enumerate(row_syms):
+            with cols[j]:
+                if st.button(f"❌ {sym}", key=f"remove_wl_{sym}"):
+                    store.remove_from_watchlist(sym)
+                    st.rerun()
 
     st.divider()
 
@@ -1393,44 +1335,14 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
 def main() -> None:
     """Main Streamlit app entry point."""
     render_header()
+    render_sidebar_filters()
 
     store = get_store()
-
-    # Check API key
-    api_key = get_api_key()
-    if not api_key:
-        st.sidebar.markdown("### 🔑 API Key Required")
-        key_input = st.sidebar.text_input(
-            "Finnhub API Key",
-            type="password",
-            help="Get a free key at https://finnhub.io",
-            key="api_key_sidebar",
-        )
-        if key_input:
-            st.session_state["finnhub_api_key"] = key_input
-            st.rerun()
-
-        # Show placeholder
-        st.markdown(
-            """
-        <div style="text-align: center; padding: 4rem 2rem;">
-            <div style="font-size: 4rem; margin-bottom: 1rem;">🔑</div>
-            <h2 style="color: #f1f5f9; margin-bottom: 0.5rem;">Welcome to Stonks Screener</h2>
-            <p style="color: #94a3b8; max-width: 500px; margin: 0 auto;">
-                Enter your <a href="https://finnhub.io" target="_blank" style="color: #6366f1;">Finnhub</a>
-                API key in the sidebar to get started. The free tier works great!
-            </p>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-        return
+    sync_info = store.get_last_sync_info()
+    render_pipeline_hud(sync_info)
 
     # Initialize session state
     if "active_filters" not in st.session_state:
-        # Load default screen: The Quality Screen
-        from stonks.presets import POPULAR_SCREENS
-
         quality_screen = next(
             (s for s in POPULAR_SCREENS if "Quality Screen" in s["name"]),
             POPULAR_SCREENS[0],
@@ -1452,75 +1364,21 @@ def main() -> None:
     if "page_size" not in st.session_state:
         st.session_state["page_size"] = DEFAULT_PAGE_SIZE
 
-    # Load data
-
-    # UI for sync status
-    sync_info = store.get_last_sync_info()
-    render_pipeline_hud(sync_info)
-
-    df = pd.DataFrame()
-    try:
-        # Try local-first loading
-        df = load_full_dataset(api_key)
-    except Exception as e:
-        err_msg = str(e)
-        if ("401" in err_msg or "Invalid API key" in err_msg) and api_key:
-            st.error(
-                "❌ **Invalid API key.** Please check your Finnhub API key and try again."
-            )
-            st.session_state.pop("finnhub_api_key", None)
-            st.cache_data.clear()
-            if st.button("🔑 Enter a new API key", key="retry_api_key"):
-                st.rerun()
-            return
-        elif "429" in err_msg or "rate" in err_msg.lower():
-            st.toast("⏳ Rate limit exceeded. Waiting a moment...", icon="⚠️")
-            time.sleep(1)
-            st.rerun()
-            return
-        else:
-            st.error(f"❌ Failed to load data: {e}")
-            if st.button("🔄 Retry", key="retry_generic"):
-                st.cache_data.clear()
-                st.rerun()
-            return
-
-    if df.empty:
-        st.error("❌ No data loaded. Check your API key and try again.")
-        col_retry1, col_retry2 = st.columns(2)
-        with col_retry1:
-            if st.button("🔄 Retry", key="retry_empty"):
-                st.cache_data.clear()
-                st.rerun()
-        with col_retry2:
-            if st.button("🔑 Change API Key", key="change_key_empty"):
-                st.session_state.pop("finnhub_api_key", None)
-                st.cache_data.clear()
-                st.rerun()
-        return
-
-    # Render sidebar filters (also handles Popular/Saved screens)
-    render_sidebar_filters(df, store)
-
-    # Apply all filters
-    engine = ScreenerEngine(df)
-
-    # Summary cards
-    render_summary_cards(df)
+    render_summary_cards()
 
     # Main content tabs
     tab_screener, tab_watchlist = st.tabs(["📊 Screener", "⭐ Watchlist"])
 
     with tab_screener:
         # Render the new top-level filters grid
-        render_top_filters(df)
+        render_top_filters()
 
         # engine is already initialized, but we need to pass the CURRENT filtered DF to the table renderer
         # or let the table renderer do its own filtering/search
-        render_screener_table(df, engine, store)
+        render_screener_table()
 
     with tab_watchlist:
-        render_watchlist_tab(df, store)
+        render_watchlist_tab()
 
     # Footer
     st.markdown(

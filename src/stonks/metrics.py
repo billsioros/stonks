@@ -9,12 +9,10 @@ from typing import Any
 import finnhub
 import pandas as pd
 
-from stonks.cache import LocalCache
 from stonks.config import (
     FINNHUB_API_KEY,
     FINNHUB_RATE_LIMIT_CALLS,
     FINNHUB_RATE_LIMIT_WINDOW,
-    METRICS_CACHE_TTL,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,10 +65,8 @@ class MetricsProvider:
     def __init__(
         self,
         api_key: str = FINNHUB_API_KEY,
-        cache: LocalCache | None = None,
     ) -> None:
         self._client = finnhub.Client(api_key=api_key)
-        self._cache = cache or LocalCache()
         self._call_times: list[float] = []
 
     def _rate_limit(self) -> None:
@@ -88,24 +84,16 @@ class MetricsProvider:
     def fetch_metrics_raw(
         self, symbol: str, retries: int = 3, backoff: float = 1.0
     ) -> dict[str, Any]:
-        """Fetch raw basic financials for a symbol (cached) with backoff for 429s."""
-        cache_key = f"metrics_{symbol}"
-        cached = self._cache.get(cache_key, ttl=METRICS_CACHE_TTL)
-        if cached is not None:
-            return cached
-
+        """Fetch raw basic financials for a symbol with backoff for 429s."""
         for attempt in range(retries):
             self._rate_limit()
             try:
-                data = self._client.company_basic_financials(symbol, "all")
-                self._cache.set(cache_key, data)
-                return data
+                return self._client.company_basic_financials(symbol, "all")
             except Exception as e:
-                # Handle 429 Rate Limit
                 if hasattr(e, "status_code") and e.status_code == 429:
                     wait = backoff * (2**attempt)
                     logger.warning(
-                        "Rate limit (429) hit for %s. Retrying in %.1fs (Attempt %d/%d)",
+                        "Rate limit (429) for %s. Retrying in %.1fs (Attempt %d/%d)",
                         symbol,
                         wait,
                         attempt + 1,
@@ -113,38 +101,27 @@ class MetricsProvider:
                     )
                     time.sleep(wait)
                     continue
-
-                # Generic log and fail
                 logger.warning("Failed to fetch metrics for %s: %s", symbol, e)
                 return {}
 
         logger.error(
-            "Exhausted retries for %s after %d attempts due to rate limits.",
+            "Exhausted retries for %s after %d attempts.",
             symbol,
             retries,
         )
         return {}
 
     def fetch_candles_cached(self, symbol: str, years: int = 15) -> dict[str, Any]:
-        """Fetch historical candles with local caching."""
-        cache_key = f"candles_{symbol}_{years}y"
-        cached = self._cache.get(cache_key, ttl=86400 * 7)  # 1 week TTL
-        if cached is not None:
-            return cached
-
+        """Fetch historical candles."""
         to_ts = int(time.time())
         from_ts = to_ts - (years * 365 * 24 * 3600)
 
         self._rate_limit()
         try:
-            data = self._client.stock_candles(symbol, "D", from_ts, to_ts)
-            if data and data.get("s") == "ok":
-                self._cache.set(cache_key, data)
-                return data
+            return self._client.stock_candles(symbol, "D", from_ts, to_ts)
         except Exception:
             logger.warning("Failed to fetch candles for %s", symbol)
-
-        return {}
+            return {}
 
     def _calculate_cagr(
         self, start_price: float, end_price: float, years: float

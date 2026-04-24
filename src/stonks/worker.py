@@ -1,17 +1,15 @@
-"""Background worker to fetch and cache stock data daily."""
+"""Background worker to fetch and persist stock data daily."""
 
 import logging
 import time
 import schedule
-from typing import List
+from typing import Any
 
 from stonks.universe import UniverseLoader
 from stonks.metrics import MetricsProvider
-from stonks.cache import LocalCache
 from stonks.store import SQLiteStore
 from stonks.config import FINNHUB_API_KEY, DATA_DIR
 
-# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -20,124 +18,78 @@ logging.basicConfig(
 logger = logging.getLogger("stonks.worker")
 
 
-def sync_symbols_phase(
-    symbols: List[str],
-    provider: MetricsProvider,
-    store: SQLiteStore,
-    cache: LocalCache,
-    sync_type: str,
-) -> int:
-    """Sync a specific type of data for a list of symbols."""
-    total = len(symbols)
-    fetched = 0
-
-    for i, sym in enumerate(symbols):
-        if i % 100 == 0 and i > 0:
-            logger.info(f"[{sync_type}] Progress: {i}/{total} ({i / total:.1%})")
-
-        try:
-            if sync_type == "basic":
-                # Check cache first
-                cache_key = f"metrics_{sym}"
-                cached = cache.get(cache_key, ttl=86400)  # 24h
-                if cached is None:
-                    res = provider.fetch_metrics_raw(sym)
-                    if res and res.get("metric"):
-                        store.update_sync_status(sym, sync_type, "success")
-                        fetched += 1
-                    else:
-                        store.update_sync_status(
-                            sym, sync_type, "failed", "Empty response"
-                        )
-                else:
-                    store.update_sync_status(sym, sync_type, "success")
-
-            elif sync_type == "candles":
-                # Check cache first (15y candles)
-                cache_key = f"candles_{sym}_15y"
-                cached = cache.get(
-                    cache_key, ttl=86400 * 7
-                )  # 1 week for candles is enough
-                if cached is None:
-                    res = provider.fetch_candles_cached(sym, years=15)
-                    if res and res.get("s") == "ok":
-                        store.update_sync_status(sym, sync_type, "success")
-                        fetched += 1
-                    else:
-                        err = res.get("s", "unknown error") if res else "No response"
-                        store.update_sync_status(sym, sync_type, "failed", err)
-                else:
-                    store.update_sync_status(sym, sync_type, "success")
-
-        except Exception as e:
-            logger.error(f"Error syncing {sym} ({sync_type}): {e}")
-            store.update_sync_status(sym, sync_type, "failed", str(e))
-
-    return fetched
-
-
 def job():
-    """Main data fetching job."""
-    logger.info("🚀 Starting comprehensive daily data sync...")
+    """Main data fetching job - fetch directly and persist."""
+    logger.info("🚀 Starting daily data sync...")
 
     if not FINNHUB_API_KEY:
         logger.error("❌ FINNHUB_API_KEY not set. Cannot run worker.")
         return
 
     try:
-        cache = LocalCache()
         store = SQLiteStore()
-        loader = UniverseLoader(api_key=FINNHUB_API_KEY, cache=cache)
-        provider = MetricsProvider(api_key=FINNHUB_API_KEY, cache=cache)
+        loader = UniverseLoader(api_key=FINNHUB_API_KEY)
+        provider = MetricsProvider(api_key=FINNHUB_API_KEY)
 
-        # 1. Fetch US symbols
-        logger.info("📡 Fetching US symbols universe...")
+        logger.info("📡 Loading symbol universe...")
         symbols_df = loader.get_common_stocks(exchange="US")
         if symbols_df.empty:
             logger.warning("⚠️ No symbols found.")
             return
 
-        all_symbols = symbols_df["symbol"].sort_values().tolist()
-        store.save_metadata("universe_size", len(all_symbols))
+        symbol_meta = symbols_df.set_index("symbol").to_dict("index")
+        store.save_metadata("universe_size", len(symbol_meta))
+        logger.info(f"📊 Syncing {len(symbol_meta)} symbols...")
 
-        # 0. Maintenance
-        logger.info("🧹 Cleaning up expired cache entries...")
-        cache.delete_expired()
+        synced = 0
+        for i, sym in enumerate(symbol_meta):
+            if i % 100 == 0 and i > 0:
+                logger.info(
+                    f"Progress: {i}/{len(symbol_meta)} ({i / len(symbol_meta):.1%})"
+                )
 
-        # 2. Sync Basic Metrics
-        logger.info(
-            f"📊 Phase 1: Syncing basic financials for {len(all_symbols)} symbols..."
-        )
-        sync_symbols_phase(all_symbols, provider, store, cache, "basic")
+            try:
+                raw = provider.fetch_metrics_raw(sym)
+                if not raw or not raw.get("metric"):
+                    store.update_sync_status(sym, "basic", "failed", "No data")
+                    continue
 
-        # 3. Sync Candles (Historical CAGRs)
-        logger.info(
-            f"🕯️ Phase 2: Syncing historical candles for {len(all_symbols)} symbols..."
-        )
-        sync_symbols_phase(all_symbols, provider, store, cache, "candles")
+                row: dict[str, Any] = dict(symbol_meta[sym])
+                row.update(provider.normalize_metrics(sym, raw))
 
-        # 4. Retry Failed
-        for stype in ["basic", "candles"]:
-            failed = store.get_failed_symbols(stype)
-            if failed:
-                logger.info(f"🔄 Retrying {len(failed)} failed symbols for {stype}...")
-                sync_symbols_phase(failed, provider, store, cache, stype)
+                candles = provider.fetch_candles_cached(sym, years=15)
+                if candles and candles.get("s") == "ok":
+                    c = candles.get("c", [])
+                    if c:
+                        row["price"] = c[-1]
+                        for yrs in [5, 10, 15]:
+                            idx = -(yrs * 252)
+                            if abs(idx) < len(c):
+                                row[f"return_cagr_{yrs}y_pct"] = (
+                                    provider._calculate_cagr(c[idx], c[-1], yrs)
+                                )
 
-        stats = store.get_last_sync_info()
-        logger.info(f"✅ Sync complete! Stats: {stats}")
+                if len(row) > 1:
+                    store.save_stock(sym, row)
+                    synced += 1
+                    store.update_sync_status(sym, "basic", "success")
+
+            except Exception as e:
+                logger.error(f"Error syncing {sym}: {e}")
+                store.update_sync_status(sym, "basic", "failed", str(e))
+
+        logger.info(f"✅ Synced {synced}/{len(symbol_meta)} stocks to DB.")
 
     except Exception as e:
-        logger.exception(f"💥 Critical error during worker job: {e}")
+        logger.exception(f"💥 Critical error: {e}")
 
 
 def run_worker():
     """Run the worker loop."""
-    logger.info("🏁 Stonks Background Worker initialized.")
+    logger.info("🏁 Worker initialized.")
 
-    # Run once at startup
     job()
 
-    # Schedule daily at 00:00
     schedule.every().day.at("00:00").do(job)
 
     while True:

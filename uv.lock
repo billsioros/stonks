@@ -3188,7 +3188,7 @@ wheels = [
 
 [[package]]
 name = "stonks"
-version = "0.1.0"
+version = "1.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "finnhub-python" },
@@ -3235,12 +3235,12 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "pyarrow", specifier = ">=23.0.1" },
     { name = "schedule", specifier = ">=1.2.2" },
-    { name = "streamlit", specifier = ">=1.45.0" },
+    { name = "streamlit", specifier = ">=1.45" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "ansible", specifier = ">=11.5.0" },
+    { name = "ansible", specifier = ">=11.5" },
     { name = "coverage", extras = ["toml"], specifier = ">=7.6.1" },
     { name = "factory-boy", specifier = ">=3.3.3" },
     { name = "hypothesis", specifier = ">=6.142.3" },
@@ -3251,21 +3251,21 @@ dev = [
     { name = "mkdocs", specifier = ">=1.6.1" },
     { name = "mkdocs-glightbox", specifier = ">=0.5.1" },
     { name = "mkdocs-material", extras = ["imaging"], specifier = ">=9.6.21" },
-    { name = "mkdocs-minify-plugin", specifier = ">=0.8.0" },
+    { name = "mkdocs-minify-plugin", specifier = ">=0.8" },
     { name = "mkdocs-redirects", specifier = ">=1.2.1" },
     { name = "mkdocstrings", extras = ["python"], specifier = ">=0.26.1" },
     { name = "mypy", specifier = ">=1.11.2" },
-    { name = "neoteroi-mkdocs", specifier = ">=1.1.0" },
+    { name = "neoteroi-mkdocs", specifier = ">=1.1" },
     { name = "paracelsus", specifier = ">=0.7.1" },
-    { name = "poethepoet", specifier = ">=0.28.0" },
+    { name = "poethepoet", specifier = ">=0.28" },
     { name = "prek", specifier = ">=0.3.9" },
     { name = "pymdown-extensions", specifier = ">=10.11.1" },
     { name = "pytest", specifier = ">=8.3.3" },
-    { name = "pytest-asyncio", specifier = ">=0.24.0" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-clarity", specifier = ">=1.0.1" },
-    { name = "pytest-cov", specifier = ">=5.0.0" },
-    { name = "pytest-sugar", specifier = ">=1.0.0" },
-    { name = "python-semantic-release", specifier = ">=9.0.0" },
+    { name = "pytest-cov", specifier = ">=5" },
+    { name = "pytest-sugar", specifier = ">=1" },
+    { name = "python-semantic-release", specifier = ">=9" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
 ]
 

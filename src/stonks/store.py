@@ -67,6 +67,59 @@ class SQLiteStore:
                     expires_at REAL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS stocks (
+                    symbol TEXT PRIMARY KEY,
+                    description TEXT,
+                    exchange TEXT,
+                    type TEXT,
+                    mic TEXT,
+                    currency TEXT,
+                    market_cap REAL,
+                    pe_ratio REAL,
+                    pb_ratio REAL,
+                    ps_ratio REAL,
+                    peg_ratio REAL,
+                    ev_to_ebitda REAL,
+                    dividend_yield_pct REAL,
+                    gross_margin_pct REAL,
+                    operating_margin_pct REAL,
+                    net_margin_pct REAL,
+                    roa_pct REAL,
+                    roe_pct REAL,
+                    roic_pct REAL,
+                    current_ratio REAL,
+                    debt_to_equity REAL,
+                    fcf_margin_pct REAL,
+                    revenue_growth_5y_pct REAL,
+                    eps_growth_5y_pct REAL,
+                    beta REAL,
+                    price REAL,
+                    week_52_high REAL,
+                    week_52_low REAL,
+                    revenue_growth_3y_pct REAL,
+                    eps_growth_3y_pct REAL,
+                    free_cash_flow_per_share REAL,
+                    revenue_per_share REAL,
+                    book_value_per_share REAL,
+                    tangible_book_value_per_share REAL,
+                    long_term_debt_to_equity REAL,
+                    asset_turnover REAL,
+                    eps_ttm REAL,
+                    net_income REAL,
+                    free_cash_flow REAL,
+                    fcf_growth_5y_pct REAL,
+                    net_income_growth_5y_pct REAL,
+                    return_cagr_5y_pct REAL,
+                    return_cagr_10y_pct REAL,
+                    return_cagr_15y_pct REAL,
+                    roa_5y_avg_pct REAL,
+                    roe_5y_avg_pct REAL,
+                    roic_5y_avg_pct REAL,
+                    shares_insiders_pct REAL,
+                    updated_at REAL
+                )
+            """)
             conn.commit()
 
     # ── Saved Screens ────────────────────────────────────────────────
@@ -282,3 +335,237 @@ class SQLiteStore:
                 "SELECT value FROM metadata WHERE key=?", (key,)
             ).fetchone()
         return row[0] if row else None
+
+    # ── Stocks ────────────────────────────────────────────────────────
+
+    def get_stocks(
+        self,
+        filters: dict[str, Any] | None = None,
+        search_query: str = "",
+        sort_column: str | None = None,
+        sort_ascending: bool = True,
+        page: int = 1,
+        page_size: int = 25,
+    ) -> tuple[list[dict[str, Any]], int, int]:
+        """Query stocks with filters, search, sort, pagination at DB level.
+
+        Returns:
+            Tuple of (rows, total_pages, total_matching).
+        """
+        params: list[Any] = []
+        where_clauses: list[str] = []
+
+        numeric_columns = {
+            "market_cap",
+            "pe_ratio",
+            "pb_ratio",
+            "ps_ratio",
+            "peg_ratio",
+            "ev_to_ebitda",
+            "dividend_yield_pct",
+            "gross_margin_pct",
+            "operating_margin_pct",
+            "net_margin_pct",
+            "roa_pct",
+            "roe_pct",
+            "roic_pct",
+            "current_ratio",
+            "debt_to_equity",
+            "fcf_margin_pct",
+            "revenue_growth_5y_pct",
+            "eps_growth_5y_pct",
+            "beta",
+            "price",
+            "revenue_growth_3y_pct",
+            "eps_growth_3y_pct",
+            "free_cash_flow_per_share",
+            "revenue_per_share",
+            "book_value_per_share",
+            "tangible_book_value_per_share",
+            "long_term_debt_to_equity",
+            "asset_turnover",
+            "eps_ttm",
+            "net_income",
+            "free_cash_flow",
+            "fcf_growth_5y_pct",
+            "net_income_growth_5y_pct",
+            "return_cagr_5y_pct",
+            "return_cagr_10y_pct",
+            "return_cagr_15y_pct",
+            "roa_5y_avg_pct",
+            "roe_5y_avg_pct",
+            "roic_5y_avg_pct",
+            "shares_insiders_pct",
+        }
+        enum_columns = {"exchange", "type", "currency", "mic"}
+
+        if filters:
+            for col, spec in filters.items():
+                if col in numeric_columns:
+                    if "min" in spec and spec["min"] is not None:
+                        where_clauses.append(f"{col} >= ?")
+                        params.append(spec["min"])
+                    if "max" in spec and spec["max"] is not None:
+                        where_clauses.append(f"{col} <= ?")
+                        params.append(spec["max"])
+                elif col in enum_columns and "values" in spec and spec["values"]:
+                    placeholders = ",".join(["?"] * len(spec["values"]))
+                    where_clauses.append(f"{col} IN ({placeholders})")
+                    params.extend(spec["values"])
+
+        if search_query:
+            q = f"%{search_query.strip().upper()}%"
+            where_clauses.append("(symbol LIKE ? OR description LIKE ?)")
+            params.extend([q, q])
+
+        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+
+        base_columns = [
+            "symbol",
+            "description",
+            "exchange",
+            "type",
+            "mic",
+            "currency",
+            "market_cap",
+            "pe_ratio",
+            "pb_ratio",
+            "ps_ratio",
+            "peg_ratio",
+            "ev_to_ebitda",
+            "dividend_yield_pct",
+            "gross_margin_pct",
+            "operating_margin_pct",
+            "net_margin_pct",
+            "roa_pct",
+            "roe_pct",
+            "roic_pct",
+            "current_ratio",
+            "debt_to_equity",
+            "fcf_margin_pct",
+            "revenue_growth_5y_pct",
+            "eps_growth_5y_pct",
+            "beta",
+            "price",
+            "week_52_high",
+            "week_52_low",
+        ]
+        select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"
+
+        count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"
+        with self._connect() as conn:
+            total_matching = conn.execute(count_sql, params).fetchone()[0]
+
+        total_pages = max(1, (total_matching + page_size - 1) // page_size)
+        page = max(1, min(page, total_pages))
+        offset = (page - 1) * page_size
+
+        if sort_column and sort_column in numeric_columns:
+            sort_dir = "ASC" if sort_ascending else "DESC"
+            select_sql += f" ORDER BY {sort_column} {sort_dir} NULLS LAST"
+
+        select_sql += f" LIMIT {page_size} OFFSET {offset}"
+
+        rows: list[dict[str, Any]] = []
+        with self._connect() as conn:
+            cur = conn.execute(select_sql, params)
+            cols = [c[0] for c in cur.description]
+            for row in cur.fetchall():
+                rows.append(dict(zip(cols, row)))
+
+        return rows, total_pages, total_matching
+
+    def save_stock(self, symbol: str, data: dict[str, Any]) -> None:
+        """Upsert a stock's metrics."""
+        now = time.time()
+
+        all_fields = [
+            "symbol",
+            "description",
+            "exchange",
+            "type",
+            "mic",
+            "currency",
+            "market_cap",
+            "pe_ratio",
+            "pb_ratio",
+            "ps_ratio",
+            "peg_ratio",
+            "ev_to_ebitda",
+            "dividend_yield_pct",
+            "gross_margin_pct",
+            "operating_margin_pct",
+            "net_margin_pct",
+            "roa_pct",
+            "roe_pct",
+            "roic_pct",
+            "current_ratio",
+            "debt_to_equity",
+            "fcf_margin_pct",
+            "revenue_growth_5y_pct",
+            "eps_growth_5y_pct",
+            "beta",
+            "price",
+            "week_52_high",
+            "week_52_low",
+            "revenue_growth_3y_pct",
+            "eps_growth_3y_pct",
+            "free_cash_flow_per_share",
+            "revenue_per_share",
+            "book_value_per_share",
+            "tangible_book_value_per_share",
+            "long_term_debt_to_equity",
+            "asset_turnover",
+            "eps_ttm",
+            "net_income",
+            "free_cash_flow",
+            "fcf_growth_5y_pct",
+            "net_income_growth_5y_pct",
+            "return_cagr_5y_pct",
+            "return_cagr_10y_pct",
+            "return_cagr_15y_pct",
+            "roa_5y_avg_pct",
+            "roe_5y_avg_pct",
+            "roic_5y_avg_pct",
+            "shares_insiders_pct",
+        ]
+
+        fields = []
+        values = []
+        fields_set = []
+
+        for f in all_fields:
+            if f in data and data.get(f) is not None:
+                fields.append(f)
+                values.append(data[f])
+                fields_set.append(f"{f}=excluded.{f}")
+
+        fields.append("updated_at")
+        values.append(now)
+        fields_set.append("updated_at=excluded.updated_at")
+
+        sql = f"""INSERT INTO stocks ({", ".join(fields)})
+                  VALUES ({", ".join(["?"] * len(values))})
+                  ON CONFLICT(symbol) DO UPDATE SET {", ".join(fields_set)}"""
+
+        with self._connect() as conn:
+            conn.execute(sql, values)
+            conn.commit()
+
+    def get_unique_values(self, column: str) -> list:
+        """Get unique values for an enum column."""
+        allowed = {"exchange", "type", "currency", "mic"}
+        if column not in allowed:
+            return []
+
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"SELECT DISTINCT {column} FROM stocks WHERE {column} IS NOT NULL ORDER BY {column}"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_stock_count(self) -> int:
+        """Get total count of stocks in DB."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM stocks").fetchone()
+        return row[0] if row else 0
