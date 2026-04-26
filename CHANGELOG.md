@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v1.1.2 (2026-04-26)
+
+### Bug Fixes
+
+- Remove caching layer and engine class, and add persistent stock storage schema
+  ([`e8f500b`](https://github.com/billsioros/stonks/commit/e8f500bfcade4675b79979a1598de7e03f1cbe3d))
+
+
 ## v1.1.1 (2026-04-20)
 
 ### Bug Fixes
