@@ -1,26 +1,16 @@
 """Tests for the MetricsProvider module."""
 
-from __future__ import annotations
-
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-import pandas as pd
 
 from stonks.metrics import MetricsProvider
 
 
 @pytest.fixture
-def mock_cache() -> MagicMock:
-    return MagicMock()
-
-
-@pytest.fixture
-def provider(mock_cache: MagicMock) -> MetricsProvider:
+def provider() -> MetricsProvider:
     with patch("finnhub.Client") as mock_client_class:
-        p = MetricsProvider(api_key="test_key", cache=mock_cache)
-        # Store the mock client for easier access in tests
+        p = MetricsProvider(api_key="test_key")
         p._mock_client = mock_client_class.return_value
         return p
 
@@ -35,38 +25,7 @@ class TestMetricsProvider:
 
             assert mock_sleep.called
 
-    def test_fetch_metrics_raw_cached(
-        self, provider: MetricsProvider, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = {"metric": {"peTTM": 15}}
-
-        result = provider.fetch_metrics_raw("AAPL")
-
-        assert result == {"metric": {"peTTM": 15}}
-        mock_cache.get.assert_called_once()
-        provider._mock_client.company_basic_financials.assert_not_called()
-
-    def test_fetch_metrics_raw_api(
-        self, provider: MetricsProvider, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = None
-        provider._mock_client.company_basic_financials.return_value = {
-            "metric": {"peTTM": 20}
-        }
-
-        result = provider.fetch_metrics_raw("AAPL")
-
-        assert result == {"metric": {"peTTM": 20}}
-        mock_cache.set.assert_called_once()
-        provider._mock_client.company_basic_financials.assert_called_once_with(
-            "AAPL", "all"
-        )
-
-    def test_fetch_metrics_raw_retry_on_429(
-        self, provider: MetricsProvider, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = None
-
+    def test_fetch_metrics_raw_retry_on_429(self, provider: MetricsProvider) -> None:
         # Mock exception with status_code 429
         err = Exception("Rate limit")
         err.status_code = 429
@@ -119,14 +78,3 @@ class TestMetricsProvider:
         assert provider._calculate_cagr(100, 121, 2) == 10.0
         assert provider._calculate_cagr(100, 0, 2) is None
         assert provider._calculate_cagr(100, 121, 0) is None
-
-    def test_get_metrics_for_symbols_cache_only(
-        self, provider: MetricsProvider, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get_many.return_value = {"metrics_AAPL": {"metric": {"peTTM": 30}}}
-
-        df = provider.get_metrics_for_symbols(["AAPL", "MSFT"], cache_only=True)
-
-        assert len(df) == 1
-        assert df.iloc[0]["symbol"] == "AAPL"
-        assert df.iloc[0]["pe_ratio"] == 30

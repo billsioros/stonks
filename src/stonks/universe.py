@@ -1,12 +1,11 @@
 """UniverseLoader — loads the stock symbol list from Finnhub."""
 
-from __future__ import annotations
-
 import logging
 import time
+from typing import Any
 
-import finnhub
-import pandas as pd
+import finnhub  # type: ignore[import-untyped]
+import pandas as pd  # type: ignore[import-untyped]
 
 from stonks.config import (
     DEFAULT_EXCHANGE,
@@ -17,7 +16,7 @@ from stonks.config import (
 logger = logging.getLogger(__name__)
 
 # Module-level cache: exchange -> (timestamp, data)
-_symbols_cache: dict = {}
+_symbols_cache: dict[str, tuple[float, Any]] = {}
 
 
 class UniverseLoader:

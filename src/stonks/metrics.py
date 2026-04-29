@@ -1,13 +1,10 @@
 """MetricsProvider — pulls fundamental data from Finnhub and normalizes it."""
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import Any
 
-import finnhub
-import pandas as pd
+import finnhub  # type: ignore[import-untyped]
 
 from stonks.config import (
     FINNHUB_API_KEY,
@@ -88,7 +85,7 @@ class MetricsProvider:
         for attempt in range(retries):
             self._rate_limit()
             try:
-                return self._client.company_basic_financials(symbol, "all")
+                return self._client.company_basic_financials(symbol, "all")  # type: ignore[no-any-return]
             except Exception as e:
                 if hasattr(e, "status_code") and e.status_code == 429:
                     wait = backoff * (2**attempt)
@@ -118,7 +115,7 @@ class MetricsProvider:
 
         self._rate_limit()
         try:
-            return self._client.stock_candles(symbol, "D", from_ts, to_ts)
+            return self._client.stock_candles(symbol, "D", from_ts, to_ts)  # type: ignore[no-any-return]
         except Exception:
             logger.warning("Failed to fetch candles for %s", symbol)
             return {}
@@ -130,7 +127,7 @@ class MetricsProvider:
         if start_price <= 0 or end_price <= 0 or years <= 0:
             return None
         try:
-            return round(((end_price / start_price) ** (1 / years) - 1) * 100, 2)
+            return round(((end_price / start_price) ** (1 / years) - 1) * 100, 2)  # type: ignore[no-any-return]
         except Exception:
             return None
 
@@ -189,74 +186,3 @@ class MetricsProvider:
         row["price"] = row.get("week_52_high")
 
         return row
-
-    def get_metrics_for_symbols(
-        self,
-        symbols: list[str],
-        progress_callback: Any | None = None,
-        cache_only: bool = False,
-    ) -> pd.DataFrame:
-        """Fetch and normalize metrics for a list of symbols.
-
-        Args:
-            symbols: List of ticker symbols.
-            progress_callback: Optional callable(current, total) for progress tracking.
-            cache_only: If True, only return data from cache; never hit the API.
-
-        Returns:
-            DataFrame with one row per symbol.
-        """
-        rows: list[dict[str, Any]] = []
-        total = len(symbols)
-
-        if cache_only:
-            # Bulk fetch basic metrics from cache
-            all_raw = self._cache.get_many([f"metrics_{s}" for s in symbols])
-            # Bulk fetch candles from cache
-            all_candles = self._cache.get_many([f"candles_{s}_15y" for s in symbols])
-
-            for sym in symbols:
-                raw = all_raw.get(f"metrics_{sym}")
-                row = self.normalize_metrics(sym, raw) if raw else {"symbol": sym}
-
-                # Check candles
-                candles = all_candles.get(f"candles_{sym}_15y")
-                if candles and candles.get("s") == "ok":
-                    c = candles.get("c", [])
-                    if c:
-                        current_price = c[-1]
-                        row["price"] = current_price
-                        for yrs in [5, 10, 15]:
-                            idx = -(yrs * 252)
-                            if abs(idx) < len(c):
-                                row[f"return_cagr_{yrs}y_pct"] = self._calculate_cagr(
-                                    c[idx], current_price, yrs
-                                )
-
-                if len(row) > 1:  # If it has more than just 'symbol'
-                    rows.append(row)
-        else:
-            for i, sym in enumerate(symbols):
-                raw = self.fetch_metrics_raw(sym)
-                if raw:
-                    row = self.normalize_metrics(sym, raw)
-                    # Also fetch candles if not cache_only (but worker should have done this)
-                    candles = self.fetch_candles_cached(sym, years=15)
-                    if candles and candles.get("s") == "ok":
-                        c = candles.get("c", [])
-                        if c:
-                            current_price = c[-1]
-                            row["price"] = current_price
-                            for yrs in [5, 10, 15]:
-                                idx = -(yrs * 252)
-                                if abs(idx) < len(c):
-                                    row[f"return_cagr_{yrs}y_pct"] = (
-                                        self._calculate_cagr(c[idx], current_price, yrs)
-                                    )
-                    rows.append(row)
-
-                if progress_callback:
-                    progress_callback(i + 1, total)
-
-        df = pd.DataFrame(rows)
-        return df

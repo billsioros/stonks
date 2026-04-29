@@ -1,48 +1,26 @@
 """Tests for the UniverseLoader module."""
 
-from __future__ import annotations
-
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-import pandas as pd
 
-from stonks.universe import UniverseLoader
-
-
-@pytest.fixture
-def mock_cache() -> MagicMock:
-    return MagicMock()
+from stonks.universe import UniverseLoader, _symbols_cache
 
 
 @pytest.fixture
-def loader(mock_cache: MagicMock) -> UniverseLoader:
+def loader() -> UniverseLoader:
+    """Create a loader with cleared cache."""
+    # Clear the module-level cache before each test
+    _symbols_cache.clear()
     with patch("finnhub.Client") as mock_client_class:
-        l = UniverseLoader(api_key="test_key", cache=mock_cache)
+        l = UniverseLoader(api_key="test_key")
         l._mock_client = mock_client_class.return_value
         return l
 
 
 class TestUniverseLoader:
-    def test_load_symbols_cached(
-        self, loader: UniverseLoader, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = [
-            {"symbol": "AAPL", "type": "Common Stock"},
-            {"symbol": "GOOGL", "type": "Common Stock"},
-        ]
-
-        df = loader.load_symbols("US")
-
-        assert len(df) == 2
-        assert df.iloc[0]["symbol"] == "AAPL"
-        mock_cache.get.assert_called_once()
-        loader._mock_client.stock_symbols.assert_not_called()
-
-    def test_load_symbols_api(
-        self, loader: UniverseLoader, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = None
+    def test_load_symbols_api(self, loader: UniverseLoader) -> None:
+        """Test loading symbols from API."""
         loader._mock_client.stock_symbols.return_value = [
             {"symbol": "TSLA", "type": "Common Stock"},
         ]
@@ -51,30 +29,19 @@ class TestUniverseLoader:
 
         assert len(df) == 1
         assert df.iloc[0]["symbol"] == "TSLA"
-        mock_cache.set.assert_called_once()
         loader._mock_client.stock_symbols.assert_called_once_with("US")
 
-    def test_load_symbols_retry_on_429(
-        self, loader: UniverseLoader, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = None
+    def test_load_symbols_handles_exception(self, loader: UniverseLoader) -> None:
+        """Test that exceptions are handled gracefully."""
+        loader._mock_client.stock_symbols.side_effect = Exception("API Error")
 
-        err = Exception("Rate limit")
-        err.status_code = 429
+        df = loader.load_symbols("US")
 
-        loader._mock_client.stock_symbols.side_effect = [err, [{"symbol": "MSFT"}]]
+        assert df.empty
 
-        with patch("time.sleep"):
-            df = loader.load_symbols("US")
-
-        assert len(df) == 1
-        assert df.iloc[0]["symbol"] == "MSFT"
-        assert loader._mock_client.stock_symbols.call_count == 2
-
-    def test_get_common_stocks(
-        self, loader: UniverseLoader, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = [
+    def test_get_common_stocks(self, loader: UniverseLoader) -> None:
+        """Test filtering for common stocks only."""
+        loader._mock_client.stock_symbols.return_value = [
             {"symbol": "AAPL", "type": "Common Stock"},
             {"symbol": "ETF1", "type": "ETF"},
         ]
@@ -85,12 +52,24 @@ class TestUniverseLoader:
         assert df.iloc[0]["symbol"] == "AAPL"
         assert df.iloc[0]["type"] == "Common Stock"
 
-    def test_load_symbols_empty_response(
-        self, loader: UniverseLoader, mock_cache: MagicMock
-    ) -> None:
-        mock_cache.get.return_value = None
+    def test_load_symbols_empty_response(self, loader: UniverseLoader) -> None:
+        """Test handling of empty API response."""
         loader._mock_client.stock_symbols.return_value = []
 
         df = loader.load_symbols("US")
 
         assert df.empty
+
+    def test_load_symbols_caches_result(self, loader: UniverseLoader) -> None:
+        """Test that symbols are cached."""
+        loader._mock_client.stock_symbols.return_value = [
+            {"symbol": "AAPL", "type": "Common Stock"},
+        ]
+
+        # First call
+        df1 = loader.load_symbols("US")
+        # Second call should use cache
+        df2 = loader.load_symbols("US")
+
+        assert len(df1) == 1
+        assert loader._mock_client.stock_symbols.call_count == 1  # Only called once

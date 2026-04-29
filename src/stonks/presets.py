@@ -1,7 +1,5 @@
 """Predefined popular screener presets."""
 
-from __future__ import annotations
-
 from typing import Any
 
 # Each preset is a dict with:

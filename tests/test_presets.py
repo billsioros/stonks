@@ -1,7 +1,5 @@
 """Tests for the presets module."""
 
-from __future__ import annotations
-
 from stonks.presets import POPULAR_SCREENS
 
 

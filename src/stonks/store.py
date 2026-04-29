@@ -1,7 +1,5 @@
 """SQLiteStore — persists saved screens and watchlists."""
 
-from __future__ import annotations
-
 import json
 import sqlite3
 import time
@@ -184,28 +182,6 @@ class SQLiteStore:
             conn.execute("DELETE FROM saved_screens WHERE name=?", (name,))
             conn.commit()
 
-    def get_screen(self, name: str) -> dict[str, Any] | None:
-        """Retrieve a specific saved screen by name."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT id, name, filters, view_preset, sort_column, sort_ascending, created_at, updated_at FROM saved_screens WHERE name=?",
-                (name,),
-            ).fetchone()
-
-        if not row:
-            return None
-
-        return {
-            "id": row[0],
-            "name": row[1],
-            "filters": json.loads(row[2]),
-            "view_preset": row[3],
-            "sort_column": row[4],
-            "sort_ascending": bool(row[5]),
-            "created_at": row[6],
-            "updated_at": row[7],
-        }
-
     # ── Watchlist ────────────────────────────────────────────────────
 
     def add_to_watchlist(self, symbol: str, notes: str = "") -> None:
@@ -241,14 +217,6 @@ class SQLiteStore:
             rows = conn.execute("SELECT symbol FROM watchlist").fetchall()
         return [r[0] for r in rows]
 
-    def is_in_watchlist(self, symbol: str) -> bool:
-        """Check if a symbol is in the watchlist."""
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM watchlist WHERE symbol=?", (symbol,)
-            ).fetchone()
-        return row is not None
-
     # ── Sync Status ──────────────────────────────────────────────────
 
     def update_sync_status(
@@ -269,11 +237,22 @@ class SQLiteStore:
             )
             conn.commit()
 
-    def get_failed_symbols(self, sync_type: str) -> list[str]:
-        """Return symbols that failed the last sync attempt."""
+    def get_stale_symbols(self, sync_type: str, stale_hours: int = 24 * 7) -> list[str]:
+        """Return symbols that were successfully synced but are stale."""
+        cutoff = time.time() - (stale_hours * 3600)
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT symbol FROM sync_status WHERE sync_type=? AND status='failed'",
+                """SELECT symbol FROM sync_status
+                   WHERE sync_type=? AND status='success' AND last_attempt < ?""",
+                (sync_type, cutoff),
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_synced_symbols(self, sync_type: str) -> list[str]:
+        """Return symbols that were successfully synced."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT symbol FROM sync_status WHERE sync_type=? AND status='success'",
                 (sync_type,),
             ).fetchall()
         return [r[0] for r in rows]
@@ -552,7 +531,7 @@ class SQLiteStore:
             conn.execute(sql, values)
             conn.commit()
 
-    def get_unique_values(self, column: str) -> list:
+    def get_unique_values(self, column: str) -> list[str]:
         """Get unique values for an enum column."""
         allowed = {"exchange", "type", "currency", "mic"}
         if column not in allowed:

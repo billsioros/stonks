@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-import pandas as pd
+import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
 from stonks.config import (
@@ -472,27 +472,6 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
     return f"{val:,.{decimals}f}"
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def get_stocks_from_db(
-    filters: dict[str, Any] | None = None,
-    search_query: str = "",
-    sort_column: str | None = None,
-    sort_ascending: bool = True,
-    page: int = 1,
-    page_size: int = 25,
-) -> tuple[list[dict[str, Any]], int, int]:
-    """Fetch stocks from SQLite with filters, search, sort, pagination at DB level."""
-    store = SQLiteStore()
-    return store.get_stocks(
-        filters=filters,
-        search_query=search_query,
-        sort_column=sort_column,
-        sort_ascending=sort_ascending,
-        page=page,
-        page_size=page_size,
-    )
-
-
 def render_header() -> None:
     """Render the hero header."""
     st.markdown(
@@ -671,7 +650,7 @@ def render_sidebar_filters() -> dict[str, Any]:
         with st.expander("⚙️ Settings", expanded=False):
             st.info("Cache is managed by the worker.")
 
-    return st.session_state.get("active_filters", {})
+    return st.session_state.get("active_filters", {})  # type: ignore[no-any-return]
 
 
 def render_top_filters() -> dict[str, Any]:
@@ -824,7 +803,7 @@ def render_top_filters() -> dict[str, Any]:
             st.session_state["current_page"] = 1
             st.rerun()
 
-    return filters
+    return filters  # type: ignore[no-any-return]
 
 
 def render_screener_table() -> None:
@@ -1132,7 +1111,6 @@ def render_watchlist_tab() -> None:
 
     st.divider()
 
-    # Display watchlist
     watchlist = store.get_watchlist()
     if not watchlist:
         st.info(
@@ -1142,15 +1120,17 @@ def render_watchlist_tab() -> None:
 
     watchlist_symbols = [item["symbol"] for item in watchlist]
 
-    # Get data for watchlist symbols
-    watchlist_df = (
-        df[df["symbol"].isin(watchlist_symbols)].copy()
-        if "symbol" in df.columns
-        else pd.DataFrame()
-    )
+    if watchlist_symbols:
+        page_rows, _, _ = store.get_stocks(
+            filters={"symbol": {"values": watchlist_symbols}},
+            page=1,
+            page_size=len(watchlist_symbols),
+        )
+        watchlist_df = pd.DataFrame(page_rows)
+    else:
+        watchlist_df = pd.DataFrame()
 
     if not watchlist_df.empty:
-        # Show watchlist with key metrics
         view_cols = [
             "symbol",
             "description",
@@ -1167,7 +1147,6 @@ def render_watchlist_tab() -> None:
         rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
         display_wl = display_wl.rename(columns=rename_map)
 
-        # Format
         if "Market Cap" in display_wl.columns:
             display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
         for col in display_wl.columns:
@@ -1178,7 +1157,6 @@ def render_watchlist_tab() -> None:
 
         st.dataframe(display_wl, width="stretch", hide_index=True)
 
-        # Download watchlist
         csv = watchlist_df.to_csv(index=False).encode("utf-8")
         st.download_button(
             label=f"📥 Download Watchlist CSV ({len(watchlist_df)} stocks)",

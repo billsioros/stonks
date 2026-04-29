@@ -1,7 +1,5 @@
 """Application configuration and constants."""
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -11,16 +9,13 @@ FINNHUB_API_KEY: str = os.environ.get("FINNHUB_API_KEY", "")
 # ── Paths ────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
-CACHE_DIR = DATA_DIR / "cache"
 DB_PATH = DATA_DIR / "stonks.db"
 
 # Ensure dirs exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Cache TTL (seconds) ─────────────────────────────────────────────
 SYMBOLS_CACHE_TTL: int = 86_400  # 24 hours
-METRICS_CACHE_TTL: int = 86_400  # 24 hours
 
 # ── Rate limiting ────────────────────────────────────────────────────
 FINNHUB_RATE_LIMIT_CALLS: int = 60  # free tier: 60 calls/minute
