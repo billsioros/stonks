@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.0.0 (2026-04-29)
+
+### Features
+
+- Refactor MetricsProvider and SQLiteStore, enhance job synchronization logic
+  ([`968f9fa`](https://github.com/billsioros/stonks/commit/968f9fa717ffe25749006e716ab9bc1752a94ba6))
+
+
 ## v1.1.2 (2026-04-26)
 
 ### Bug Fixes
