@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.2.0 (2026-05-06)
+
+### Features
+
+- Integrate analyst recommendations, price targets, and company profiles into data pipeline and UI
+  ([`819e0d8`](https://github.com/billsioros/stonks/commit/819e0d8ee9bbc8885a4bdb7addcbf6a6a4d76426))
+
+
 ## v2.1.0 (2026-05-06)
 
 ### Features
