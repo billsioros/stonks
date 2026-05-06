@@ -37,7 +37,7 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "mic": "MIC",
     "currency": "Currency",
     "market_cap": "Market Cap",
-    "pe_ratio": "P/E",
+    "pe_ratio": "Pe ratio",
     "pb_ratio": "P/B",
     "ps_ratio": "P/S",
     "dividend_yield_pct": "Div Yield %",
@@ -55,7 +55,7 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "beta": "Beta",
     "week_52_high": "52W High",
     "week_52_low": "52W Low",
-    "price": "Price",
+    "price": "Stock Price",
     "peg_ratio": "PEG",
     "ev_to_ebitda": "EV/EBITDA",
     "free_cash_flow_per_share": "FCF/Share",
@@ -81,6 +81,10 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "roe_5y_avg_pct": "ROE (5Y) %",
     "roic_5y_avg_pct": "ROIC (5Y) %",
     "shares_insiders_pct": "Shares Insiders %",
+    "industry": "Industry",
+    "short_pct": "Short % Shares",
+    "rating": "Rating",
+    "pt_upside_pct": "PT Upside",
 }
 
 # ── View presets ─────────────────────────────────────────────────────
@@ -137,17 +141,15 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "symbol",
         "description",
         "market_cap",
-        "roic_5y_avg_pct",
-        "gross_margin_pct",
-        "free_cash_flow",
-        "return_cagr_5y_pct",
-        "operating_margin_pct",
-        "net_income",
-        "fcf_growth_5y_pct",
-        "debt_to_equity",
-        "roe_5y_avg_pct",
+        "price",
+        "industry",
+        "pe_ratio",
+        "pt_upside_pct",
+        "ev_to_ebitda",
+        "short_pct",
+        "rating",
     ],
-    "All Columns": [],  # empty means show all
+    "All Columns": COLUMN_DISPLAY_NAMES.keys(),
 }
 
 # ── Numeric filter columns ──────────────────────────────────────────
@@ -191,6 +193,8 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
     "roe_5y_avg_pct",
     "roic_5y_avg_pct",
     "shares_insiders_pct",
+    "short_pct",
+    "pt_upside_pct",
 ]
 
 # ── Enum filter columns ─────────────────────────────────────────────

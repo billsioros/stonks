@@ -39,7 +39,7 @@ _METRIC_MAP: dict[str, str] = {
     "10DayAverageTradingVolume": "avg_volume_10d",
     "pegRatio": "peg_ratio",
     "enterpriseValue": "enterprise_value",
-    "enterpriseValue/ebitdaTTM": "ev_to_ebitda",
+    "evEbitdaTTM": "ev_to_ebitda",
     "freeCashFlowPerShareTTM": "free_cash_flow_per_share",
     "revenuePerShareTTM": "revenue_per_share",
     "bookValuePerShareQuarterly": "book_value_per_share",
@@ -53,6 +53,7 @@ _METRIC_MAP: dict[str, str] = {
     "revenueGrowth3Y": "revenue_growth_3y_pct",
     "netIncomeEmployeeTTM": "net_income",
     "sharesInsiders": "shares_insiders_pct",
+    "shortPercentFloat": "short_pct",
 }
 
 
@@ -108,6 +109,30 @@ class MetricsProvider:
         )
         return {}
 
+    def fetch_profile(self, symbol: str) -> dict[str, Any]:
+        """Fetch company profile (industry, exchange)."""
+        self._rate_limit()
+        try:
+            return self._client.company_profile2(symbol=symbol)  # type: ignore[no-any-return]
+        except Exception:
+            return {}
+
+    def fetch_recommendations(self, symbol: str) -> dict[str, Any]:
+        """Fetch analyst recommendations."""
+        self._rate_limit()
+        try:
+            return self._client.recommendation_trends(symbol)  # type: ignore[no-any-return]
+        except Exception:
+            return []
+
+    def fetch_price_target(self, symbol: str) -> dict[str, Any]:
+        """Fetch analyst price targets."""
+        self._rate_limit()
+        try:
+            return self._client.price_target(symbol)  # type: ignore[no-any-return]
+        except Exception:
+            return {}
+
     def fetch_candles_cached(self, symbol: str, years: int = 15) -> dict[str, Any]:
         """Fetch historical candles."""
         to_ts = int(time.time())
@@ -131,7 +156,14 @@ class MetricsProvider:
         except Exception:
             return None
 
-    def normalize_metrics(self, symbol: str, raw: dict[str, Any]) -> dict[str, Any]:
+    def normalize_metrics(
+        self,
+        symbol: str,
+        raw: dict[str, Any],
+        profile: dict[str, Any] | None = None,
+        recs: list[dict[str, Any]] | None = None,
+        target: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Extract and rename basic financials (no heavy candles)."""
         metrics: dict[str, Any] = raw.get("metric", {}) or {}
         series: dict[str, Any] = raw.get("series", {}) or {}
@@ -212,5 +244,33 @@ class MetricsProvider:
 
         # Fallback price
         row["price"] = row.get("week_52_high")
+
+        # ── New Fields ───────────────────────────────────────────────
+        if profile:
+            row["industry"] = profile.get("finnhubIndustry")
+
+        if recs and len(recs) > 0:
+            latest = recs[0]
+            # Simple heuristic for rating
+            s_buy, buy = latest.get("strongBuy", 0), latest.get("buy", 0)
+            s_sell, sell = latest.get("strongSell", 0), latest.get("sell", 0)
+            hold = latest.get("hold", 0)
+
+            if s_buy > buy and s_buy > hold:
+                row["rating"] = "Strong Buy"
+            elif buy > hold:
+                row["rating"] = "Buy"
+            elif s_sell > sell and s_sell > hold:
+                row["rating"] = "Strong Sell"
+            elif sell > hold:
+                row["rating"] = "Sell"
+            else:
+                row["rating"] = "Hold"
+
+        if target:
+            target_mean = target.get("targetMean")
+            price = row.get("price")
+            if target_mean and price and price > 0:
+                row["pt_upside_pct"] = round(((target_mean - price) / price) * 100, 2)
 
         return row

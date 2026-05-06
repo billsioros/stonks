@@ -115,6 +115,10 @@ class SQLiteStore:
                     roe_5y_avg_pct REAL,
                     roic_5y_avg_pct REAL,
                     shares_insiders_pct REAL,
+                    industry TEXT,
+                    short_pct REAL,
+                    rating TEXT,
+                    pt_upside_pct REAL,
                     updated_at REAL
                 )
             """)
@@ -448,6 +452,10 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "industry",
+            "short_pct",
+            "rating",
+            "pt_upside_pct",
         ]
         select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"
 
@@ -527,6 +535,10 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "industry",
+            "short_pct",
+            "rating",
+            "pt_upside_pct",
         ]
 
         fields = []

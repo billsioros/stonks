@@ -901,9 +901,18 @@ def render_screener_table() -> None:
     for col in display_df.columns:
         if col == "Market Cap":
             display_df[col] = display_df[col].apply(_fmt_market_cap)
-        elif "%" in col:
+        elif "%" in col or "Upside" in col or "Short" in col:
             display_df[col] = display_df[col].apply(_fmt_pct)
-        elif col in ("P/E", "P/B", "P/S", "PEG", "EV/EBITDA", "Beta"):
+        elif col in (
+            "Pe ratio",
+            "PE Ratio",
+            "P/B",
+            "P/S",
+            "PEG",
+            "EV/EBITDA",
+            "EV/EBITDA^",
+            "Beta",
+        ):
             display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
 
     st.dataframe(

@@ -73,8 +73,16 @@ def job() -> None:
                         store.update_sync_status(sym, "basic", "failed", "No data")
                         continue
 
+                    profile = provider.fetch_profile(sym)
+                    recs = provider.fetch_recommendations(sym)
+                    target = provider.fetch_price_target(sym)
+
                     row: dict[str, Any] = dict(symbol_meta[sym])
-                    row.update(provider.normalize_metrics(sym, raw))
+                    row.update(
+                        provider.normalize_metrics(
+                            sym, raw, profile=profile, recs=recs, target=target
+                        )
+                    )
                     store.save_stock(sym, row)
                     store.update_sync_status(sym, "basic", "success")
 
@@ -169,8 +177,16 @@ def job() -> None:
                         store.update_sync_status(sym, "basic", "failed", "No data")
                         continue
 
+                    profile = provider.fetch_profile(sym)
+                    recs = provider.fetch_recommendations(sym)
+                    target = provider.fetch_price_target(sym)
+
                     row: dict[str, Any] = dict(symbol_meta[sym])
-                    row.update(provider.normalize_metrics(sym, raw))
+                    row.update(
+                        provider.normalize_metrics(
+                            sym, raw, profile=profile, recs=recs, target=target
+                        )
+                    )
                     store.save_stock(sym, row)
                     store.update_sync_status(sym, "basic", "success")
 
