@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v2.1.0 (2026-05-06)
+
+### Features
+
+- Add comprehensive financial metrics and implement robust derivation logic for missing data points
+  ([`7ced3a4`](https://github.com/billsioros/stonks/commit/7ced3a4df82dc226e8195658890cc869cf4d209d))
+
+### Refactoring
+
+- Remove unused summary metric cards from the main dashboard view
+  ([`9aaa04b`](https://github.com/billsioros/stonks/commit/9aaa04b218014e15a2148024906494a4ac467af4))
+
+
 ## v2.0.0 (2026-04-29)
 
 ### Features
