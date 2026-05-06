@@ -487,58 +487,6 @@ def render_header() -> None:
     )
 
 
-def render_summary_cards() -> None:
-    """Render summary metric cards."""
-    store = get_store()
-    total = store.get_stock_count()
-
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.markdown(
-            f"""
-        <div class="metric-card">
-            <div class="label">Total Stocks</div>
-            <div class="value">{total:,}</div>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-    with col2:
-        st.markdown(
-            """
-        <div class="metric-card">
-            <div class="label">Median P/E</div>
-            <div class="value">—</div>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-    with col3:
-        st.markdown(
-            """
-        <div class="metric-card">
-            <div class="label">Median ROE</div>
-            <div class="value">—</div>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-    with col4:
-        st.markdown(
-            """
-        <div class="metric-card">
-            <div class="label">Median Div Yield</div>
-            <div class="value">—</div>
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-
 def render_sidebar_filters() -> dict[str, Any]:
     """Render the sidebar filter builder without requiring df."""
     with st.sidebar:
@@ -1341,8 +1289,6 @@ def main() -> None:
         st.session_state["sort_ascending"] = True
     if "page_size" not in st.session_state:
         st.session_state["page_size"] = DEFAULT_PAGE_SIZE
-
-    render_summary_cards()
 
     # Main content tabs
     tab_screener, tab_watchlist = st.tabs(["📊 Screener", "⭐ Watchlist"])
