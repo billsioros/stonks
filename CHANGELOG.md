@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v2.3.0 (2026-05-06)
+
+### Features
+
+- Update app branding with custom favicon, add project backstory to README, and remove unused
+  database method
+  ([`4434b14`](https://github.com/billsioros/stonks/commit/4434b147965ea4512956066c9d73dd4381fd20d7))
+
+
 ## v2.2.0 (2026-05-06)
 
 ### Features
