@@ -574,9 +574,3 @@ class SQLiteStore:
                 f"SELECT DISTINCT {column} FROM stocks WHERE {column} IS NOT NULL ORDER BY {column}"
             ).fetchall()
         return [r[0] for r in rows]
-
-    def get_stock_count(self) -> int:
-        """Get total count of stocks in DB."""
-        with self._connect() as conn:
-            row = conn.execute("SELECT COUNT(*) FROM stocks").fetchone()
-        return row[0] if row else 0

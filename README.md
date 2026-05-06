@@ -10,6 +10,11 @@
         <img src="https://github.com/billsioros/stonks/actions/workflows/cd.yml/badge.svg" alt="CD" />
     </a>
 </p>
+<br>
+
+> **The Story**: It all started when I found myself constantly hitting refresh on [StockAnalysis.com](https://stockanalysis.com/stocks/screener/), wishing I had a local-first, lightning-fast version of their legendary screener. I wanted the same depth of data, the same "Quality" filters, and the same sleek experience—but without the subscription walls or browser lag. So, I built **Stonks**: a high-performance local screener that mirrors the powerful filters of the web's best tools, powered by a persistent local database and a background worker that keeps the data fresh while I focus on finding the next 10-bagger.
+
+<br>
 
 ## :rocket: Features
 
