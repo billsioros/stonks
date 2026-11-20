@@ -26,7 +26,9 @@ SCREENER_FIELD_MAP: dict[str, tuple[str, float]] = {
     "dividend_yield_pct": ("dividendyield", 1.0),
     "roe_pct": ("returnonequity.lasttwelvemonths", 1.0),
     "gross_margin_pct": ("grossprofitmargin.lasttwelvemonths", 1.0),
-    "debt_to_equity": ("totaldebtequity.lasttwelvemonths", 1.0),
+    # Yahoo's D/E field is percentage-like (e.g. 14.3) while derive_metrics
+    # stores a ratio (0.143), so scale the local bound by 100 server-side.
+    "debt_to_equity": ("totaldebtequity.lasttwelvemonths", 100.0),
     "current_ratio": ("currentratio.lasttwelvemonths", 1.0),
     "roic_pct": ("returnontotalcapital.lasttwelvemonths", 1.0),
     "shares_insiders_pct": ("pctheldinsider", 1.0),
@@ -131,6 +133,13 @@ def screen(query: EquityQuery, **kwargs: Any) -> dict[str, Any]:
     return yf.screen(query, **kwargs)
 
 
+def _normalize_rating(value: Any) -> str | None:
+    """Strip Yahoo's numeric analyst-score prefix (e.g. '1.2 - Strong Buy')."""
+    if not isinstance(value, str) or not value:
+        return None
+    return value.split(" - ", 1)[1] if " - " in value else value
+
+
 def normalize_quote(raw: dict[str, Any]) -> dict[str, Any]:
     """Map a Yahoo quote payload to Stonks columns (derived columns omitted)."""
     symbol = raw.get("symbol")
@@ -153,7 +162,7 @@ def normalize_quote(raw: dict[str, Any]) -> dict[str, Any]:
         "beta": raw.get("beta"),
         "eps_ttm": raw.get("epsTrailingTwelveMonths"),
         "book_value_per_share": raw.get("bookValue"),
-        "rating": raw.get("averageAnalystRating"),
+        "rating": _normalize_rating(raw.get("averageAnalystRating")),
     }
     row.update({key: value for key, value in mapping.items() if value is not None})
     return row
@@ -224,12 +233,22 @@ def _price_cagr(history: Any, years: int) -> float | None:
     closes = history[column].dropna()
     if closes.empty:
         return None
-    target = closes.index[-1] - pd.DateOffset(years=years)
-    start = closes.asof(target)
     end = closes.iloc[-1]
-    if pd.isna(start) or pd.isna(end) or start <= 0 or end <= 0:
+    target = closes.index[-1] - pd.DateOffset(years=years)
+    if target < closes.index[0]:
+        # History starts after the requested lookback: use the earliest point
+        # and annualise over the span actually available.
+        start = closes.iloc[0]
+        span_days = (closes.index[-1] - closes.index[0]).days
+        span = span_days / 365.25
+    else:
+        start = closes.asof(target)
+        span = years
+    if pd.isna(start) or pd.isna(end) or start <= 0 or end <= 0 or span <= 0:
         return None
-    return ((end / start) ** (1 / years) - 1) * 100
+    if span < years - 1:
+        return None
+    return ((end / start) ** (1 / span) - 1) * 100
 
 
 def derive_metrics(

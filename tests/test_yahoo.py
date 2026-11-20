@@ -40,6 +40,14 @@ def test_build_query_skips_unmapped_columns():
     assert all("return_cagr_5y_pct" not in str(o) for o in d["operands"])
 
 
+def test_build_query_scales_debt_to_equity_to_yahoo_units():
+    d = build_screener_query({"debt_to_equity": {"max": 1.0}}).to_dict()
+    assert {
+        "operator": "LT",
+        "operands": ["totaldebtequity.lasttwelvemonths", 100.0],
+    } in d["operands"]
+
+
 def test_paginate_fetches_all_pages():
     calls = []
 
@@ -82,7 +90,7 @@ def test_normalize_quote_units():
     assert row["market_cap"] == pytest.approx(32826.281984)
     assert row["dividend_yield_pct"] == 2.62
     assert row["price"] == 80.79
-    assert row["rating"] == "2.2 - Buy"
+    assert row["rating"] == "Buy"
     assert row["pe_ratio"] == 13.74
     assert "roic_5y_avg_pct" not in row
 
@@ -115,6 +123,17 @@ def test_derive_metrics_cagr_and_averages():
     assert result["debt_to_equity"] == pytest.approx(1.5)
     assert result["shares_insiders_pct"] == 0.01
     assert result["free_cash_flow"] == pytest.approx(2000.0)
+
+
+def test_price_cagr_handles_history_starting_at_lookback_boundary():
+    # 15y of monthly bars starts just after the exact 15-year cutoff, so
+    # asof(target) is NaN. The CAGR must still be computed from the first bar.
+    idx = pd.date_range("2011-12-31", "2026-11-30", freq="ME")
+    history = pd.DataFrame(
+        {"Close": [100 * (1.1 ** (i / 12)) for i in range(len(idx))]}, index=idx
+    )
+    result = derive_metrics({}, history, None, None, None)
+    assert result["return_cagr_15y_pct"] == pytest.approx(10.0, abs=0.5)
 
 
 def test_derive_metrics_accepts_first_available_financial_row():

@@ -15,8 +15,20 @@ YAHOO_PAGE_SIZE = 250
 YAHOO_MAX_WORKERS = 8
 YAHOO_ENRICHMENT_TTL_DAYS = 7
 
+# ── Worker retry / batching ──────────────────────────────────────────
+# Screener calls are retried with exponential backoff when Yahoo rate-limits.
+WORKER_SCREENER_ATTEMPTS = 4
+WORKER_RETRY_BASE_DELAY = 5.0  # seconds; doubled on each attempt
+# Enrichment is processed in small batches with a cooldown between them so a
+# single run does not exhaust Yahoo's quota. Each batch is checkpointed.
+WORKER_BATCH_SIZE = 100
+WORKER_BATCH_COOLDOWN = 20.0  # seconds between batches
+# The worker repeats the sync on this interval instead of once at midnight.
+WORKER_INTERVAL_MINUTES = 60
+WORKER_MAX_ATTEMPTS = 5  # cap per-symbol retries before leaving it failed
+
 # ── Screener defaults ───────────────────────────────────────────────
-DEFAULT_PAGE_SIZE: int = 25
+DEFAULT_PAGE_SIZE: int = 50
 PAGE_SIZE_OPTIONS: list[int] = [10, 25, 50, 100]
 
 # ── Column display names ────────────────────────────────────────────

@@ -452,17 +452,17 @@ def _fmt_market_cap(val: float | None) -> str:
     if val is None:
         return "—"
     if val >= 1_000_000:
-        return f"${val / 1_000_000:.1f}T"
+        return f"{val / 1_000_000:.2f}T"
     if val >= 1_000:
-        return f"${val / 1_000:.1f}B"
-    return f"${val:.0f}M"
+        return f"{val / 1_000:.2f}B"
+    return f"{val:.2f}M"
 
 
 def _fmt_pct(val: float | None) -> str:
     """Format a percentage value."""
     if val is None:
         return "—"
-    return f"{val:.1f}%"
+    return f"{val:.2f}%"
 
 
 def _fmt_number(val: float | None, decimals: int = 2) -> str:

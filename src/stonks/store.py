@@ -48,9 +48,20 @@ class SQLiteStore:
                     status TEXT,
                     error TEXT,
                     last_attempt REAL,
+                    attempts INTEGER DEFAULT 0,
+                    next_retry_at REAL,
                     PRIMARY KEY (symbol, sync_type)
                 )
             """)
+            # Existing databases predate the retry-tracking columns.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(sync_status)")}
+            if "attempts" not in columns:
+                conn.execute(
+                    "ALTER TABLE sync_status ADD COLUMN attempts INTEGER DEFAULT 0"
+                )
+            if "next_retry_at" not in columns:
+                conn.execute("ALTER TABLE sync_status ADD COLUMN next_retry_at REAL")
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
@@ -224,22 +235,42 @@ class SQLiteStore:
     # ── Sync Status ──────────────────────────────────────────────────
 
     def update_sync_status(
-        self, symbol: str, sync_type: str, status: str, error: str | None = None
+        self,
+        symbol: str,
+        sync_type: str,
+        status: str,
+        error: str | None = None,
+        attempts: int = 0,
+        backoff_seconds: float = 0.0,
     ) -> None:
-        """Update the sync status for a symbol."""
+        """Update the sync status for a symbol, including retry bookkeeping."""
         now = time.time()
+        next_retry_at = now + backoff_seconds if backoff_seconds > 0 else None
         with self._connect() as conn:
             conn.execute(
-                """INSERT INTO sync_status (symbol, sync_type, status, error, last_attempt)
-                   VALUES (?, ?, ?, ?, ?)
+                """INSERT INTO sync_status
+                   (symbol, sync_type, status, error, last_attempt, attempts, next_retry_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(symbol, sync_type) DO UPDATE SET
                      status=excluded.status,
                      error=excluded.error,
-                     last_attempt=excluded.last_attempt
+                     last_attempt=excluded.last_attempt,
+                     attempts=excluded.attempts,
+                     next_retry_at=excluded.next_retry_at
                 """,
-                (symbol, sync_type, status, error, now),
+                (symbol, sync_type, status, error, now, attempts, next_retry_at),
             )
             conn.commit()
+
+    def get_failed_attempts(self, sync_type: str) -> dict[str, tuple[int, float]]:
+        """Map failed symbols to (attempt count, last attempt timestamp)."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT symbol, attempts, last_attempt FROM sync_status
+                   WHERE sync_type=? AND status='failed'""",
+                (sync_type,),
+            ).fetchall()
+        return {row[0]: (int(row[1] or 0), float(row[2] or 0)) for row in rows}
 
     def get_stale_symbols(self, sync_type: str, stale_hours: int = 24 * 7) -> list[str]:
         """Return symbols that were successfully synced but are stale."""
