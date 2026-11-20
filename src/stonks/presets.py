@@ -28,11 +28,14 @@ POPULAR_SCREENS: list[dict[str, Any]] = [
             "roa_5y_avg_pct": {"min": 10},
             "roe_5y_avg_pct": {"min": 10},
             "net_income_growth_5y_pct": {"min": 10},
-            "shares_insiders_pct": {"min": 0.01},
+            # "Shares Insiders Not Zero": the store keeps this as a fraction, so
+            # use a tiny epsilon to exclude exact zero without rejecting small
+            # nonzero holdings (e.g. DRD's 0.00069).
+            "shares_insiders_pct": {"min": 0.000001},
         },
         "view_preset": "Quality",
-        "sort_column": "roic_5y_avg_pct",
-        "sort_ascending": False,
+        "sort_column": "ev_to_ebitda",
+        "sort_ascending": True,
     },
     {
         "name": "🏆 Quality Compounders",

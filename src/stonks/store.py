@@ -8,6 +8,69 @@ from typing import Any
 
 from stonks.config import DB_PATH
 
+VALUATION_COLUMNS = (
+    "dcf_fair_value",
+    "dcf_upside_pct",
+    "lynch_fair_value",
+    "lynch_upside_pct",
+)
+
+STOCK_FIELDS = [
+    "symbol",
+    "description",
+    "exchange",
+    "type",
+    "mic",
+    "currency",
+    "market_cap",
+    "pe_ratio",
+    "pb_ratio",
+    "ps_ratio",
+    "peg_ratio",
+    "ev_to_ebitda",
+    "dividend_yield_pct",
+    "gross_margin_pct",
+    "operating_margin_pct",
+    "net_margin_pct",
+    "roa_pct",
+    "roe_pct",
+    "roic_pct",
+    "current_ratio",
+    "debt_to_equity",
+    "fcf_margin_pct",
+    "revenue_growth_5y_pct",
+    "eps_growth_5y_pct",
+    "beta",
+    "price",
+    "week_52_high",
+    "week_52_low",
+    "revenue_growth_3y_pct",
+    "eps_growth_3y_pct",
+    "free_cash_flow_per_share",
+    "revenue_per_share",
+    "book_value_per_share",
+    "tangible_book_value_per_share",
+    "long_term_debt_to_equity",
+    "asset_turnover",
+    "eps_ttm",
+    "net_income",
+    "free_cash_flow",
+    "fcf_growth_5y_pct",
+    "net_income_growth_5y_pct",
+    "return_cagr_5y_pct",
+    "return_cagr_10y_pct",
+    "return_cagr_15y_pct",
+    "roa_5y_avg_pct",
+    "roe_5y_avg_pct",
+    "roic_5y_avg_pct",
+    "shares_insiders_pct",
+    "industry",
+    "short_pct",
+    "rating",
+    "pt_upside_pct",
+    *VALUATION_COLUMNS,
+]
+
 
 class SQLiteStore:
     """Lightweight persistence layer using SQLite for screens and watchlists."""
@@ -48,9 +111,20 @@ class SQLiteStore:
                     status TEXT,
                     error TEXT,
                     last_attempt REAL,
+                    attempts INTEGER DEFAULT 0,
+                    next_retry_at REAL,
                     PRIMARY KEY (symbol, sync_type)
                 )
             """)
+            # Existing databases predate the retry-tracking columns.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(sync_status)")}
+            if "attempts" not in columns:
+                conn.execute(
+                    "ALTER TABLE sync_status ADD COLUMN attempts INTEGER DEFAULT 0"
+                )
+            if "next_retry_at" not in columns:
+                conn.execute("ALTER TABLE sync_status ADD COLUMN next_retry_at REAL")
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
@@ -119,9 +193,22 @@ class SQLiteStore:
                     short_pct REAL,
                     rating TEXT,
                     pt_upside_pct REAL,
+                    dcf_fair_value REAL,
+                    dcf_upside_pct REAL,
+                    lynch_fair_value REAL,
+                    lynch_upside_pct REAL,
                     updated_at REAL
                 )
             """)
+            # Existing databases predate the valuation columns.
+            stock_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(stocks)")
+            }
+            for column in VALUATION_COLUMNS:
+                if column not in stock_columns:
+                    conn.execute(
+                        f"ALTER TABLE stocks ADD COLUMN {column} REAL"  # nosec B608
+                    )
             conn.commit()
 
     # ── Saved Screens ────────────────────────────────────────────────
@@ -224,20 +311,30 @@ class SQLiteStore:
     # ── Sync Status ──────────────────────────────────────────────────
 
     def update_sync_status(
-        self, symbol: str, sync_type: str, status: str, error: str | None = None
+        self,
+        symbol: str,
+        sync_type: str,
+        status: str,
+        error: str | None = None,
+        attempts: int = 0,
+        backoff_seconds: float = 0.0,
     ) -> None:
-        """Update the sync status for a symbol."""
+        """Update the sync status for a symbol, including retry bookkeeping."""
         now = time.time()
+        next_retry_at = now + backoff_seconds if backoff_seconds > 0 else None
         with self._connect() as conn:
             conn.execute(
-                """INSERT INTO sync_status (symbol, sync_type, status, error, last_attempt)
-                   VALUES (?, ?, ?, ?, ?)
+                """INSERT INTO sync_status
+                   (symbol, sync_type, status, error, last_attempt, attempts, next_retry_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(symbol, sync_type) DO UPDATE SET
                      status=excluded.status,
                      error=excluded.error,
-                     last_attempt=excluded.last_attempt
+                     last_attempt=excluded.last_attempt,
+                     attempts=excluded.attempts,
+                     next_retry_at=excluded.next_retry_at
                 """,
-                (symbol, sync_type, status, error, now),
+                (symbol, sync_type, status, error, now, attempts, next_retry_at),
             )
             conn.commit()
 
@@ -273,11 +370,8 @@ class SQLiteStore:
                     "SELECT COUNT(DISTINCT symbol) FROM sync_status"
                 ).fetchone()[0]
 
-            success_basic = conn.execute(
-                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='basic'"
-            ).fetchone()[0]
-            success_candles = conn.execute(
-                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='candles'"
+            success_fundamentals = conn.execute(
+                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='fundamentals'"
             ).fetchone()[0]
             failed = conn.execute(
                 "SELECT COUNT(*) FROM sync_status WHERE status='failed'"
@@ -288,8 +382,8 @@ class SQLiteStore:
 
         return {
             "total_symbols": total_universe,
-            "success_count": success_basic,
-            "candles_count": success_candles,
+            "success_count": success_fundamentals,
+            "fundamentals_count": success_fundamentals,
             "failed_count": failed,
             "last_run": last_run,
         }
@@ -379,6 +473,9 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "short_pct",
+            "pt_upside_pct",
+            *VALUATION_COLUMNS,
         }
         enum_columns = {"exchange", "type", "currency", "mic"}
 
@@ -456,10 +553,11 @@ class SQLiteStore:
             "short_pct",
             "rating",
             "pt_upside_pct",
+            *VALUATION_COLUMNS,
         ]
-        select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"
+        select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"  # nosec B608
 
-        count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"
+        count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"  # nosec B608
         with self._connect() as conn:
             total_matching = conn.execute(count_sql, params).fetchone()[0]
 
@@ -484,68 +582,34 @@ class SQLiteStore:
 
     def save_stock(self, symbol: str, data: dict[str, Any]) -> None:
         """Upsert a stock's metrics."""
+        with self._connect() as conn:
+            self._upsert_stock(conn, {**data, "symbol": symbol})
+            conn.commit()
+
+    def replace_stocks(self, rows: list[dict[str, Any]]) -> None:
+        """Atomically replace the screener universe with a fresh snapshot."""
         now = time.time()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM stocks")
+            conn.execute("DELETE FROM sync_status WHERE sync_type='fundamentals'")
+            for row in rows:
+                self._upsert_stock(conn, row)
+                conn.execute(
+                    """INSERT INTO sync_status
+                       (symbol, sync_type, status, error, last_attempt, attempts, next_retry_at)
+                       VALUES (?, 'fundamentals', 'success', NULL, ?, 0, NULL)""",
+                    (row["symbol"], now),
+                )
+            conn.commit()
 
-        all_fields = [
-            "symbol",
-            "description",
-            "exchange",
-            "type",
-            "mic",
-            "currency",
-            "market_cap",
-            "pe_ratio",
-            "pb_ratio",
-            "ps_ratio",
-            "peg_ratio",
-            "ev_to_ebitda",
-            "dividend_yield_pct",
-            "gross_margin_pct",
-            "operating_margin_pct",
-            "net_margin_pct",
-            "roa_pct",
-            "roe_pct",
-            "roic_pct",
-            "current_ratio",
-            "debt_to_equity",
-            "fcf_margin_pct",
-            "revenue_growth_5y_pct",
-            "eps_growth_5y_pct",
-            "beta",
-            "price",
-            "week_52_high",
-            "week_52_low",
-            "revenue_growth_3y_pct",
-            "eps_growth_3y_pct",
-            "free_cash_flow_per_share",
-            "revenue_per_share",
-            "book_value_per_share",
-            "tangible_book_value_per_share",
-            "long_term_debt_to_equity",
-            "asset_turnover",
-            "eps_ttm",
-            "net_income",
-            "free_cash_flow",
-            "fcf_growth_5y_pct",
-            "net_income_growth_5y_pct",
-            "return_cagr_5y_pct",
-            "return_cagr_10y_pct",
-            "return_cagr_15y_pct",
-            "roa_5y_avg_pct",
-            "roe_5y_avg_pct",
-            "roic_5y_avg_pct",
-            "shares_insiders_pct",
-            "industry",
-            "short_pct",
-            "rating",
-            "pt_upside_pct",
-        ]
-
+    @staticmethod
+    def _upsert_stock(conn: sqlite3.Connection, data: dict[str, Any]) -> None:
+        now = time.time()
         fields = []
         values = []
         fields_set = []
 
-        for f in all_fields:
+        for f in STOCK_FIELDS:
             if f in data and data.get(f) is not None:
                 fields.append(f)
                 values.append(data[f])
@@ -555,13 +619,12 @@ class SQLiteStore:
         values.append(now)
         fields_set.append("updated_at=excluded.updated_at")
 
-        sql = f"""INSERT INTO stocks ({", ".join(fields)})
-                  VALUES ({", ".join(["?"] * len(values))})
-                  ON CONFLICT(symbol) DO UPDATE SET {", ".join(fields_set)}"""
-
-        with self._connect() as conn:
-            conn.execute(sql, values)
-            conn.commit()
+        sql = (
+            f"INSERT INTO stocks ({', '.join(fields)}) "  # nosec B608
+            f"VALUES ({', '.join(['?'] * len(values))}) "  # nosec B608
+            f"ON CONFLICT(symbol) DO UPDATE SET {', '.join(fields_set)}"  # nosec B608
+        )
+        conn.execute(sql, values)
 
     def get_unique_values(self, column: str) -> list[str]:
         """Get unique values for an enum column."""
@@ -570,7 +633,9 @@ class SQLiteStore:
             return []
 
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT DISTINCT {column} FROM stocks WHERE {column} IS NOT NULL ORDER BY {column}"
-            ).fetchall()
+            query = (
+                f"SELECT DISTINCT {column} FROM stocks "  # nosec B608
+                f"WHERE {column} IS NOT NULL ORDER BY {column}"  # nosec B608
+            )
+            rows = conn.execute(query).fetchall()
         return [r[0] for r in rows]

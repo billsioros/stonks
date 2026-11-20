@@ -1,6 +1,6 @@
 <h1 align="center">📈 Stonks Screener 💰</h1>
 
-<p align="center"><em>A powerful, modular stock screener REST API & Dashboard powered by Finnhub 🔗</em></p>
+<p align="center"><em>A local-first stock screener dashboard powered by StockAnalysis.com 🔗</em></p>
 
 <p align="center">
     <a href="https://github.com/billsioros/stonks/actions/workflows/ci.yml">
@@ -31,23 +31,17 @@
 ### Prerequisites
 
 - [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
-- [Finnhub API Key](https://finnhub.io/) (Free tier works great)
+- No API key required — data comes from StockAnalysis.com
 
 ### Running with Docker
 
-1. **Create a `.env` file** in the root directory:
-
-    ```env
-    FINNHUB_API_KEY='your_api_key_here'
-    ```
-
-2. **Build and start the services**:
+1. **Build and start the services**:
 
    ```shell
    docker compose up -d --build
    ```
 
-3. **Access the Dashboard**:
+2. **Access the Dashboard**:
    Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ## 💻 Local Development
@@ -63,7 +57,6 @@ uv sync --all-groups
 ### Running the App
 
 ```bash
-export FINNHUB_API_KEY="your_key"
 uv run poe app
 ```
 
@@ -79,12 +72,11 @@ uv run poe coverage  # Run with coverage report
 ```
 src/stonks/
 ├── app.py          # Dashboard UI (Streamlit)
-├── engine.py       # Filtering/Sorting Logic
-├── metrics.py      # Finnhub API Client & Normalizers
-├── universe.py     # Stock Universe Management
-├── cache.py        # SQLite-based KV Cache
-├── store.py        # Persistence (Screens, Watchlist)
-└── worker.py       # Background Sync Service
+├── config.py       # Settings and column definitions
+├── presets.py      # One-click screens
+├── store.py        # SQLite persistence, filtering, sorting
+├── stockanalysis.py # Bulk screener data provider
+└── worker.py       # Background sync service
 ```
 
 ## 📄 License
