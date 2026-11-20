@@ -1,10 +1,6 @@
 """Application configuration and constants."""
 
-import os
 from pathlib import Path
-
-# ── Finnhub ──────────────────────────────────────────────────────────
-FINNHUB_API_KEY: str = os.environ.get("FINNHUB_API_KEY", "")
 
 # ── Paths ────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -14,15 +10,10 @@ DB_PATH = DATA_DIR / "stonks.db"
 # Ensure dirs exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# ── Cache TTL (seconds) ─────────────────────────────────────────────
-SYMBOLS_CACHE_TTL: int = 86_400  # 24 hours
-
-# ── Rate limiting ────────────────────────────────────────────────────
-FINNHUB_RATE_LIMIT_CALLS: int = 60  # free tier: 60 calls/minute
-FINNHUB_RATE_LIMIT_WINDOW: float = 60.0  # seconds
-
-# ── Default universe ────────────────────────────────────────────────
-DEFAULT_EXCHANGE: str = "US"
+# ── Yahoo screener ───────────────────────────────────────────────────
+YAHOO_PAGE_SIZE = 250
+YAHOO_MAX_WORKERS = 8
+YAHOO_ENRICHMENT_TTL_DAYS = 7
 
 # ── Screener defaults ───────────────────────────────────────────────
 DEFAULT_PAGE_SIZE: int = 25

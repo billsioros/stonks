@@ -3,7 +3,6 @@
 Run with: streamlit run src/stonks/app.py
 """
 
-from stonks.presets import POPULAR_SCREENS
 import logging
 import time
 from datetime import datetime
@@ -20,6 +19,7 @@ from stonks.config import (
     PAGE_SIZE_OPTIONS,
     VIEW_PRESETS,
 )
+from stonks.presets import POPULAR_SCREENS
 from stonks.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -479,7 +479,7 @@ def render_header() -> None:
     <div class="hero-header">
         <h1>📈 Stonks Screener</h1>
         <div class="hero-subtitle">
-            Screen stocks using fundamental metrics from Finnhub · Filter · Sort · Analyze
+            Screen stocks using fundamental data from Yahoo Finance · Filter · Sort · Analyze
         </div>
     </div>
     """,
@@ -677,7 +677,7 @@ def render_top_filters() -> dict[str, Any]:
         st.markdown('<div class="filter-grid">', unsafe_allow_html=True)
 
         # We'll use columns to simulate a grid because Streamlit doesn't support raw grid well
-        active_cols = sorted([c for c in filters.keys() if c in NUMERIC_FILTER_COLUMNS])
+        active_cols = sorted([c for c in filters if c in NUMERIC_FILTER_COLUMNS])
 
         if active_cols:
             rows = (len(active_cols) + 2) // 3  # 3 columns
@@ -988,14 +988,19 @@ def render_watchlist_tab() -> None:
             placeholder="Select a symbol to add...",
         )
     with col_btn:
-        if st.button(
-            "⭐ Add", key="watchlist_add_btn", use_container_width=True, type="primary"
+        if (
+            st.button(
+                "⭐ Add",
+                key="watchlist_add_btn",
+                use_container_width=True,
+                type="primary",
+            )
+            and add_symbol
         ):
-            if add_symbol:
-                store.add_to_watchlist(add_symbol)
-                st.toast(f"⭐ Added {add_symbol} to watchlist!", icon="✅")
-                time.sleep(0.5)
-                st.rerun()
+            store.add_to_watchlist(add_symbol)
+            st.toast(f"⭐ Added {add_symbol} to watchlist!", icon="✅")
+            time.sleep(0.5)
+            st.rerun()
 
     st.divider()
 
@@ -1317,7 +1322,7 @@ def main() -> None:
     st.markdown(
         """
     <div class="app-footer">
-        Stonks Screener v0.1.0 · Data from <a href="https://finnhub.io" style="color: #6366f1;">Finnhub</a> ·
+        Stonks Screener v0.1.0 · Data from <a href="https://finance.yahoo.com" style="color: #6366f1;">Yahoo Finance</a> ·
         Built with <a href="https://streamlit.io" style="color: #6366f1;">Streamlit</a>
     </div>
     """,
