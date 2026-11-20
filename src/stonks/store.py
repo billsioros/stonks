@@ -376,6 +376,8 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "short_pct",
+            "pt_upside_pct",
         }
         enum_columns = {"exchange", "type", "currency", "mic"}
 
