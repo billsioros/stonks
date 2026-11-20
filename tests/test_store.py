@@ -181,3 +181,54 @@ class TestSQLiteStore:
 
         store.save_metadata("version", "1.1.0")
         assert store.get_metadata("version") == "1.1.0"
+
+
+def test_store_filters_sort_search_and_preserves_values(store: SQLiteStore) -> None:
+    store.save_stock(
+        "AAA",
+        {
+            "description": "Alpha",
+            "exchange": "NYSE",
+            "market_cap": 100.0,
+            "pe_ratio": 10.0,
+        },
+    )
+    store.save_stock(
+        "BBB",
+        {
+            "description": "Beta",
+            "exchange": "NASDAQ",
+            "market_cap": 50.0,
+            "pe_ratio": 20.0,
+        },
+    )
+    store.save_stock(
+        "CCC", {"description": "Null Cap", "exchange": "NYSE", "pe_ratio": 5.0}
+    )
+
+    rows, _, total = store.get_stocks(
+        filters={"market_cap": {"min": 60}},
+        sort_column="pe_ratio",
+        sort_ascending=False,
+    )
+    assert total == 1
+    assert [row["symbol"] for row in rows] == ["AAA"]
+
+    rows, _, total = store.get_stocks(filters={"exchange": {"values": ["NASDAQ"]}})
+    assert total == 1
+    assert [row["symbol"] for row in rows] == ["BBB"]
+
+    rows, _, total = store.get_stocks(search_query="Alpha")
+    assert total == 1
+    assert rows[0]["symbol"] == "AAA"
+
+    rows, total_pages, total = store.get_stocks(
+        page=2, page_size=1, sort_column="symbol"
+    )
+    assert total == 3 and total_pages == 3
+    assert rows[0]["symbol"] == "BBB"
+
+    store.save_stock("AAA", {"pe_ratio": None, "market_cap": 120.0})
+    row = store.get_stocks(search_query="Alpha")[0][0]
+    assert row["pe_ratio"] == 10.0
+    assert row["market_cap"] == 120.0

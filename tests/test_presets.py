@@ -13,3 +13,17 @@ def test_presets_structure():
         assert "view_preset" in screen
         assert "sort_column" in screen
         assert "sort_ascending" in screen
+
+
+def test_all_preset_filter_columns_are_supported():
+    from stonks.config import NUMERIC_FILTER_COLUMNS
+    from stonks.yahoo import _DERIVED_COLUMNS, SCREENER_FIELD_MAP
+
+    supported = (
+        set(SCREENER_FIELD_MAP)
+        | {"exchange", "currency", "type", "mic"}
+        | set(_DERIVED_COLUMNS)
+        | set(NUMERIC_FILTER_COLUMNS)
+    )
+    for preset in POPULAR_SCREENS:
+        assert set(preset["filters"]) <= supported

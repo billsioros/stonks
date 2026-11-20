@@ -481,6 +481,7 @@ class SQLiteStore:
 
     def save_stock(self, symbol: str, data: dict[str, Any]) -> None:
         """Upsert a stock's metrics."""
+        data = {**data, "symbol": symbol}
         now = time.time()
 
         all_fields = [
