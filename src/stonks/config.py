@@ -94,6 +94,7 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "dcf_upside_pct",
         "lynch_fair_value",
         "lynch_upside_pct",
+        "hedge_fund_buys",
     ],
     "Valuation": [
         "symbol",
@@ -109,6 +110,7 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "dcf_upside_pct",
         "lynch_fair_value",
         "lynch_upside_pct",
+        "hedge_fund_buys",
     ],
     "Profitability": [
         "symbol",
