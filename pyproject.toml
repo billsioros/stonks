@@ -5,8 +5,10 @@ requires = [ "uv-build>=0.9,<0.10" ]
 
 [project]
 name = "stonks"
+<<<<<<< HEAD
 version = "2.3.0"
 description = "Streamlit Stock Screener powered by StockAnalysis bulk data"
+>>>>>>> d7b02a5 (feat: replace Yahoo data path with StockAnalysis bulk screener)
 readme = "README.md"
 authors = [
   { name = "billsioros", email = "billsioros97@gmail.com" },
@@ -22,7 +24,6 @@ dependencies = [
   "pyarrow>=23.0.1",
   "schedule>=1.2.2",
   "streamlit>=1.45",
-  "yfinance>=1.8",
 ]
 
 [dependency-groups]

@@ -17,12 +17,11 @@ def test_presets_structure():
 
 def test_all_preset_filter_columns_are_supported():
     from stonks.config import NUMERIC_FILTER_COLUMNS
-    from stonks.yahoo import _DERIVED_COLUMNS, SCREENER_FIELD_MAP
+    from stonks.stockanalysis import SUPPORTED_COLUMNS
 
     supported = (
-        set(SCREENER_FIELD_MAP)
+        SUPPORTED_COLUMNS
         | {"exchange", "currency", "type", "mic"}
-        | set(_DERIVED_COLUMNS)
         | set(NUMERIC_FILTER_COLUMNS)
     )
     for preset in POPULAR_SCREENS:

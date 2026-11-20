@@ -262,16 +262,6 @@ class SQLiteStore:
             )
             conn.commit()
 
-    def get_failed_attempts(self, sync_type: str) -> dict[str, tuple[int, float]]:
-        """Map failed symbols to (attempt count, last attempt timestamp)."""
-        with self._connect() as conn:
-            rows = conn.execute(
-                """SELECT symbol, attempts, last_attempt FROM sync_status
-                   WHERE sync_type=? AND status='failed'""",
-                (sync_type,),
-            ).fetchall()
-        return {row[0]: (int(row[1] or 0), float(row[2] or 0)) for row in rows}
-
     def get_stale_symbols(self, sync_type: str, stale_hours: int = 24 * 7) -> list[str]:
         """Return symbols that were successfully synced but are stale."""
         cutoff = time.time() - (stale_hours * 3600)

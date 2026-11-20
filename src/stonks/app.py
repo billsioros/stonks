@@ -479,7 +479,7 @@ def render_header() -> None:
     <div class="hero-header">
         <h1>📈 Stonks Screener</h1>
         <div class="hero-subtitle">
-            Screen stocks using fundamental data from Yahoo Finance · Filter · Sort · Analyze
+            Screen stocks using fundamental data from StockAnalysis.com · Filter · Sort · Analyze
         </div>
     </div>
     """,
@@ -1322,7 +1322,7 @@ def main() -> None:
     st.markdown(
         """
     <div class="app-footer">
-        Stonks Screener v0.1.0 · Data from <a href="https://finance.yahoo.com" style="color: #6366f1;">Yahoo Finance</a> ·
+        Stonks Screener v0.1.0 · Data from <a href="https://stockanalysis.com" style="color: #6366f1;">StockAnalysis.com</a> ·
         Built with <a href="https://streamlit.io" style="color: #6366f1;">Streamlit</a>
     </div>
     """,

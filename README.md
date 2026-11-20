@@ -1,6 +1,6 @@
 <h1 align="center">📈 Stonks Screener 💰</h1>
 
-<p align="center"><em>A local-first stock screener dashboard powered by Yahoo Finance 🔗</em></p>
+<p align="center"><em>A local-first stock screener dashboard powered by StockAnalysis.com 🔗</em></p>
 
 <p align="center">
     <a href="https://github.com/billsioros/stonks/actions/workflows/ci.yml">
@@ -31,7 +31,7 @@
 ### Prerequisites
 
 - [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
-- No API key required — data comes from Yahoo Finance
+- No API key required — data comes from StockAnalysis.com
 
 ### Running with Docker
 
@@ -75,7 +75,7 @@ src/stonks/
 ├── config.py       # Settings and column definitions
 ├── presets.py      # One-click screens
 ├── store.py        # SQLite persistence, filtering, sorting
-├── yahoo.py        # Screener queries and metric enrichment
+├── stockanalysis.py # Bulk screener data provider
 └── worker.py       # Background sync service
 ```
 

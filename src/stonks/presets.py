@@ -28,7 +28,7 @@ POPULAR_SCREENS: list[dict[str, Any]] = [
             "roa_5y_avg_pct": {"min": 10},
             "roe_5y_avg_pct": {"min": 10},
             "net_income_growth_5y_pct": {"min": 10},
-            # "Shares Insiders Not Zero": Yahoo stores this as a fraction, so
+            # "Shares Insiders Not Zero": the store keeps this as a fraction, so
             # use a tiny epsilon to exclude exact zero without rejecting small
             # nonzero holdings (e.g. DRD's 0.00069).
             "shares_insiders_pct": {"min": 0.000001},
