@@ -15,6 +15,10 @@ VALUATION_COLUMNS = (
     "lynch_upside_pct",
 )
 
+# 1 when the symbol is in HedgeFollow's largest hedge fund buys, 0 when not, NULL
+# when the list could not be read during that sync.
+FLAG_COLUMNS = ("hedge_fund_buys",)
+
 STOCK_FIELDS = [
     "symbol",
     "description",
@@ -69,6 +73,7 @@ STOCK_FIELDS = [
     "rating",
     "pt_upside_pct",
     *VALUATION_COLUMNS,
+    *FLAG_COLUMNS,
 ]
 
 
@@ -197,6 +202,7 @@ class SQLiteStore:
                     dcf_upside_pct REAL,
                     lynch_fair_value REAL,
                     lynch_upside_pct REAL,
+                    hedge_fund_buys INTEGER,
                     updated_at REAL
                 )
             """)
@@ -208,6 +214,11 @@ class SQLiteStore:
                 if column not in stock_columns:
                     conn.execute(
                         f"ALTER TABLE stocks ADD COLUMN {column} REAL"  # nosec B608
+                    )
+            for column in FLAG_COLUMNS:
+                if column not in stock_columns:
+                    conn.execute(
+                        f"ALTER TABLE stocks ADD COLUMN {column} INTEGER"  # nosec B608
                     )
             conn.commit()
 
@@ -476,6 +487,7 @@ class SQLiteStore:
             "short_pct",
             "pt_upside_pct",
             *VALUATION_COLUMNS,
+            *FLAG_COLUMNS,
         }
         enum_columns = {"exchange", "type", "currency", "mic"}
 
@@ -554,6 +566,7 @@ class SQLiteStore:
             "rating",
             "pt_upside_pct",
             *VALUATION_COLUMNS,
+            *FLAG_COLUMNS,
         ]
         select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"  # nosec B608
 

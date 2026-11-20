@@ -6,6 +6,7 @@ import time
 import schedule
 
 from stonks.config import DATA_DIR, WORKER_INTERVAL_MINUTES
+from stonks.hedgefollow import apply_flags, fetch_largest_buys
 from stonks.stockanalysis import current_discount_rate, fetch_rows
 from stonks.store import SQLiteStore
 
@@ -27,6 +28,17 @@ def job() -> None:
         if not rows:
             logger.warning("⚠️ No screener data found.")
             return
+
+        largest_buys = fetch_largest_buys()
+        if largest_buys is None:
+            logger.warning("⚠️ HedgeFollow buys unavailable; flag left unknown")
+        else:
+            matched = apply_flags(rows, largest_buys)
+            logger.info(
+                "🐋 %s symbols in HedgeFollow's largest %s buys",
+                matched,
+                len(largest_buys),
+            )
 
         store = SQLiteStore()
         store.replace_stocks(rows)

@@ -76,6 +76,7 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "dcf_upside_pct": "DCF Upside %",
     "lynch_fair_value": "Lynch Fair Value",
     "lynch_upside_pct": "Lynch Upside %",
+    "hedge_fund_buys": "Largest HF Buy",
 }
 
 # ── View presets ─────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "dcf_upside_pct",
         "lynch_fair_value",
         "lynch_upside_pct",
+        "hedge_fund_buys",
     ],
     "All Columns": COLUMN_DISPLAY_NAMES.keys(),
 }
@@ -203,6 +205,7 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
     "dcf_upside_pct",
     "lynch_fair_value",
     "lynch_upside_pct",
+    "hedge_fund_buys",
 ]
 
 # ── Enum filter columns ─────────────────────────────────────────────

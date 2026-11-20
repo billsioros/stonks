@@ -453,6 +453,13 @@ def _is_missing(val: object) -> bool:
     return val is None or (isinstance(val, float) and math.isnan(val))
 
 
+def _fmt_flag(val: object) -> str:
+    """Render a stored 1/0 flag: ✓ in the list, ✗ not, — unknown."""
+    if _is_missing(val):
+        return "—"
+    return "✓" if val else "✗"
+
+
 def _fmt_market_cap(val: float | None) -> str:
     """Format market cap in human-readable form."""
     if _is_missing(val) or val is None:
@@ -905,7 +912,9 @@ def render_screener_table() -> None:
     display_df = page_df[visible_cols].rename(columns=rename_map)
 
     for col in display_df.columns:
-        if col == "Market Cap":
+        if col == "Largest HF Buy":
+            display_df[col] = display_df[col].apply(_fmt_flag)
+        elif col == "Market Cap":
             display_df[col] = display_df[col].apply(_fmt_market_cap)
         elif "%" in col or "Upside" in col or "Short" in col:
             display_df[col] = display_df[col].apply(_fmt_pct)
