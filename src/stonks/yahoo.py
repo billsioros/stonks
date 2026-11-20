@@ -6,6 +6,7 @@ import logging
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from numbers import Real
 from typing import Any
 
 import pandas as pd
@@ -66,6 +67,13 @@ _DERIVED_COLUMNS = (
     "roa_5y_avg_pct",
     "roe_5y_avg_pct",
     "roic_5y_avg_pct",
+    "industry",
+    "pt_upside_pct",
+    "fcf_margin_pct",
+    "eps_growth_3y_pct",
+    "free_cash_flow_per_share",
+    "revenue_per_share",
+    "asset_turnover",
 )
 
 
@@ -132,6 +140,7 @@ def normalize_quote(raw: dict[str, Any]) -> dict[str, Any]:
     mapping = {
         "description": raw.get("shortName") or raw.get("longName"),
         "exchange": raw.get("exchange"),
+        "type": raw.get("quoteType"),
         "mic": raw.get("fullExchangeName"),
         "currency": raw.get("currency"),
         "market_cap": _scaled(raw.get("marketCap"), 1 / 1e6),
@@ -151,7 +160,7 @@ def normalize_quote(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _scaled(value: Any, factor: float) -> float | None:
-    return value * factor if isinstance(value, (int, float)) else None
+    return value * factor if isinstance(value, Real) else None
 
 
 def _fetch_with_retry(
@@ -185,13 +194,20 @@ def _first_row(statement: Any, *labels: str) -> pd.Series | None:
     return None
 
 
+def _latest_value(series: pd.Series | None) -> float | None:
+    if series is None or series.empty:
+        return None
+    value = series.sort_index().iloc[-1]
+    return value if isinstance(value, Real) else None
+
+
 def _cagr_from_series(series: pd.Series | None, years: int) -> float | None:
     if series is None or len(series) < 2:
         return None
     ordered = series.sort_index()
     start = -(years + 1) if len(series) > years else 0
     first, last = ordered.iloc[start], ordered.iloc[-1]
-    if not (isinstance(first, (int, float)) and isinstance(last, (int, float))):
+    if not (isinstance(first, Real) and isinstance(last, Real)):
         return None
     span = min(len(series) - 1, years)
     if first <= 0 or last <= 0 or span <= 0:
@@ -245,8 +261,13 @@ def derive_metrics(
                 "book_value_per_share": info.get("bookValue"),
                 "tangible_book_value_per_share": info.get("tangibleBookValue"),
                 "short_pct": _pct(info.get("shortPercentOfFloat")),
+                "industry": info.get("industry"),
             }
         )
+        target = info.get("targetMeanPrice")
+        price = info.get("currentPrice") or info.get("regularMarketPrice")
+        if isinstance(target, Real) and isinstance(price, Real) and price > 0:
+            result["pt_upside_pct"] = (target / price - 1) * 100
 
     for years in (5, 10, 15):
         result[f"return_cagr_{years}y_pct"] = _price_cagr(history, years)
@@ -257,14 +278,18 @@ def derive_metrics(
     basic_eps = _first_row(financials, "Basic EPS", "Net Income")
     total_assets = _row(balance_sheet, "Total Assets")
     total_equity = _first_row(
-        balance_sheet, "Total Equity Gross Minority Interest", "Stockholders Equity"
+        balance_sheet,
+        "Total Equity",
+        "Total Equity Gross Minority Interest",
+        "Stockholders Equity",
     )
     total_debt = _row(balance_sheet, "Total Debt")
+    long_term_debt = _first_row(balance_sheet, "Long Term Debt")
     free_cash_flow = _row(cashflow, "Free Cash Flow")
 
     if net_income is not None:
         latest = net_income.sort_index().iloc[-1]
-        if isinstance(latest, (int, float)):
+        if isinstance(latest, Real):
             result["net_income"] = latest / 1e6
     if total_revenue is not None and operating_income is not None:
         aligned = operating_income.reindex(total_revenue.index).dropna()
@@ -292,13 +317,36 @@ def derive_metrics(
 
     result["revenue_growth_3y_pct"] = _cagr_from_series(total_revenue, 3)
     result["revenue_growth_5y_pct"] = _cagr_from_series(total_revenue, 5)
+    result["eps_growth_3y_pct"] = _cagr_from_series(basic_eps, 3)
     result["eps_growth_5y_pct"] = _cagr_from_series(basic_eps, 5)
     result["net_income_growth_5y_pct"] = _cagr_from_series(net_income, 5)
     result["fcf_growth_5y_pct"] = _cagr_from_series(free_cash_flow, 5)
-    if result["free_cash_flow"] is None and free_cash_flow is not None:
-        latest_fcf = free_cash_flow.sort_index().iloc[-1]
-        if isinstance(latest_fcf, (int, float)):
-            result["free_cash_flow"] = latest_fcf / 1e6
+
+    latest_revenue = _latest_value(total_revenue)
+    latest_fcf = _latest_value(free_cash_flow)
+    latest_equity = _latest_value(total_equity)
+    latest_long_term_debt = _latest_value(long_term_debt)
+    shares = info.get("sharesOutstanding") if isinstance(info, dict) else None
+
+    if result["free_cash_flow"] is None and latest_fcf is not None:
+        result["free_cash_flow"] = latest_fcf / 1e6
+    if isinstance(shares, Real) and shares > 0:
+        if latest_fcf is not None:
+            result["free_cash_flow_per_share"] = latest_fcf / shares
+        if latest_revenue is not None:
+            result["revenue_per_share"] = latest_revenue / shares
+    if latest_revenue is not None and latest_fcf is not None and latest_revenue != 0:
+        result["fcf_margin_pct"] = latest_fcf / latest_revenue * 100
+    if (
+        latest_long_term_debt is not None
+        and latest_equity is not None
+        and latest_equity != 0
+    ):
+        result["long_term_debt_to_equity"] = latest_long_term_debt / latest_equity
+    if total_assets is not None and latest_revenue is not None:
+        assets = total_assets.sort_index().dropna().tail(2)
+        if len(assets) == 2 and (assets != 0).all():
+            result["asset_turnover"] = latest_revenue / float(assets.mean())
     return result
 
 
@@ -366,10 +414,12 @@ def _enrich_one(
         return row
     try:
         fetched = fetch(row["symbol"])
-        return {
-            **row,
-            **{key: value for key, value in fetched.items() if key in required_columns},
-        }
+        merged = dict(row)
+        for key, value in fetched.items():
+            if key == "symbol" or value is None or key in merged:
+                continue
+            merged[key] = value
+        return merged
     except Exception as exc:  # noqa: BLE001 - one bad symbol must not abort the sync
         logger.warning("Enrichment failed for %s: %s", row.get("symbol"), exc)
         return row

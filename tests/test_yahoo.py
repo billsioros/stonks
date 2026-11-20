@@ -292,3 +292,52 @@ def test_paginate_skips_quotes_without_symbol():
 
     rows = paginate(build_screener_query({}), page_size=250, screen_fn=fake_screen)
     assert [row["symbol"] for row in rows] == ["AAA"]
+
+
+def test_normalize_quote_maps_quote_type():
+    row = normalize_quote({"symbol": "AAA", "quoteType": "EQUITY"})
+    assert row["type"] == "EQUITY"
+
+
+def test_derive_metrics_populates_ui_columns():
+    info = {
+        "industry": "Software",
+        "targetMeanPrice": 110.0,
+        "currentPrice": 100.0,
+        "sharesOutstanding": 1.0,
+    }
+    financials = pd.DataFrame(
+        {
+            "2021": [100, 80],
+            "2022": [110, 88],
+            "2023": [121, 96.8],
+            "2024": [133, 106.48],
+            "2025": [146, 117.128],
+        },
+        index=["Total Revenue", "Basic EPS"],
+    )
+    balance_sheet = pd.DataFrame(
+        {"2024": [100, 100, 20], "2025": [120, 120, 30]},
+        index=["Total Assets", "Total Equity", "Long Term Debt"],
+    )
+    cashflow = pd.DataFrame({"2024": [20], "2025": [25]}, index=["Free Cash Flow"])
+
+    result = derive_metrics(info, None, financials, balance_sheet, cashflow)
+
+    assert result["industry"] == "Software"
+    assert result["pt_upside_pct"] == pytest.approx(10.0)
+    assert result["eps_growth_3y_pct"] == pytest.approx(10.0, abs=0.5)
+    assert result["fcf_margin_pct"] == pytest.approx(25 / 146 * 100)
+    assert result["free_cash_flow_per_share"] == 25.0
+    assert result["revenue_per_share"] == 146.0
+    assert result["long_term_debt_to_equity"] == pytest.approx(30 / 120)
+    assert result["asset_turnover"] == pytest.approx(146 / 110)
+
+
+def test_enrich_rows_merges_all_derived_values():
+    def fake_enrich(symbol):
+        return {"symbol": symbol, "industry": "Software", "pt_upside_pct": 10.0}
+
+    rows = enrich_rows([{"symbol": "AAA"}], {"roe_pct"}, enrich_fn=fake_enrich)
+    assert rows[0]["industry"] == "Software"
+    assert rows[0]["pt_upside_pct"] == 10.0
