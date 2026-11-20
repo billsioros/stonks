@@ -37,43 +37,43 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
-
-/* Root variables */
+/* Flat dark theme, mirroring the roomies dashboard: navy surfaces, hairline
+   borders, no gradients or glow. Indigo stays the primary accent, and these
+   selectors track Streamlit's rendered DOM, so re-check them on upgrades. */
 :root {
-    --bg-primary: #0a0e1a;
-    --bg-secondary: #111827;
-    --bg-card: #1a1f35;
-    --bg-card-hover: #222845;
+    --bg-primary: #0b0f19;
+    --bg-secondary: #0f172a;
+    --bg-card: #1e293b;
     --accent-primary: #6366f1;
-    --accent-secondary: #8b5cf6;
-    --accent-tertiary: #a78bfa;
-    --accent-glow: rgba(99, 102, 241, 0.15);
-    --text-primary: #f1f5f9;
+    --accent-soft: rgba(99, 102, 241, 0.12);
+    --accent-border: rgba(99, 102, 241, 0.5);
+    --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
-    --border-color: #1e293b;
+    --border-color: rgba(255, 255, 255, 0.08);
     --success: #10b981;
     --danger: #ef4444;
     --warning: #f59e0b;
-    --gradient-1: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
-    --gradient-2: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #1e293b 100%);
-    --gradient-3: linear-gradient(135deg, #10b981 0%, #059669 100%);
 }
 
-/* Global styles */
+html, body, [class*="css"], .stMarkdown, .stText, p, span, li, label, div {
+    color: var(--text-primary);
+}
+
 .stApp {
     background: var(--bg-primary) !important;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
-/* Main content area */
+[data-testid="stHeader"] {
+    background: transparent !important;
+}
+
 .main .block-container {
     padding-top: 1.5rem !important;
     max-width: 100% !important;
 }
 
-/* Sidebar styling */
+/* Sidebar */
 section[data-testid="stSidebar"] {
     background: var(--bg-secondary) !important;
     border-right: 1px solid var(--border-color) !important;
@@ -83,87 +83,107 @@ section[data-testid="stSidebar"] .block-container {
     padding-top: 1rem !important;
 }
 
-/* Header styling */
-.hero-header {
-    background: var(--gradient-2);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 1.5rem 2rem;
-    margin-bottom: 1.5rem;
-    position: relative;
-    overflow: hidden;
+/* Headings */
+h1, h2, h3 { color: var(--text-primary) !important; font-weight: 600 !important; }
+h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+
+/* Masthead */
+.sk-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    padding: 0 0 1.5rem;
+    margin-bottom: 1.8rem;
+    border-bottom: 1px solid var(--border-color);
 }
 
-.hero-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: var(--gradient-1);
+.sk-brand {
+    display: flex;
+    align-items: center;
+    gap: 1.1rem;
 }
 
-.hero-header h1 {
-    font-size: 2rem !important;
-    font-weight: 800 !important;
-    background: var(--gradient-1);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+.sk-mark {
+    width: 56px;
+    height: 56px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    font-size: 1.6rem;
+    border-radius: 14px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+}
+
+.sk-brand h1 {
+    font-weight: 700;
+    font-size: clamp(2.2rem, 4vw, 3rem);
+    letter-spacing: -0.03em;
+    line-height: 1;
     margin: 0 !important;
     padding: 0 !important;
-    letter-spacing: -0.02em;
+    color: var(--text-primary);
 }
 
-.hero-subtitle {
+.sk-meta {
+    text-align: right;
+}
+
+.sk-pulse {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.sk-meta p {
+    margin: 0.55rem 0 0;
     color: var(--text-secondary);
-    font-size: 0.95rem;
-    margin-top: 0.25rem;
-    font-weight: 400;
+    font-size: 0.85rem;
 }
 
-/* Card styling */
-.metric-card {
+/* Metric cards: flat surfaces with high-contrast values, no glow */
+[data-testid="stMetric"] {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 12px;
-    padding: 1.25rem;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
+    padding: 16px;
+    transition: border-color 0.2s ease;
 }
 
-.metric-card:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 20px var(--accent-glow);
-    transform: translateY(-2px);
+[data-testid="stMetric"]:hover {
+    border-color: var(--accent-border);
 }
 
-.metric-card .label {
-    color: var(--text-secondary);
-    font-size: 0.8rem;
+[data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
     font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.5rem;
+    font-size: 2rem;
+    letter-spacing: -0.01em;
+    font-variant-numeric: lining-nums tabular-nums;
 }
 
-.metric-card .value {
-    font-size: 1.8rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    letter-spacing: -0.02em;
-}
-
-.metric-card .delta {
+[data-testid="stMetricLabel"] {
+    color: var(--text-secondary) !important;
     font-size: 0.85rem;
     font-weight: 500;
-    margin-top: 0.3rem;
 }
 
-.delta-positive { color: var(--success); }
-.delta-negative { color: var(--danger); }
+[data-testid="stMetricDelta"] {
+    background: rgba(248, 250, 252, 0.06) !important;
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
 
 /* Section headers */
 .section-header {
@@ -178,92 +198,19 @@ section[data-testid="stSidebar"] .block-container {
     gap: 0.5rem;
 }
 
-/* Screen preset cards */
-.preset-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 1rem 1.25rem;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    margin-bottom: 0.5rem;
-}
-
-.preset-card:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--accent-primary);
-    box-shadow: 0 4px 12px var(--accent-glow);
-    transform: translateY(-1px);
-}
-
-.preset-card .preset-name {
-    font-weight: 600;
-    color: var(--text-primary);
-    font-size: 0.95rem;
-    margin-bottom: 0.25rem;
-}
-
-.preset-card .preset-desc {
+/* Active filter summary */
+.active-filters {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1.5rem;
     color: var(--text-secondary);
     font-size: 0.8rem;
 }
 
-/* Filter section */
-.filter-group {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 1rem;
-    margin-bottom: 0.75rem;
-}
-
-.filter-controls {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    padding: 0.5rem 0;
-}
-
-.filter-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
-    margin-top: 1rem;
-}
-
-.filter-item {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.filter-label-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.filter-label {
-    font-size: 0.85rem;
-    font-weight: 600;
+.active-filters strong {
     color: var(--text-primary);
-}
-
-.filter-inputs {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-/* Streamlit element overrides */
-div[data-testid="stMetricValue"] {
-    font-family: 'Inter', sans-serif !important;
-    font-weight: 700 !important;
 }
 
 /* Pagination */
@@ -274,114 +221,101 @@ div[data-testid="stMetricValue"] {
     padding: 0.5rem;
 }
 
-/* Badge */
-.badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 10px;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-
-.badge-primary {
-    background: var(--accent-glow);
-    color: var(--accent-tertiary);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-}
-
-.badge-success {
-    background: rgba(16, 185, 129, 0.1);
-    color: var(--success);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-.badge-warning {
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--warning);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-}
-
-/* Watchlist indicator */
-.watchlist-star {
-    cursor: pointer;
-    font-size: 1.2rem;
-    transition: transform 0.2s;
-}
-
-.watchlist-star:hover {
-    transform: scale(1.2);
-}
-
-/* Active filters badge */
-.active-filters {
-    background: var(--accent-glow);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 1.5rem;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-}
-
-.active-filters strong {
-    color: var(--accent-tertiary);
-}
-
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 2px;
-    background: var(--bg-secondary);
-    border-radius: 10px;
-    padding: 4px;
-}
-
-.stTabs [data-baseweb="tab"] {
-    border-radius: 8px;
-    padding: 8px 16px;
-    font-weight: 500;
-}
-
-/* Button styling */
+/* Buttons: card surface, border only */
 .stButton > button {
-    border-radius: 8px !important;
-    font-weight: 500 !important;
-    font-family: 'Inter', sans-serif !important;
-    transition: all 0.2s ease !important;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-weight: 500;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
 
 .stButton > button:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
+    border-color: var(--accent-primary);
+    background: var(--accent-soft);
+    color: var(--accent-primary);
 }
 
-/* Download button */
 .stDownloadButton > button {
     border-radius: 8px !important;
     font-weight: 500 !important;
 }
 
-/* Expander styling */
+:focus-visible {
+    outline: 2px solid var(--accent-primary) !important;
+    outline-offset: 2px;
+}
+
+/* Data editor/table */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+/* Tabs: text only, underline marks active */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 1.6rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.stTabs [data-baseweb="tab"] {
+    background: none;
+    padding: 0.6rem 0;
+    height: auto;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.stTabs [aria-selected="true"] {
+    color: var(--text-primary);
+}
+
+[data-baseweb="tab-highlight"] {
+    background: var(--accent-primary);
+    height: 2px;
+}
+
+[data-baseweb="tab-border"] {
+    display: none;
+}
+
+/* Alerts */
+[data-testid="stAlert"] {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+}
+
+/* Inputs */
+.stTextInput > div > div,
+.stTextInput div[data-baseweb="input"],
+.stDateInput > div > div,
+.stSelectbox div[data-baseweb="select"] > div,
+.stMultiSelect div[data-baseweb="select"] > div {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.stTextInput > div > div:focus-within,
+.stTextInput div[data-baseweb="input"]:focus-within {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Sliders */
+.stSlider [data-baseweb="slider"] {
+    color: var(--accent-primary);
+}
+
+/* Expander */
 .streamlit-expanderHeader {
     font-weight: 600 !important;
     font-size: 0.9rem !important;
     background: var(--bg-secondary) !important;
-    border-radius: 8px !important;
-}
-
-/* Number input styling */
-div[data-testid="stNumberInput"] input {
-    border-radius: 8px !important;
-}
-
-/* Selectbox styling */
-div[data-testid="stSelectbox"] > div > div {
-    border-radius: 8px !important;
-}
-
-/* Text input */
-div[data-testid="stTextInput"] input {
     border-radius: 8px !important;
 }
 
@@ -397,44 +331,31 @@ div[data-testid="stTextInput"] input {
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
 }
+
 ::-webkit-scrollbar-track {
     background: var(--bg-primary);
 }
+
 ::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
+    background: #334155;
+    border-radius: 4px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
 
-/* Toast notification */
-.toast {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: var(--bg-card);
-    border: 1px solid var(--accent-primary);
-    border-radius: 10px;
-    padding: 0.75rem 1.25rem;
-    color: var(--text-primary);
-    font-size: 0.85rem;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-    z-index: 9999;
-    animation: slideIn 0.3s ease;
+/* Plotly chart containers */
+.js-plotly-plot .plotly .main-svg {
+    background: transparent !important;
 }
 
-@keyframes slideIn {
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-}
-
-/* Loading spinner override */
-.stSpinner > div {
-    border-top-color: var(--accent-primary) !important;
+/* Hide default Streamlit footer */
+footer {
+    display: none;
 }
 </style>
 """,
@@ -486,13 +407,17 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
 
 
 def render_header() -> None:
-    """Render the hero header."""
+    """Render the masthead: brand on the left, data source on the right."""
     st.markdown(
         """
-    <div class="hero-header">
-        <h1>📈 Stonks Screener</h1>
-        <div class="hero-subtitle">
-            Screen stocks using fundamental data from StockAnalysis.com · Filter · Sort · Analyze
+    <div class="sk-head">
+        <div class="sk-brand">
+            <div class="sk-mark">📈</div>
+            <h1>Stonks</h1>
+        </div>
+        <div class="sk-meta">
+            <span class="sk-pulse">● Auto-sync</span>
+            <p>Fundamental screener · data from StockAnalysis.com</p>
         </div>
     </div>
     """,
@@ -507,9 +432,7 @@ def render_sidebar_filters() -> dict[str, Any]:
         st.markdown(
             """
         <div style="text-align: center; padding: 0.5rem 0 1rem 0;">
-            <div style="font-size: 1.5rem; font-weight: 800;
-                        background: linear-gradient(135deg, #6366f1, #a78bfa);
-                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+            <div style="font-size: 1.5rem; font-weight: 700; color: #f8fafc;">
                 🎯 Filters
             </div>
         </div>
@@ -1113,12 +1036,11 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
         """
         <style>
         .hud-card {
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
+            background: #1e293b;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
             padding: 1.5rem;
             margin-bottom: 2rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
         .hud-header {
             display: flex;
@@ -1135,11 +1057,11 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
         }
         .hud-status {
             font-size: 0.8rem;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            background: rgba(34, 197, 94, 0.2);
-            color: #4ade80;
-            border: 1px solid rgba(34, 197, 94, 0.3);
+            padding: 2px 10px;
+            border-radius: 999px;
+            background: rgba(99, 102, 241, 0.12);
+            color: #f8fafc;
+            border: 1px solid rgba(99, 102, 241, 0.5);
         }
         .hud-metrics {
             display: flex;
@@ -1171,7 +1093,7 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
         }
         .progress-bar {
             height: 100%;
-            background: linear-gradient(90deg, #3b82f6 0%, #2dd4bf 100%);
+            background: #6366f1;
             border-radius: 3px;
             transition: width 0.5s ease-in-out;
         }
@@ -1274,6 +1196,7 @@ def main() -> None:
         """
     <div class="app-footer">
         Stonks Screener v0.1.0 · Data from <a href="https://stockanalysis.com" style="color: #6366f1;">StockAnalysis.com</a> ·
+        Hedge fund list from <a href="https://hedgefollow.com/Largest-Hedge-Fund-Buys.php" style="color: #6366f1;">HedgeFollow</a> ·
         Built with <a href="https://streamlit.io" style="color: #6366f1;">Streamlit</a>
     </div>
     """,

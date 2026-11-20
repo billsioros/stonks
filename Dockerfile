@@ -12,8 +12,9 @@ COPY pyproject.toml uv.lock ./
 # Install dependencies only (cache this layer)
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy source code
+# Copy source code and the Streamlit theme
 COPY src ./src
+COPY .streamlit ./.streamlit
 COPY README.md ./
 
 # Install the project itself
