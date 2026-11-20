@@ -108,7 +108,7 @@ def paginate(
             query, offset=offset, size=page_size, sortField="ticker", sortAsc=False
         )
         quotes = payload.get("quotes") or []
-        rows.extend(normalize_quote(quote) for quote in quotes)
+        rows.extend(row for quote in quotes if (row := normalize_quote(quote)))
         total = payload.get("total")
         if len(quotes) < page_size or (
             total is not None and offset + len(quotes) >= total
@@ -125,7 +125,10 @@ def screen(query: EquityQuery, **kwargs: Any) -> dict[str, Any]:
 
 def normalize_quote(raw: dict[str, Any]) -> dict[str, Any]:
     """Map a Yahoo quote payload to Stonks columns (derived columns omitted)."""
-    row: dict[str, Any] = {"symbol": raw.get("symbol")}
+    symbol = raw.get("symbol")
+    if not symbol:
+        return {}
+    row: dict[str, Any] = {"symbol": symbol}
     mapping = {
         "description": raw.get("shortName") or raw.get("longName"),
         "exchange": raw.get("exchange"),

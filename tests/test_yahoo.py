@@ -281,3 +281,14 @@ def test_build_screener_query_ors_enum_values():
     or_operand = next(o for o in operands if o["operator"] == "OR")
     assert {"operator": "EQ", "operands": ["exchange", "NYQ"]} in or_operand["operands"]
     assert {"operator": "EQ", "operands": ["exchange", "NMS"]} in or_operand["operands"]
+
+
+def test_paginate_skips_quotes_without_symbol():
+    def fake_screen(query, offset=None, size=None, **kwargs):
+        return {
+            "total": 2,
+            "quotes": [{"marketCap": 1e9}, {"symbol": "AAA", "marketCap": 2e9}],
+        }
+
+    rows = paginate(build_screener_query({}), page_size=250, screen_fn=fake_screen)
+    assert [row["symbol"] for row in rows] == ["AAA"]
