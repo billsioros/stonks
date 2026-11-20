@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from stonks.yahoo import (
+    _cagr_from_series,
     build_screener_query,
     derive_metrics,
     enrich_rows,
@@ -84,6 +85,12 @@ def test_normalize_quote_units():
     assert row["rating"] == "2.2 - Buy"
     assert row["pe_ratio"] == 13.74
     assert "roic_5y_avg_pct" not in row
+
+
+def test_cagr_uses_requested_window():
+    idx = pd.date_range("2021-01-01", periods=5, freq="YS")
+    series = pd.Series([100, 110, 121, 133.1, 146.41], index=idx)
+    assert _cagr_from_series(series, 3) == pytest.approx(10.0)
 
 
 def test_derive_metrics_cagr_and_averages():

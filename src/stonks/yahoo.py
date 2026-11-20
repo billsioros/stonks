@@ -186,7 +186,8 @@ def _cagr_from_series(series: pd.Series | None, years: int) -> float | None:
     if series is None or len(series) < 2:
         return None
     ordered = series.sort_index()
-    first, last = ordered.iloc[0], ordered.iloc[-1]
+    start = -(years + 1) if len(series) > years else 0
+    first, last = ordered.iloc[start], ordered.iloc[-1]
     if not (isinstance(first, (int, float)) and isinstance(last, (int, float))):
         return None
     span = min(len(series) - 1, years)
