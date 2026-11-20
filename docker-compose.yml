@@ -1,9 +1,9 @@
 services:
   app:
-    container_name: app
+    container_name: stonks-app
     build: .
     ports:
-      - "8501:8501"
+      - "${STONKS_PORT:-8501}:8501"
     volumes:
       - ./data:/app/data
     command: ["streamlit", "run", "src/stonks/app.py"]
@@ -11,7 +11,7 @@ services:
     networks:
       - stonks-network
   worker:
-    container_name: worker
+    container_name: stonks-worker
     build: .
     volumes:
       - ./data:/app/data
