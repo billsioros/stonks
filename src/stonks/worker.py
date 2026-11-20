@@ -27,11 +27,8 @@ def job() -> None:
             return
 
         store = SQLiteStore()
+        store.replace_stocks(rows)
         store.save_metadata("universe_size", len(rows))
-        for row in rows:
-            symbol = row["symbol"]
-            store.save_stock(symbol, row)
-            store.update_sync_status(symbol, "fundamentals", "success")
 
         logger.info("✅ Synced %s symbols", len(rows))
     except Exception:

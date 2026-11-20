@@ -232,3 +232,27 @@ def test_store_filters_sort_search_and_preserves_values(store: SQLiteStore) -> N
     row = store.get_stocks(search_query="Alpha")[0][0]
     assert row["pe_ratio"] == 10.0
     assert row["market_cap"] == 120.0
+
+
+def test_replace_stocks_discards_stale_symbols_and_values(store: SQLiteStore) -> None:
+    store.save_stock("OLD", {"roe_5y_avg_pct": 42.0})
+    store.save_stock("UI", {"roe_5y_avg_pct": 47.28})
+    store.update_sync_status("OLD", "fundamentals", "success")
+
+    store.replace_stocks(
+        [
+            {"symbol": "NEW", "roe_5y_avg_pct": 12.0},
+            {"symbol": "UI", "roe_5y_avg_pct": None},
+        ]
+    )
+
+    assert [r["symbol"] for r in store.get_stocks(page_size=10)[0]] == ["NEW", "UI"]
+    with store._connect() as conn:
+        ui = conn.execute(
+            "SELECT roe_5y_avg_pct FROM stocks WHERE symbol='UI'"
+        ).fetchone()
+        statuses = conn.execute(
+            "SELECT symbol, status FROM sync_status WHERE sync_type='fundamentals'"
+        ).fetchall()
+    assert ui[0] is None
+    assert [(r[0], r[1]) for r in statuses] == [("NEW", "success"), ("UI", "success")]

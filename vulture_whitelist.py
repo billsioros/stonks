@@ -9,4 +9,6 @@ SQLiteStore.get_screen  # noqa: B018
 SQLiteStore.is_in_watchlist  # noqa: B018
 SQLiteStore.get_synced_symbols  # noqa: B018
 SQLiteStore.get_stale_symbols  # noqa: B018
+SQLiteStore.update_sync_status  # noqa: B018
+SQLiteStore.save_stock  # noqa: B018
 SUPPORTED_COLUMNS  # noqa: B018

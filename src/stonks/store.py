@@ -8,6 +8,61 @@ from typing import Any
 
 from stonks.config import DB_PATH
 
+STOCK_FIELDS = [
+    "symbol",
+    "description",
+    "exchange",
+    "type",
+    "mic",
+    "currency",
+    "market_cap",
+    "pe_ratio",
+    "pb_ratio",
+    "ps_ratio",
+    "peg_ratio",
+    "ev_to_ebitda",
+    "dividend_yield_pct",
+    "gross_margin_pct",
+    "operating_margin_pct",
+    "net_margin_pct",
+    "roa_pct",
+    "roe_pct",
+    "roic_pct",
+    "current_ratio",
+    "debt_to_equity",
+    "fcf_margin_pct",
+    "revenue_growth_5y_pct",
+    "eps_growth_5y_pct",
+    "beta",
+    "price",
+    "week_52_high",
+    "week_52_low",
+    "revenue_growth_3y_pct",
+    "eps_growth_3y_pct",
+    "free_cash_flow_per_share",
+    "revenue_per_share",
+    "book_value_per_share",
+    "tangible_book_value_per_share",
+    "long_term_debt_to_equity",
+    "asset_turnover",
+    "eps_ttm",
+    "net_income",
+    "free_cash_flow",
+    "fcf_growth_5y_pct",
+    "net_income_growth_5y_pct",
+    "return_cagr_5y_pct",
+    "return_cagr_10y_pct",
+    "return_cagr_15y_pct",
+    "roa_5y_avg_pct",
+    "roe_5y_avg_pct",
+    "roic_5y_avg_pct",
+    "shares_insiders_pct",
+    "industry",
+    "short_pct",
+    "rating",
+    "pt_upside_pct",
+]
+
 
 class SQLiteStore:
     """Lightweight persistence layer using SQLite for screens and watchlists."""
@@ -504,69 +559,34 @@ class SQLiteStore:
 
     def save_stock(self, symbol: str, data: dict[str, Any]) -> None:
         """Upsert a stock's metrics."""
-        data = {**data, "symbol": symbol}
+        with self._connect() as conn:
+            self._upsert_stock(conn, {**data, "symbol": symbol})
+            conn.commit()
+
+    def replace_stocks(self, rows: list[dict[str, Any]]) -> None:
+        """Atomically replace the screener universe with a fresh snapshot."""
         now = time.time()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM stocks")
+            conn.execute("DELETE FROM sync_status WHERE sync_type='fundamentals'")
+            for row in rows:
+                self._upsert_stock(conn, row)
+                conn.execute(
+                    """INSERT INTO sync_status
+                       (symbol, sync_type, status, error, last_attempt, attempts, next_retry_at)
+                       VALUES (?, 'fundamentals', 'success', NULL, ?, 0, NULL)""",
+                    (row["symbol"], now),
+                )
+            conn.commit()
 
-        all_fields = [
-            "symbol",
-            "description",
-            "exchange",
-            "type",
-            "mic",
-            "currency",
-            "market_cap",
-            "pe_ratio",
-            "pb_ratio",
-            "ps_ratio",
-            "peg_ratio",
-            "ev_to_ebitda",
-            "dividend_yield_pct",
-            "gross_margin_pct",
-            "operating_margin_pct",
-            "net_margin_pct",
-            "roa_pct",
-            "roe_pct",
-            "roic_pct",
-            "current_ratio",
-            "debt_to_equity",
-            "fcf_margin_pct",
-            "revenue_growth_5y_pct",
-            "eps_growth_5y_pct",
-            "beta",
-            "price",
-            "week_52_high",
-            "week_52_low",
-            "revenue_growth_3y_pct",
-            "eps_growth_3y_pct",
-            "free_cash_flow_per_share",
-            "revenue_per_share",
-            "book_value_per_share",
-            "tangible_book_value_per_share",
-            "long_term_debt_to_equity",
-            "asset_turnover",
-            "eps_ttm",
-            "net_income",
-            "free_cash_flow",
-            "fcf_growth_5y_pct",
-            "net_income_growth_5y_pct",
-            "return_cagr_5y_pct",
-            "return_cagr_10y_pct",
-            "return_cagr_15y_pct",
-            "roa_5y_avg_pct",
-            "roe_5y_avg_pct",
-            "roic_5y_avg_pct",
-            "shares_insiders_pct",
-            "industry",
-            "short_pct",
-            "rating",
-            "pt_upside_pct",
-        ]
-
+    @staticmethod
+    def _upsert_stock(conn: sqlite3.Connection, data: dict[str, Any]) -> None:
+        now = time.time()
         fields = []
         values = []
         fields_set = []
 
-        for f in all_fields:
+        for f in STOCK_FIELDS:
             if f in data and data.get(f) is not None:
                 fields.append(f)
                 values.append(data[f])
@@ -581,10 +601,7 @@ class SQLiteStore:
             f"VALUES ({', '.join(['?'] * len(values))}) "  # nosec B608
             f"ON CONFLICT(symbol) DO UPDATE SET {', '.join(fields_set)}"  # nosec B608
         )
-
-        with self._connect() as conn:
-            conn.execute(sql, values)
-            conn.commit()
+        conn.execute(sql, values)
 
     def get_unique_values(self, column: str) -> list[str]:
         """Get unique values for an enum column."""
