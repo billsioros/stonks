@@ -266,3 +266,11 @@ def test_screen_does_not_read_missing_fundamentals():
         [{"filters": {"roic_pct": {"min": 10}}}], screen_fn=fake_screen
     )
     assert "roic_pct" not in rows[0]
+
+
+def test_build_screener_query_ors_enum_values():
+    query = build_screener_query({"exchange": {"values": ["NYQ", "NMS"]}})
+    operands = query.to_dict()["operands"]
+    or_operand = next(o for o in operands if o["operator"] == "OR")
+    assert {"operator": "EQ", "operands": ["exchange", "NYQ"]} in or_operand["operands"]
+    assert {"operator": "EQ", "operands": ["exchange", "NMS"]} in or_operand["operands"]

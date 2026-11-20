@@ -53,6 +53,7 @@ dev = [
   "pytest-cov>=5",
   "pytest-sugar>=1",
   "python-semantic-release>=9",
+  "ruff>=0.17.6",
   "scikit-learn>=1.7.1",
 ]
 

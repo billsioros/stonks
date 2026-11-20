@@ -83,8 +83,14 @@ def build_screener_query(filters: dict[str, dict[str, Any]]) -> EquityQuery:
             if bounds.get("max") is not None:
                 operands.append(EquityQuery("lt", [field, bounds["max"] * multiplier]))
         elif column in _ENUM_FIELDS and bounds.get("values"):
-            for value in bounds["values"]:
-                operands.append(EquityQuery("eq", [_ENUM_FIELDS[column], value]))
+            equalities = [
+                EquityQuery("eq", [_ENUM_FIELDS[column], value])
+                for value in bounds["values"]
+            ]
+            if len(equalities) == 1:
+                operands.append(equalities[0])
+            else:
+                operands.append(EquityQuery("or", equalities))
     return EquityQuery("and", operands)
 
 
