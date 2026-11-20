@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -54,6 +55,7 @@ _DERIVED_COLUMNS = (
     "book_value_per_share",
     "tangible_book_value_per_share",
     "short_pct",
+    "revenue_growth_3y_pct",
     "revenue_growth_5y_pct",
     "eps_growth_5y_pct",
     "fcf_growth_5y_pct",
@@ -141,6 +143,18 @@ def normalize_quote(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _scaled(value: Any, factor: float) -> float | None:
     return value * factor if isinstance(value, (int, float)) else None
+
+
+def _fetch_with_retry(
+    fetch: Callable[[], Any], attempts: int = 3, delay: float = 0.5
+) -> Any:
+    for attempt in range(attempts):
+        try:
+            return fetch()
+        except Exception:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay * 2**attempt)
 
 
 def _pct(value: Any) -> float | None:
@@ -253,17 +267,20 @@ def derive_metrics(
         ("roe_5y_avg_pct", net_income, total_equity),
     ):
         if number is not None and denom is not None:
-            aligned = number.reindex(denom.index).dropna().tail(5)
+            aligned = number.reindex(denom.index).dropna().sort_index().tail(5)
             values = denom.reindex(aligned.index)
             if not values.empty and (values != 0).all():
                 result[key] = float((aligned / values).mean() * 100)
     if net_income is not None and total_debt is not None and total_equity is not None:
-        aligned = net_income.reindex(total_equity.index).dropna().tail(5)
+        aligned = net_income.reindex(total_equity.index).dropna().sort_index().tail(5)
         debt = total_debt.reindex(aligned.index)
         equity = total_equity.reindex(aligned.index)
         if not debt.empty and ((debt + equity) != 0).all():
-            result["roic_5y_avg_pct"] = float((aligned / (debt + equity)).mean() * 100)
+            ratios = aligned / (debt + equity)
+            result["roic_5y_avg_pct"] = float(ratios.mean() * 100)
+            result["roic_pct"] = float(ratios.iloc[-1] * 100)
 
+    result["revenue_growth_3y_pct"] = _cagr_from_series(total_revenue, 3)
     result["revenue_growth_5y_pct"] = _cagr_from_series(total_revenue, 5)
     result["eps_growth_5y_pct"] = _cagr_from_series(basic_eps, 5)
     result["net_income_growth_5y_pct"] = _cagr_from_series(net_income, 5)
@@ -288,7 +305,7 @@ def enrich_symbol(
 
     def safe_fetch(name: str, fetch: Callable[[], Any]) -> Any:
         try:
-            return fetch()
+            return _fetch_with_retry(fetch)
         except Exception as exc:  # noqa: BLE001 - keep cached data on any provider error
             logger.warning("%s: failed to fetch %s: %s", symbol, name, exc)
             return None

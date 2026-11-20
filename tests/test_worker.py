@@ -71,6 +71,28 @@ def test_enrich_preserves_cached_row_on_error(monkeypatch):
     assert any(call[0] == "AAA" and call[2] == "failed" for call in statuses)
 
 
+def test_job_marks_symbol_failed_when_enrichment_returns_no_values(monkeypatch):
+    statuses = []
+    store = _stub_store(monkeypatch)
+    store.update_sync_status.side_effect = lambda *args: statuses.append(args)
+    monkeypatch.setattr(
+        "stonks.worker.preset_candidate_rows", lambda: [{"symbol": "AAA"}]
+    )
+    monkeypatch.setattr(
+        "stonks.worker.enrich_rows",
+        lambda rows, columns: [
+            {"symbol": "AAA", "roe_pct": None, "gross_margin_pct": None}
+        ],
+    )
+    monkeypatch.setattr(
+        "stonks.worker.required_preset_columns", lambda: {"roe_pct", "gross_margin_pct"}
+    )
+
+    job()
+
+    assert any(call[0] == "AAA" and call[2] == "failed" for call in statuses)
+
+
 def test_job_skips_fresh_symbols(monkeypatch):
     store = _stub_store(monkeypatch)
     store.get_synced_symbols.return_value = ["AAA"]

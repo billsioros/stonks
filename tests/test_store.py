@@ -66,17 +66,26 @@ class TestSQLiteStore:
     # ── Sync Status ──────────────────────────────────────────────
 
     def test_sync_status(self, store: SQLiteStore) -> None:
-        store.update_sync_status("AAPL", "basic", "success")
-        store.update_sync_status("GOOGL", "basic", "failed", error="429")
+        store.update_sync_status("AAPL", "fundamentals", "success")
+        store.update_sync_status("GOOGL", "fundamentals", "failed", error="429")
 
         info = store.get_last_sync_info()
         assert info["total_symbols"] == 2
         assert info["success_count"] == 1
         assert info["failed_count"] == 1
 
+    def test_last_sync_info_counts_fundamentals(self, store: SQLiteStore) -> None:
+        store.update_sync_status("AAPL", "fundamentals", "success")
+        store.update_sync_status("GOOGL", "fundamentals", "failed", error="429")
+
+        info = store.get_last_sync_info()
+        assert info["success_count"] == 1
+        assert info["fundamentals_count"] == 1
+        assert info["failed_count"] == 1
+
     def test_last_sync_info_with_metadata(self, store: SQLiteStore) -> None:
         store.save_metadata("universe_size", 1000)
-        store.update_sync_status("AAPL", "basic", "success")
+        store.update_sync_status("AAPL", "fundamentals", "success")
 
         info = store.get_last_sync_info()
         assert info["total_symbols"] == 1000

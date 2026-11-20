@@ -1152,11 +1152,11 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
 
     last_dt = datetime.fromtimestamp(sync_info["last_run"]).strftime("%H:%M:%S")
     success = sync_info["success_count"]
-    candles = sync_info["candles_count"]
+    fundamentals = sync_info["fundamentals_count"]
     failed = sync_info["failed_count"]
     total = sync_info["total_symbols"]
     completion = (success / max(1, total)) * 100
-    candle_completion = (candles / max(1, total)) * 100
+    fundamentals_completion = (fundamentals / max(1, total)) * 100
 
     st.markdown(
         """
@@ -1243,8 +1243,8 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
                         <div class="metric-label">Universe Coverage</div>
                     </div>
                     <div class="metric-group">
-                        <div class="metric-value">{candle_completion:.1f}%</div>
-                        <div class="metric-label">Historical Data</div>
+                        <div class="metric-value">{fundamentals_completion:.1f}%</div>
+                        <div class="metric-label">Fundamental Data</div>
                     </div>
                     <div class="metric-group">
                         <div class="metric-value">{success:,}</div>

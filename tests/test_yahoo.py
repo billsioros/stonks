@@ -124,6 +124,44 @@ def test_derive_metrics_accepts_first_available_financial_row():
     assert result["net_income"] == pytest.approx(1400.0)
 
 
+def test_derive_metrics_computes_latest_roic():
+    years = pd.to_datetime(["2025-01-01", "2024-01-01", "2023-01-01"])
+    financials = pd.DataFrame(
+        {"2025": [120.0], "2024": [110.0], "2023": [100.0]},
+        index=pd.Index(["Net Income"], name=""),
+    )
+    financials.columns = pd.DatetimeIndex(years)
+    financials.index.name = None
+    balance_sheet = pd.DataFrame(
+        {
+            "2025": [220.0, 320.0],
+            "2024": [210.0, 310.0],
+            "2023": [200.0, 300.0],
+        },
+        index=pd.Index(["Total Debt", "Total Equity Gross Minority Interest"], name=""),
+    )
+    balance_sheet.columns = pd.DatetimeIndex(years)
+    balance_sheet.index.name = None
+
+    result = derive_metrics(None, None, financials, balance_sheet, None)
+
+    assert result["roic_pct"] == pytest.approx(120 / (220 + 320) * 100)
+
+
+def test_derive_metrics_computes_3y_revenue_growth():
+    years = pd.to_datetime(["2022-01-01", "2023-01-01", "2024-01-01", "2025-01-01"])
+    financials = pd.DataFrame(
+        {"2022": [100.0], "2023": [110.0], "2024": [121.0], "2025": [133.1]},
+        index=pd.Index(["Total Revenue"], name=""),
+    )
+    financials.columns = pd.DatetimeIndex(years)
+    financials.index.name = None
+
+    result = derive_metrics(None, None, financials, None, None)
+
+    assert result["revenue_growth_3y_pct"] == pytest.approx(10.0)
+
+
 def test_derive_metrics_insufficient_history():
     idx = pd.date_range("2025-01-31", periods=6, freq="ME")
     history = pd.DataFrame({"Close": range(100, 106)}, index=idx)
@@ -137,6 +175,43 @@ def test_derive_metrics_insufficient_history():
         "roic_5y_avg_pct",
     ):
         assert result[key] is None
+
+
+def test_enrich_symbol_retries_transient_failure(monkeypatch):
+    class FakeTicker:
+        def __init__(self):
+            self.attempts = 0
+
+        @property
+        def info(self):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise RuntimeError("429")
+            return {"grossMargins": 0.5}
+
+        def history(self, **kwargs):
+            return None
+
+        @property
+        def financials(self):
+            return None
+
+        @property
+        def balance_sheet(self):
+            return None
+
+        @property
+        def cashflow(self):
+            return None
+
+    ticker = FakeTicker()
+    monkeypatch.setattr("stonks.yahoo.yf.Ticker", lambda symbol: ticker)
+    monkeypatch.setattr("stonks.yahoo.time.sleep", lambda delay: None)
+
+    result = enrich_symbol("RETRY")
+
+    assert ticker.attempts == 3
+    assert result["gross_margin_pct"] == 50.0
 
 
 def test_enrich_symbol_handles_missing_ticker_data(monkeypatch):

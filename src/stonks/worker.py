@@ -40,10 +40,11 @@ def job() -> None:
         target_rows = [row for row in rows if row["symbol"] in targets]
         logger.info("📊 %s symbols need fundamental enrichment", len(target_rows))
 
+        required = required_preset_columns()
         failed: set[str] = set()
         if target_rows:
             try:
-                enriched = enrich_rows(target_rows, required_preset_columns())
+                enriched = enrich_rows(target_rows, required)
             except Exception as exc:  # noqa: BLE001 - keep the quote rows either way
                 logger.error("Enrichment batch failed: %s", exc)
                 failed = set(targets)
@@ -58,6 +59,11 @@ def job() -> None:
             symbol = row["symbol"]
             store.save_stock(symbol, row)
             if symbol in targets:
+                has_values = not required or any(
+                    row.get(column) is not None for column in required
+                )
+                if not has_values:
+                    failed.add(symbol)
                 status = "failed" if symbol in failed else "success"
                 error = "Enrichment unavailable" if symbol in failed else None
                 store.update_sync_status(symbol, "fundamentals", status, error)

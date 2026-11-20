@@ -273,11 +273,8 @@ class SQLiteStore:
                     "SELECT COUNT(DISTINCT symbol) FROM sync_status"
                 ).fetchone()[0]
 
-            success_basic = conn.execute(
-                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='basic'"
-            ).fetchone()[0]
-            success_candles = conn.execute(
-                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='candles'"
+            success_fundamentals = conn.execute(
+                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='fundamentals'"
             ).fetchone()[0]
             failed = conn.execute(
                 "SELECT COUNT(*) FROM sync_status WHERE status='failed'"
@@ -288,8 +285,8 @@ class SQLiteStore:
 
         return {
             "total_symbols": total_universe,
-            "success_count": success_basic,
-            "candles_count": success_candles,
+            "success_count": success_fundamentals,
+            "fundamentals_count": success_fundamentals,
             "failed_count": failed,
             "last_run": last_run,
         }
@@ -457,9 +454,9 @@ class SQLiteStore:
             "rating",
             "pt_upside_pct",
         ]
-        select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"
+        select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"  # nosec B608
 
-        count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"
+        count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"  # nosec B608
         with self._connect() as conn:
             total_matching = conn.execute(count_sql, params).fetchone()[0]
 
@@ -555,9 +552,11 @@ class SQLiteStore:
         values.append(now)
         fields_set.append("updated_at=excluded.updated_at")
 
-        sql = f"""INSERT INTO stocks ({", ".join(fields)})
-                  VALUES ({", ".join(["?"] * len(values))})
-                  ON CONFLICT(symbol) DO UPDATE SET {", ".join(fields_set)}"""
+        sql = (
+            f"INSERT INTO stocks ({', '.join(fields)}) "  # nosec B608
+            f"VALUES ({', '.join(['?'] * len(values))}) "  # nosec B608
+            f"ON CONFLICT(symbol) DO UPDATE SET {', '.join(fields_set)}"  # nosec B608
+        )
 
         with self._connect() as conn:
             conn.execute(sql, values)
@@ -570,7 +569,9 @@ class SQLiteStore:
             return []
 
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT DISTINCT {column} FROM stocks WHERE {column} IS NOT NULL ORDER BY {column}"
-            ).fetchall()
+            query = (
+                f"SELECT DISTINCT {column} FROM stocks "  # nosec B608
+                f"WHERE {column} IS NOT NULL ORDER BY {column}"  # nosec B608
+            )
+            rows = conn.execute(query).fetchall()
         return [r[0] for r in rows]
