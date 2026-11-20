@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from stonks import stockanalysis
 
 UNIVERSE_PAYLOAD = {
@@ -49,6 +51,10 @@ METRICS_PAYLOAD = {
                 "shortFloat": 0.99803,
                 "analystRatings": "Buy",
                 "priceTargetChange": 5.5,
+                "eps": 8.98,
+                "price": 349.21,
+                "epsGrowth5Y": 9.86584,
+                "epsGrowth10Y": 15.764,
                 "exchange": "NASDAQ",
                 "priceCurrency": "USD",
                 "industry": "ignored because initial wins",
@@ -128,6 +134,9 @@ def test_build_rows_converts_units_and_maps_columns():
     assert aapl["short_pct"] == 0.99803
     assert aapl["rating"] == "Buy"
     assert aapl["pt_upside_pct"] == 5.5
+    assert aapl["dcf_fair_value"] is not None
+    assert aapl["dcf_upside_pct"] is not None
+    assert aapl["lynch_fair_value"] == 8.98 * 9.86584
     assert aapl["exchange"] == "NMS"
     assert aapl["currency"] == "USD"
     assert "unmappedField" not in aapl
@@ -137,8 +146,23 @@ def test_build_rows_converts_units_and_maps_columns():
     assert msft["free_cash_flow"] is None
     assert msft["net_income"] == 142_631.0
     assert msft["shares_insiders_pct"] == 0.00031794
+    # No EPS growth data means no valuation must be invented.
+    assert msft["dcf_fair_value"] is None
+    assert msft["dcf_upside_pct"] is None
+    assert msft["lynch_fair_value"] is None
 
     assert {row["symbol"] for row in rows} == {"AAPL", "MSFT"}
+
+
+def test_build_rows_applies_the_supplied_discount_rate():
+    universe = [{"symbol": "AAPL", "description": "Apple Inc.", "industry": "H"}]
+    metrics = METRICS_PAYLOAD["data"]["data"]
+
+    low = stockanalysis.build_rows(universe, metrics, 0.11)[0]["dcf_fair_value"]
+    high = stockanalysis.build_rows(universe, metrics, 0.12)[0]["dcf_fair_value"]
+
+    assert low is not None and high is not None
+    assert low > high
 
 
 def test_fetch_rows_calls_both_endpoints_and_merges(monkeypatch):
@@ -149,6 +173,8 @@ def test_fetch_rows_calls_both_endpoints_and_merges(monkeypatch):
         return UNIVERSE_PAYLOAD if "initial" in url else METRICS_PAYLOAD
 
     monkeypatch.setattr(stockanalysis, "fetch_json", fake_fetch)
+    # The default path would hit the live Treasury feed.
+    monkeypatch.setattr(stockanalysis, "fetch_treasury_yield_pct", lambda: 5.07)
 
     rows = stockanalysis.fetch_rows()
 
@@ -156,6 +182,14 @@ def test_fetch_rows_calls_both_endpoints_and_merges(monkeypatch):
     assert len(rows) == 2
     assert rows[0]["symbol"] == "AAPL"
     assert rows[0]["free_cash_flow"] == 136_056.0
+    # 5.07 -> ceil + 6% = 12% discount rate.
+    assert rows[0]["dcf_fair_value"] == pytest.approx(
+        stockanalysis.build_rows(  # same inputs, explicit rate
+            stockanalysis.fetch_universe(fake_fetch),
+            METRICS_PAYLOAD["data"]["data"],
+            0.12,
+        )[0]["dcf_fair_value"]
+    )
 
 
 def test_fetch_json_retries_transient_http_error(monkeypatch):

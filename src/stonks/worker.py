@@ -6,7 +6,7 @@ import time
 import schedule
 
 from stonks.config import DATA_DIR, WORKER_INTERVAL_MINUTES
-from stonks.stockanalysis import fetch_rows
+from stonks.stockanalysis import current_discount_rate, fetch_rows
 from stonks.store import SQLiteStore
 
 logging.basicConfig(
@@ -21,7 +21,9 @@ def job() -> None:
     """Sync the full StockAnalysis screener dataset into the local store."""
     logger.info("🚀 Starting data sync...")
     try:
-        rows = fetch_rows()
+        discount_rate = current_discount_rate()
+        logger.info("📉 DCF discount rate: %.0f%%", discount_rate * 100)
+        rows = fetch_rows(discount_rate=discount_rate)
         if not rows:
             logger.warning("⚠️ No screener data found.")
             return

@@ -72,6 +72,10 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "short_pct": "Short % Shares",
     "rating": "Rating",
     "pt_upside_pct": "PT Upside",
+    "dcf_fair_value": "DCF Fair Value",
+    "dcf_upside_pct": "DCF Upside %",
+    "lynch_fair_value": "Lynch Fair Value",
+    "lynch_upside_pct": "Lynch Upside %",
 }
 
 # ── View presets ─────────────────────────────────────────────────────
@@ -85,16 +89,25 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "pe_ratio",
         "dividend_yield_pct",
         "beta",
+        "dcf_fair_value",
+        "dcf_upside_pct",
+        "lynch_fair_value",
+        "lynch_upside_pct",
     ],
     "Valuation": [
         "symbol",
         "description",
         "market_cap",
+        "price",
         "pe_ratio",
         "pb_ratio",
         "ps_ratio",
         "peg_ratio",
         "ev_to_ebitda",
+        "dcf_fair_value",
+        "dcf_upside_pct",
+        "lynch_fair_value",
+        "lynch_upside_pct",
     ],
     "Profitability": [
         "symbol",
@@ -135,6 +148,10 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "ev_to_ebitda",
         "short_pct",
         "rating",
+        "dcf_fair_value",
+        "dcf_upside_pct",
+        "lynch_fair_value",
+        "lynch_upside_pct",
     ],
     "All Columns": COLUMN_DISPLAY_NAMES.keys(),
 }
@@ -182,6 +199,10 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
     "shares_insiders_pct",
     "short_pct",
     "pt_upside_pct",
+    "dcf_fair_value",
+    "dcf_upside_pct",
+    "lynch_fair_value",
+    "lynch_upside_pct",
 ]
 
 # ── Enum filter columns ─────────────────────────────────────────────

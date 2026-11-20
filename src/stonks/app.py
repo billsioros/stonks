@@ -4,6 +4,7 @@ Run with: streamlit run src/stonks/app.py
 """
 
 import logging
+import math
 import time
 from datetime import datetime
 from typing import Any
@@ -447,9 +448,14 @@ def get_store() -> SQLiteStore:
     return SQLiteStore()
 
 
+def _is_missing(val: object) -> bool:
+    """True for None or NaN (pandas turns NULLs into NaN in the display frame)."""
+    return val is None or (isinstance(val, float) and math.isnan(val))
+
+
 def _fmt_market_cap(val: float | None) -> str:
     """Format market cap in human-readable form."""
-    if val is None:
+    if _is_missing(val) or val is None:
         return "—"
     if val >= 1_000_000:
         return f"{val / 1_000_000:.2f}T"
@@ -460,14 +466,14 @@ def _fmt_market_cap(val: float | None) -> str:
 
 def _fmt_pct(val: float | None) -> str:
     """Format a percentage value."""
-    if val is None:
+    if _is_missing(val):
         return "—"
     return f"{val:.2f}%"
 
 
 def _fmt_number(val: float | None, decimals: int = 2) -> str:
     """Format a generic number."""
-    if val is None:
+    if _is_missing(val):
         return "—"
     return f"{val:,.{decimals}f}"
 
@@ -773,9 +779,9 @@ def render_screener_table() -> None:
 
     with ctrl_col2:
         sort_options = ["None"] + [
-            COLUMN_DISPLAY_NAMES.get(c, c) for c in NUMERIC_FILTER_COLUMNS[:15]
+            COLUMN_DISPLAY_NAMES.get(c, c) for c in NUMERIC_FILTER_COLUMNS
         ]
-        sort_keys = ["None"] + NUMERIC_FILTER_COLUMNS[:15]
+        sort_keys = ["None"] + NUMERIC_FILTER_COLUMNS
 
         current_sort = st.session_state.get("sort_column")
         sort_idx = 0
@@ -912,6 +918,8 @@ def render_screener_table() -> None:
             "EV/EBITDA",
             "EV/EBITDA^",
             "Beta",
+            "DCF Fair Value",
+            "Lynch Fair Value",
         ):
             display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
 
@@ -1033,6 +1041,10 @@ def render_watchlist_tab() -> None:
             "dividend_yield_pct",
             "price",
             "beta",
+            "dcf_fair_value",
+            "dcf_upside_pct",
+            "lynch_fair_value",
+            "lynch_upside_pct",
         ]
         view_cols = [c for c in view_cols if c in watchlist_df.columns]
         display_wl = watchlist_df[view_cols].copy()
@@ -1045,7 +1057,7 @@ def render_watchlist_tab() -> None:
         for col in display_wl.columns:
             if "%" in col:
                 display_wl[col] = display_wl[col].apply(_fmt_pct)
-            elif col in ("P/E", "Beta"):
+            elif col in ("P/E", "Beta", "DCF Fair Value", "Lynch Fair Value"):
                 display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
 
         st.dataframe(display_wl, width="stretch", hide_index=True)
@@ -1059,76 +1071,6 @@ def render_watchlist_tab() -> None:
             key="download_watchlist",
         )
 
-    st.divider()
-    st.markdown("**Remove from watchlist:**")
-    cols_per_row = 6
-    for i in range(0, len(watchlist_symbols), cols_per_row):
-        row_syms = watchlist_symbols[i : i + cols_per_row]
-        cols = st.columns(cols_per_row)
-        for j, sym in enumerate(row_syms):
-            with cols[j]:
-                if st.button(f"❌ {sym}", key=f"remove_wl_{sym}"):
-                    store.remove_from_watchlist(sym)
-                    st.rerun()
-
-    st.divider()
-
-    watchlist = store.get_watchlist()
-    if not watchlist:
-        st.info(
-            "Your watchlist is empty. Add stocks using the selector above or from the screener."
-        )
-        return
-
-    watchlist_symbols = [item["symbol"] for item in watchlist]
-
-    if watchlist_symbols:
-        page_rows, _, _ = store.get_stocks(
-            filters={"symbol": {"values": watchlist_symbols}},
-            page=1,
-            page_size=len(watchlist_symbols),
-        )
-        watchlist_df = pd.DataFrame(page_rows)
-    else:
-        watchlist_df = pd.DataFrame()
-
-    if not watchlist_df.empty:
-        view_cols = [
-            "symbol",
-            "description",
-            "market_cap",
-            "pe_ratio",
-            "roe_pct",
-            "dividend_yield_pct",
-            "price",
-            "beta",
-        ]
-        view_cols = [c for c in view_cols if c in watchlist_df.columns]
-        display_wl = watchlist_df[view_cols].copy()
-
-        rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
-        display_wl = display_wl.rename(columns=rename_map)
-
-        if "Market Cap" in display_wl.columns:
-            display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
-        for col in display_wl.columns:
-            if "%" in col:
-                display_wl[col] = display_wl[col].apply(_fmt_pct)
-            elif col in ("P/E", "Beta"):
-                display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
-
-        st.dataframe(display_wl, width="stretch", hide_index=True)
-
-        csv = watchlist_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label=f"📥 Download Watchlist CSV ({len(watchlist_df)} stocks)",
-            data=csv,
-            file_name=f"stonks_watchlist_{time.strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-            key="download_watchlist",
-        )
-
-    # Remove from watchlist
     st.divider()
     st.markdown("**Remove from watchlist:**")
     cols_per_row = 6

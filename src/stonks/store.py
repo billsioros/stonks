@@ -8,6 +8,13 @@ from typing import Any
 
 from stonks.config import DB_PATH
 
+VALUATION_COLUMNS = (
+    "dcf_fair_value",
+    "dcf_upside_pct",
+    "lynch_fair_value",
+    "lynch_upside_pct",
+)
+
 STOCK_FIELDS = [
     "symbol",
     "description",
@@ -61,6 +68,7 @@ STOCK_FIELDS = [
     "short_pct",
     "rating",
     "pt_upside_pct",
+    *VALUATION_COLUMNS,
 ]
 
 
@@ -185,9 +193,22 @@ class SQLiteStore:
                     short_pct REAL,
                     rating TEXT,
                     pt_upside_pct REAL,
+                    dcf_fair_value REAL,
+                    dcf_upside_pct REAL,
+                    lynch_fair_value REAL,
+                    lynch_upside_pct REAL,
                     updated_at REAL
                 )
             """)
+            # Existing databases predate the valuation columns.
+            stock_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(stocks)")
+            }
+            for column in VALUATION_COLUMNS:
+                if column not in stock_columns:
+                    conn.execute(
+                        f"ALTER TABLE stocks ADD COLUMN {column} REAL"  # nosec B608
+                    )
             conn.commit()
 
     # ── Saved Screens ────────────────────────────────────────────────
@@ -454,6 +475,7 @@ class SQLiteStore:
             "shares_insiders_pct",
             "short_pct",
             "pt_upside_pct",
+            *VALUATION_COLUMNS,
         }
         enum_columns = {"exchange", "type", "currency", "mic"}
 
@@ -531,6 +553,7 @@ class SQLiteStore:
             "short_pct",
             "rating",
             "pt_upside_pct",
+            *VALUATION_COLUMNS,
         ]
         select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"  # nosec B608
 

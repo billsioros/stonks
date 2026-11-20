@@ -12,6 +12,15 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
+from stonks.treasury import fetch_treasury_yield_pct
+from stonks.valuation import (
+    DCF_DISCOUNT_RATE,
+    dcf_discount_rate,
+    dcf_fair_value,
+    lynch_fair_value,
+    upside_pct,
+)
+
 BASE_URL = "https://stockanalysis.com/_api/endpoints/screener"
 INITIAL_URL = f"{BASE_URL}/initial?type=stock&countryCode=&format=compact"
 DATA_POINTS_URL = f"{BASE_URL}/data-points?type=s&ids={{ids}}"
@@ -50,6 +59,7 @@ DATA_POINT_IDS = (
     "tangibleBookValuePerShare",
     "assetTurnover",
     "eps",
+    "epsGrowth10Y",
     "revenueGrowth3Y",
     "epsGrowth3Y",
     "netIncome",
@@ -194,7 +204,9 @@ def fetch_metrics(
 
 
 def build_rows(
-    universe: list[dict], metrics: dict[str, dict[str, Any]]
+    universe: list[dict],
+    metrics: dict[str, dict[str, Any]],
+    discount_rate: float = DCF_DISCOUNT_RATE,
 ) -> list[dict[str, Any]]:
     """Merge universe and metrics into rows shaped for SQLiteStore.save_stock."""
     rows = []
@@ -208,12 +220,39 @@ def build_rows(
         for column, (field, convert) in DATA_POINT_MAP.items():
             value = point.get(field)
             row[column] = convert(value) if value is not None else None
+        _add_valuation(row, point, discount_rate)
         rows.append(row)
     return rows
 
 
+def _add_valuation(
+    row: dict[str, Any], point: dict[str, Any], discount_rate: float
+) -> None:
+    """Attach the GuruFocus-style fair values to a store row in place."""
+    price = row.get("price")
+    dcf = dcf_fair_value(point.get("eps"), point.get("epsGrowth10Y"), discount_rate)
+    lynch = lynch_fair_value(point.get("eps"), point.get("epsGrowth5Y"))
+    row["dcf_fair_value"] = dcf
+    row["dcf_upside_pct"] = upside_pct(dcf, price)
+    row["lynch_fair_value"] = lynch
+    row["lynch_upside_pct"] = upside_pct(lynch, price)
+
+
+def current_discount_rate() -> float:
+    """DCF discount rate for this sync, from the live ten-year Treasury yield."""
+    return dcf_discount_rate(fetch_treasury_yield_pct())
+
+
 def fetch_rows(
     fetch: Callable[[str], dict[str, Any]] | None = None,
+    discount_rate: float | None = None,
 ) -> list[dict[str, Any]]:
-    """Fetch both payloads and return store-ready rows for the whole universe."""
-    return build_rows(fetch_universe(fetch), fetch_metrics(fetch))
+    """Fetch both payloads and return store-ready rows for the whole universe.
+
+    Args:
+        fetch: Optional JSON fetcher, for tests.
+        discount_rate: DCF discount rate as a fraction; looked up from the
+            current Treasury yield when omitted.
+    """
+    rate = current_discount_rate() if discount_rate is None else discount_rate
+    return build_rows(fetch_universe(fetch), fetch_metrics(fetch), rate)
