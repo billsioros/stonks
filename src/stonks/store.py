@@ -424,6 +424,40 @@ class SQLiteStore:
             ).fetchone()
         return row[0] if row else None
 
+    # ── Cache ─────────────────────────────────────────────────────────
+
+    def cache_set(self, key: str, value: Any, ttl_seconds: float) -> None:
+        """Store a JSON-serialisable value under `key` with a time to live."""
+        expires_at = time.time() + ttl_seconds
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO kv_cache (key, value, expires_at) VALUES (?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                     value=excluded.value, expires_at=excluded.expires_at
+                """,
+                (key, json.dumps(value), expires_at),
+            )
+            conn.commit()
+
+    def cache_get(self, key: str) -> Any:
+        """Return a cached value, or None when missing, expired or unreadable."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value, expires_at FROM kv_cache WHERE key=?", (key,)
+            ).fetchone()
+        if row is None or row[1] is None or row[1] < time.time():
+            return None
+        try:
+            return json.loads(row[0])
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+    def cache_delete(self, key: str) -> None:
+        """Drop a cached value."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM kv_cache WHERE key=?", (key,))
+            conn.commit()
+
     # ── Stocks ────────────────────────────────────────────────────────
 
     def get_stocks(

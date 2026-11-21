@@ -260,3 +260,29 @@ def test_replace_stocks_discards_stale_symbols_and_values(store: SQLiteStore) ->
         ).fetchall()
     assert ui[0] is None
     assert [(r[0], r[1]) for r in statuses] == [("NEW", "success"), ("UI", "success")]
+
+
+def test_cache_roundtrip(store: SQLiteStore) -> None:
+    store.cache_set("sym:NVDA:overview:-:annual", {"a": [1, 2]}, ttl_seconds=60)
+    assert store.cache_get("sym:NVDA:overview:-:annual") == {"a": [1, 2]}
+
+
+def test_cache_missing_returns_none(store: SQLiteStore) -> None:
+    assert store.cache_get("nope") is None
+
+
+def test_cache_expired_returns_none(store: SQLiteStore) -> None:
+    store.cache_set("k", {"a": 1}, ttl_seconds=-1)
+    assert store.cache_get("k") is None
+
+
+def test_cache_delete_removes_entry(store: SQLiteStore) -> None:
+    store.cache_set("k", {"a": 1}, ttl_seconds=60)
+    store.cache_delete("k")
+    assert store.cache_get("k") is None
+
+
+def test_cache_overwrite_replaces_value(store: SQLiteStore) -> None:
+    store.cache_set("k", {"a": 1}, ttl_seconds=60)
+    store.cache_set("k", {"a": 2}, ttl_seconds=60)
+    assert store.cache_get("k") == {"a": 2}
