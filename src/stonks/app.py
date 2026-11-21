@@ -3,10 +3,14 @@
 Run with: streamlit run src/stonks/app.py
 """
 
+import base64
 import logging
 import math
+import re
 import time
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
@@ -111,10 +115,15 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     flex: none;
     display: grid;
     place-items: center;
-    font-size: 1.6rem;
     border-radius: 14px;
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
+    overflow: hidden;
+}
+
+.sk-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: -webkit-optimize-contrast;
 }
 
 .sk-brand h1 {
@@ -148,6 +157,34 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     margin: 0.55rem 0 0;
     color: var(--text-secondary);
     font-size: 0.85rem;
+}
+
+/* Sidebar section label, matching the masthead's quieter register */
+.sk-side-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 0 0 0.9rem;
+}
+
+/* Screens and watchlist entries: roomies' card surface, sized for a sidebar */
+[class*="st-key-screen-"] {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 0.85rem 0.9rem;
+    margin-bottom: 0.6rem;
+    transition: border-color 0.15s ease;
+}
+
+[class*="st-key-screen-"]:hover {
+    border-color: var(--accent-border);
+}
+
+[class*="st-key-screen-"] .stButton > button {
+    background: transparent;
+    min-height: 2rem;
+    padding: 0 0.5rem;
 }
 
 /* Metric cards: flat surfaces with high-contrast values, no glow */
@@ -247,11 +284,12 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     outline-offset: 2px;
 }
 
-/* Data editor/table */
+/* Data editor/table: roomies' card surface around the grid */
 [data-testid="stDataFrame"] {
     border: 1px solid var(--border-color);
     border-radius: 12px;
     overflow: hidden;
+    background: var(--bg-card);
 }
 
 /* Tabs: text only, underline marks active */
@@ -311,12 +349,19 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     color: var(--accent-primary);
 }
 
-/* Expander */
-.streamlit-expanderHeader {
+/* Expander: a card like every other surface, not a tinted strip */
+[data-testid="stExpander"] details {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.streamlit-expanderHeader,
+[data-testid="stExpander"] summary {
     font-weight: 600 !important;
-    font-size: 0.9rem !important;
-    background: var(--bg-secondary) !important;
-    border-radius: 8px !important;
+    font-size: 0.95rem !important;
+    background: transparent !important;
+    border-radius: 12px !important;
 }
 
 /* Footer */
@@ -406,13 +451,21 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
     return f"{val:,.{decimals}f}"
 
 
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    """Return the bundled favicon as a data URI for the masthead."""
+    path = Path(__file__).parent / "assets" / "favicon.png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def render_header() -> None:
     """Render the masthead: brand on the left, data source on the right."""
     st.markdown(
-        """
+        f"""
     <div class="sk-head">
         <div class="sk-brand">
-            <div class="sk-mark">📈</div>
+            <div class="sk-mark"><img src="{_logo_data_uri()}" alt="Stonks"></div>
             <h1>Stonks</h1>
         </div>
         <div class="sk-meta">
@@ -425,19 +478,53 @@ def render_header() -> None:
     )
 
 
+def _slug(text: str) -> str:
+    """Turn a screen name into a CSS-safe key fragment."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _describe_screen(screen: dict[str, Any]) -> str:
+    """One-line summary of a saved screen's shape."""
+    parts = [f"{screen.get('view_preset') or 'Overview'} view"]
+    filters = screen.get("filters") or {}
+    parts.append(f"{len(filters)} filters" if filters else "no filters")
+    if screen.get("sort_column"):
+        display = COLUMN_DISPLAY_NAMES.get(screen["sort_column"], screen["sort_column"])
+        direction = "desc" if not screen.get("sort_ascending", True) else "asc"
+        parts.append(f"sorted by {display} ({direction})")
+    return " · ".join(parts)
+
+
+def _screen_card(
+    key: str,
+    title: str,
+    description: str | None,
+    *,
+    allow_delete: bool = False,
+) -> tuple[bool, bool]:
+    """Render one screen as a card and return (load_clicked, delete_clicked)."""
+    with st.container(key=f"screen-{key}"):
+        ratios = [5, 1, 1] if allow_delete else [6, 1]
+        cols = st.columns(ratios)
+        with cols[0]:
+            st.markdown(f"**{title}**")
+            if description:
+                st.caption(description)
+        with cols[1]:
+            load = st.button("▶", key=f"load_screen_{key}", help="Load this screen")
+        delete = False
+        if allow_delete:
+            with cols[2]:
+                delete = st.button("🗑", key=f"del_screen_{key}", help="Delete")
+    return load, delete
+
+
 def render_sidebar_filters() -> dict[str, Any]:
     """Render the sidebar filter builder without requiring df."""
     with st.sidebar:
-        # ── Logo / branding ──────────────────────────────────────
+        # ── Section label ────────────────────────────────────────
         st.markdown(
-            """
-        <div style="text-align: center; padding: 0.5rem 0 1rem 0;">
-            <div style="font-size: 1.5rem; font-weight: 700; color: #f8fafc;">
-                🎯 Filters
-            </div>
-        </div>
-        """,
-            unsafe_allow_html=True,
+            '<div class="sk-side-title">🎯 Filters</div>', unsafe_allow_html=True
         )
 
         # ── Search ───────────────────────────────────────────────
@@ -454,58 +541,49 @@ def render_sidebar_filters() -> dict[str, Any]:
         # ── Popular Screens ──────────────────────────────────────
         with st.expander("🌟 Popular Screens", expanded=False):
             for preset in POPULAR_SCREENS:
-                col_a, col_b = st.columns([5, 1])
-                with col_a:
-                    st.markdown(f"**{preset['name']}**")
-                    st.caption(preset["description"])
-                with col_b:
-                    if st.button(
-                        "▶", key=f"preset_{preset['name']}", help="Apply this screen"
-                    ):
-                        st.session_state["active_filters"] = preset["filters"]
-                        st.session_state["view_preset"] = preset.get(
-                            "view_preset", "Overview"
+                load, _ = _screen_card(
+                    f"popular-{_slug(preset['name'])}",
+                    preset["name"],
+                    preset["description"],
+                )
+                if load:
+                    st.session_state["active_filters"] = preset["filters"]
+                    st.session_state["view_preset"] = preset.get(
+                        "view_preset", "Overview"
+                    )
+                    if preset.get("sort_column"):
+                        st.session_state["sort_column"] = preset["sort_column"]
+                        st.session_state["sort_ascending"] = preset.get(
+                            "sort_ascending", False
                         )
-                        if preset.get("sort_column"):
-                            st.session_state["sort_column"] = preset["sort_column"]
-                            st.session_state["sort_ascending"] = preset.get(
-                                "sort_ascending", False
-                            )
-                        st.session_state["current_page"] = 1
-                        st.rerun()
+                    st.session_state["current_page"] = 1
+                    st.rerun()
 
         # ── Saved Screens ────────────────────────────────────────
         store = get_store()
         with st.expander("💾 Saved Screens", expanded=False):
-            saved = store.list_screens()
-            if saved:
-                for screen in saved:
-                    col_a, col_b, col_c = st.columns([4, 1, 1])
-                    with col_a:
-                        st.markdown(f"**{screen['name']}**")
-                    with col_b:
-                        if st.button(
-                            "▶", key=f"load_screen_{screen['name']}", help="Load"
-                        ):
-                            st.session_state["active_filters"] = screen["filters"]
-                            st.session_state["view_preset"] = screen.get(
-                                "view_preset", "Overview"
-                            )
-                            if screen.get("sort_column"):
-                                st.session_state["sort_column"] = screen["sort_column"]
-                                st.session_state["sort_ascending"] = screen.get(
-                                    "sort_ascending", True
-                                )
-                            st.session_state["current_page"] = 1
-                            st.rerun()
-                    with col_c:
-                        if st.button(
-                            "🗑", key=f"del_screen_{screen['name']}", help="Delete"
-                        ):
-                            store.delete_screen(screen["name"])
-                            st.rerun()
-            else:
-                st.caption("No saved screens yet.")
+            for screen in store.list_screens():
+                load, delete = _screen_card(
+                    f"saved-{_slug(screen['name'])}",
+                    screen["name"],
+                    _describe_screen(screen),
+                    allow_delete=True,
+                )
+                if load:
+                    st.session_state["active_filters"] = screen["filters"]
+                    st.session_state["view_preset"] = screen.get(
+                        "view_preset", "Overview"
+                    )
+                    if screen.get("sort_column"):
+                        st.session_state["sort_column"] = screen["sort_column"]
+                        st.session_state["sort_ascending"] = screen.get(
+                            "sort_ascending", True
+                        )
+                    st.session_state["current_page"] = 1
+                    st.rerun()
+                if delete:
+                    store.delete_screen(screen["name"])
+                    st.rerun()
 
             # Save current filters
             st.divider()
@@ -528,11 +606,6 @@ def render_sidebar_filters() -> dict[str, Any]:
                     st.toast(f"✅ Screen '{save_name}' saved!", icon="💾")
                 else:
                     st.warning("Please enter a name.")
-
-        # ── Data management ──────────────────────────────────────
-        st.divider()
-        with st.expander("⚙️ Settings", expanded=False):
-            st.info("Cache is managed by the worker.")
 
     return st.session_state.get("active_filters", {})  # type: ignore[no-any-return]
 
@@ -693,6 +766,7 @@ def render_top_filters() -> dict[str, Any]:
 def render_screener_table() -> None:
     """Render the main screener table with controls using DB-level filtering."""
     store = get_store()
+    st.markdown('<div class="section-header">📊 Screener</div>', unsafe_allow_html=True)
 
     ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1, 1])
 
@@ -822,6 +896,13 @@ def render_screener_table() -> None:
 
     page_df = pd.DataFrame(page_rows)
 
+    # Rows in HedgeFollow's largest buys get the accent tint; the rest zebra-stripe
+    # so a wide sheet of numbers still reads row by row.
+    if "hedge_fund_buys" in page_df.columns:
+        hf_mask = page_df["hedge_fund_buys"].fillna(0).astype(int).eq(1)
+    else:
+        hf_mask = pd.Series(False, index=page_df.index)
+
     watchlist_symbols = set(store.get_watchlist_symbols())
     if "symbol" in page_df.columns:
         page_df["symbol"] = page_df["symbol"].apply(
@@ -855,11 +936,19 @@ def render_screener_table() -> None:
         ):
             display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
 
+    def _row_style(row: pd.Series) -> list[str]:
+        if bool(hf_mask.loc[row.name]):
+            return ["background-color: rgba(99, 102, 241, 0.16)"] * len(row)
+        if row.name % 2:
+            return ["background-color: rgba(248, 250, 252, 0.03)"] * len(row)
+        return [""] * len(row)
+
     st.dataframe(
-        display_df,
+        display_df.style.apply(_row_style, axis=1),
         width="stretch",
         hide_index=True,
-        height=min(35 * len(display_df) + 38, 800),
+        row_height=44,
+        height=min(44 * len(display_df) + 44, 900),
     )
 
     if total_pages > 1:
@@ -992,7 +1081,7 @@ def render_watchlist_tab() -> None:
             elif col in ("P/E", "Beta", "DCF Fair Value", "Lynch Fair Value"):
                 display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
 
-        st.dataframe(display_wl, width="stretch", hide_index=True)
+        st.dataframe(display_wl, width="stretch", hide_index=True, row_height=44)
 
         csv = watchlist_df.to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -1145,37 +1234,57 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
         )
 
 
+def _default_screen() -> dict[str, Any]:
+    """Return the screen the app opens with."""
+    preset = next(
+        (s for s in POPULAR_SCREENS if "Quality Screen" in s["name"]),
+        POPULAR_SCREENS[0],
+    )
+    return {
+        "name": preset["name"],
+        "filters": preset["filters"].copy(),
+        "view_preset": preset.get("view_preset", "Overview"),
+        "sort_column": preset.get("sort_column"),
+        "sort_ascending": preset.get("sort_ascending", True),
+    }
+
+
+def _init_session_state() -> None:
+    """Seed session state with the default screen and paging settings."""
+    screen = _default_screen()
+    defaults: dict[str, Any] = {
+        "active_filters": screen["filters"],
+        "view_preset": screen["view_preset"],
+        "sort_column": screen["sort_column"],
+        "sort_ascending": screen["sort_ascending"],
+        "current_page": 1,
+        "page_size": DEFAULT_PAGE_SIZE,
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
 def main() -> None:
     """Main Streamlit app entry point."""
+    store = get_store()
+    _init_session_state()
+
+    # The default screener is always offered as a saved screen.
+    if not store.list_screens():
+        screen = _default_screen()
+        store.save_screen(
+            "Default Screener",
+            screen["filters"],
+            screen["view_preset"],
+            screen["sort_column"],
+            screen["sort_ascending"],
+        )
+
     render_header()
     render_sidebar_filters()
 
-    store = get_store()
     sync_info = store.get_last_sync_info()
     render_pipeline_hud(sync_info)
-
-    # Initialize session state
-    if "active_filters" not in st.session_state:
-        quality_screen = next(
-            (s for s in POPULAR_SCREENS if "Quality Screen" in s["name"]),
-            POPULAR_SCREENS[0],
-        )
-        st.session_state["active_filters"] = quality_screen["filters"].copy()
-        st.session_state["view_preset"] = quality_screen["view_preset"]
-        st.session_state["sort_column"] = quality_screen["sort_column"]
-        st.session_state["sort_ascending"] = quality_screen["sort_ascending"]
-        st.session_state["current_page"] = 1
-
-    if "current_page" not in st.session_state:
-        st.session_state["current_page"] = 1
-    if "view_preset" not in st.session_state:
-        st.session_state["view_preset"] = "Overview"
-    if "sort_column" not in st.session_state:
-        st.session_state["sort_column"] = None
-    if "sort_ascending" not in st.session_state:
-        st.session_state["sort_ascending"] = True
-    if "page_size" not in st.session_state:
-        st.session_state["page_size"] = DEFAULT_PAGE_SIZE
 
     # Main content tabs
     tab_screener, tab_watchlist = st.tabs(["📊 Screener", "⭐ Watchlist"])
