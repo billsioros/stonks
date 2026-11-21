@@ -25,6 +25,7 @@
 - ⭐ **Persistent Watchlist** — Track your favorite symbols across sessions (SQLite backed).
 - 💾 **Saved Configurations** — Save your complex filter setups for later use.
 - 🔍 **Symbol Detail Pages** — Click any screener or watchlist row for an in-app page with Overview, Financials (annual and quarterly statements), Statistics, Metrics, and Forecast, fetched live from StockAnalysis and cached per symbol.
+- 🔔 **Watchlist Alerts** — The worker flags watched symbols that get cheap, drop or jump sharply, or hit the news, and the app shows them in a banner plus a badge on the Watchlist tab.
 - 📥 **Export Ready** — Download your results or watchlist to CSV.
 
 ## 🛠️ Getting Started
