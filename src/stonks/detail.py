@@ -136,7 +136,7 @@ def load_page(
     url = page_url(symbol, page, statement=statement, quarterly=period == "quarterly")
     try:
         resolved = resolve_payload((fetch or fetch_json)(url))
-    except Exception:
+    except (OSError, ValueError):
         resolved = None
 
     if resolved is None:

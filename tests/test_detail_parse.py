@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from stonks.detail import resolve_payload
 import pytest
 
+from stonks.detail import resolve_payload
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,

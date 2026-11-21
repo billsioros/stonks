@@ -8,6 +8,15 @@ from stonks.detail_parse import (
     parse_statement,
     parse_statistics,
 )
+from stonks.detail_view import (
+    format_cell,
+    format_compact,
+    metrics_sections,
+    range_position,
+    render_detail_page,
+    statement_frame,
+    yoy_pct,
+)
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 
@@ -27,3 +36,10 @@ parse_overview  # noqa: B018
 parse_statistics  # noqa: B018
 parse_forecast  # noqa: B018
 parse_statement  # noqa: B018
+format_cell  # noqa: B018
+format_compact  # noqa: B018
+metrics_sections  # noqa: B018
+range_position  # noqa: B018
+render_detail_page  # noqa: B018
+statement_frame  # noqa: B018
+yoy_pct  # noqa: B018
