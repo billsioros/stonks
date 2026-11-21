@@ -24,6 +24,7 @@
 - 🌟 **One-Click Screens** — Quality Compounders, Dividend Champions, Growth Machines, and more.
 - ⭐ **Persistent Watchlist** — Track your favorite symbols across sessions (SQLite backed).
 - 💾 **Saved Configurations** — Save your complex filter setups for later use.
+- 🔍 **Symbol Detail Pages** — Click any screener or watchlist row for an in-app page with Overview, Financials (annual and quarterly statements), Statistics, Metrics, and Forecast, fetched live from StockAnalysis and cached per symbol.
 - 📥 **Export Ready** — Download your results or watchlist to CSV.
 
 ## 🛠️ Getting Started
