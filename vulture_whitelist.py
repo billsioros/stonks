@@ -1,6 +1,7 @@
 # Vulture whitelist for methods that are used in tests or intended for public API
 from stonks.cache import LocalCache
 
+from stonks.alerts import Alert, evaluate_alerts, week_bucket
 from stonks.detail import load_page
 from stonks.detail_parse import (
     parse_forecast,
@@ -48,3 +49,6 @@ range_position  # noqa: B018
 render_detail_page  # noqa: B018
 statement_frame  # noqa: B018
 yoy_pct  # noqa: B018
+Alert  # noqa: B018
+week_bucket  # noqa: B018
+evaluate_alerts  # noqa: B018

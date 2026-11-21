@@ -1,0 +1,231 @@
+"""Alert rules over consecutive screener snapshots.
+
+Every rule compares a watched symbol's previous screener row with the freshly
+fetched one. A rule never fires when either side of its comparison is missing,
+and threshold rules fire only when they *become* true, so a symbol that stays
+cheap does not nag on every sync.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+# Price at or below this share of the 52-week high counts as off its high.
+OFF_HIGH_RATIO = 0.80
+# Price at or below this multiple of the 52-week low counts as near the low.
+NEAR_LOW_RATIO = 1.05
+# P/E falling to this share of its previous value counts as a de-rating.
+PE_DROP_RATIO = 0.85
+VALUE_UPSIDE_PCT = 25.0
+TARGET_UPSIDE_PCT = 25.0
+# Short interest is a percentage of float, so this is percentage points.
+SHORT_RISE_POINTS = 2.0
+BIG_MOVE_RATIO = 0.05
+
+
+@dataclass(frozen=True)
+class Alert:
+    """One user-facing notification about a watched symbol."""
+
+    symbol: str
+    kind: str
+    severity: str
+    title: str
+    detail: str
+    dedupe_key: str
+
+
+def week_bucket(now: datetime | None = None) -> str:
+    """ISO week label, so a condition that stays true alerts once a week."""
+    moment = now or datetime.now()
+    iso = moment.isocalendar()
+    return f"{iso.year}-W{iso.week:02d}"
+
+
+def _number(row: dict[str, Any] | None, key: str) -> float | None:
+    if row is None:
+        return None
+    value = row.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value)
+
+
+def _alert(
+    symbol: str, kind: str, severity: str, title: str, detail: str, bucket: str
+) -> Alert:
+    return Alert(
+        symbol=symbol,
+        kind=kind,
+        severity=severity,
+        title=title,
+        detail=detail,
+        dedupe_key=f"{symbol}:{kind}:{bucket}",
+    )
+
+
+def evaluate_alerts(
+    previous: dict[str, Any] | None,
+    current: dict[str, Any],
+    *,
+    bucket: str | None = None,
+) -> list[Alert]:
+    """Return the alerts raised by one symbol's new screener row."""
+    # A symbol watched for the first time has no baseline to compare against;
+    # treating NULL as zero would announce a fake move on day one.
+    if previous is None:
+        return []
+
+    symbol = str(current.get("symbol") or previous.get("symbol") or "")
+    stamp = bucket or week_bucket()
+    alerts: list[Alert] = []
+
+    price = _number(current, "price")
+    high = _number(current, "week_52_high")
+    low = _number(current, "week_52_low")
+    prev_price = _number(previous, "price")
+    prev_high = _number(previous, "week_52_high")
+    prev_low = _number(previous, "week_52_low")
+
+    crossed_off_high = (
+        price is not None
+        and high
+        and prev_price is not None
+        and prev_high
+        and price <= high * OFF_HIGH_RATIO
+        and prev_price > prev_high * OFF_HIGH_RATIO
+    )
+    if crossed_off_high:
+        below = (1 - price / high) * 100
+        alerts.append(
+            _alert(
+                symbol,
+                "off_high",
+                "good",
+                f"Trading {below:.0f}% below its 52-week high",
+                f"{price:.2f} vs high {high:.2f}",
+                stamp,
+            )
+        )
+
+    crossed_near_low = (
+        price is not None
+        and low
+        and prev_price is not None
+        and prev_low
+        and price <= low * NEAR_LOW_RATIO
+        and prev_price > prev_low * NEAR_LOW_RATIO
+    )
+    if crossed_near_low:
+        alerts.append(
+            _alert(
+                symbol,
+                "near_low",
+                "good",
+                "Near its 52-week low",
+                f"{price:.2f} vs low {low:.2f}",
+                stamp,
+            )
+        )
+
+    pe = _number(current, "pe_ratio")
+    prev_pe = _number(previous, "pe_ratio")
+    if pe is not None and prev_pe and pe <= prev_pe * PE_DROP_RATIO:
+        drop = (1 - pe / prev_pe) * 100
+        alerts.append(
+            _alert(
+                symbol,
+                "pe_drop",
+                "good",
+                f"P/E down {drop:.0f}% since the last sync",
+                f"{pe:.1f} vs {prev_pe:.1f}",
+                stamp,
+            )
+        )
+
+    dcf = _number(current, "dcf_upside_pct")
+    prev_dcf = _number(previous, "dcf_upside_pct")
+    if (
+        dcf is not None
+        and dcf >= VALUE_UPSIDE_PCT
+        and (prev_dcf is None or prev_dcf < VALUE_UPSIDE_PCT)
+    ):
+        alerts.append(
+            _alert(
+                symbol,
+                "fair_value",
+                "good",
+                f"{dcf:.0f}% below DCF fair value",
+                f"fair value {dcf:.1f}% upside",
+                stamp,
+            )
+        )
+
+    target = _number(current, "pt_upside_pct")
+    prev_target = _number(previous, "pt_upside_pct")
+    if (
+        target is not None
+        and current.get("rating")
+        and target >= TARGET_UPSIDE_PCT
+        and (prev_target is None or prev_target < TARGET_UPSIDE_PCT)
+    ):
+        alerts.append(
+            _alert(
+                symbol,
+                "target_upside",
+                "good",
+                f"Analyst target implies {target:.0f}% upside",
+                f're rated "{current["rating"]}"',
+                stamp,
+            )
+        )
+
+    short = _number(current, "short_pct")
+    prev_short = _number(previous, "short_pct")
+    if (
+        short is not None
+        and prev_short is not None
+        and short - prev_short >= SHORT_RISE_POINTS
+    ):
+        alerts.append(
+            _alert(
+                symbol,
+                "short_rise",
+                "warn",
+                f"Short interest up {short - prev_short:.1f} points",
+                f"{short:.1f}% of float",
+                stamp,
+            )
+        )
+
+    if price is not None and prev_price:
+        move = (price / prev_price - 1) * 100
+        if abs(move) >= BIG_MOVE_RATIO * 100:
+            alerts.append(
+                _alert(
+                    symbol,
+                    "big_move",
+                    "warn",
+                    f"Price moved {move:+.1f}% since the last sync",
+                    f"{prev_price:.2f} → {price:.2f}",
+                    stamp,
+                )
+            )
+
+    flag = _number(current, "hedge_fund_buys")
+    prev_flag = _number(previous, "hedge_fund_buys")
+    if flag == 1 and prev_flag == 0:
+        alerts.append(
+            _alert(
+                symbol,
+                "hedge_fund",
+                "good",
+                "New in HedgeFollow's largest buys",
+                "hedge fund buying flagged",
+                stamp,
+            )
+        )
+
+    return alerts
