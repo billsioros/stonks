@@ -2,7 +2,12 @@
 from stonks.cache import LocalCache
 
 from stonks.detail import load_page
-from stonks.detail_parse import parse_overview
+from stonks.detail_parse import (
+    parse_forecast,
+    parse_overview,
+    parse_statement,
+    parse_statistics,
+)
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 
@@ -19,3 +24,6 @@ SQLiteStore.cache_delete  # noqa: B018
 SUPPORTED_COLUMNS  # noqa: B018
 load_page  # noqa: B018
 parse_overview  # noqa: B018
+parse_statistics  # noqa: B018
+parse_forecast  # noqa: B018
+parse_statement  # noqa: B018

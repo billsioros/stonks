@@ -33,6 +33,31 @@ _OVERVIEW_FIELDS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Statistics sections carry no title in the payload, so the order and labels
+# live here; sections absent from this tuple are ignored.
+STATISTICS_ORDER: tuple[tuple[str, str], ...] = (
+    ("valuation", "Valuation"),
+    ("dates", "Dates"),
+    ("shares", "Shares"),
+    ("ratios", "Ratios"),
+    ("evRatios", "EV Ratios"),
+    ("financialPosition", "Financial Position"),
+    ("financialEfficiency", "Financial Efficiency"),
+    ("taxes", "Taxes"),
+    ("stockPrice", "Stock Price"),
+    ("shortSelling", "Short Selling"),
+    ("incomeStatement", "Income Statement"),
+    ("balanceSheet", "Balance Sheet"),
+    ("cashFlow", "Cash Flow"),
+    ("margins", "Margins"),
+    ("dividends", "Dividends"),
+    ("analystForecasts", "Analyst Forecasts"),
+    ("stockSplits", "Stock Splits"),
+    ("scores", "Scores"),
+    ("fairValue", "Fair Value"),
+)
+
+
 def _text(value: Any) -> str | None:
     """Provider strings pass through; empty or non-string values become None."""
     if value is None or value == "":
@@ -70,3 +95,28 @@ def parse_overview(data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict)
     ]
     return out
+
+
+def parse_statistics(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Parse the statistics payload into titled sections in display order."""
+    sections: list[dict[str, Any]] = []
+    for key, title in STATISTICS_ORDER:
+        section = data.get(key)
+        if not isinstance(section, dict):
+            continue
+        items = [
+            {
+                "id": item.get("id"),
+                "title": item.get("title"),
+                "value": item.get("value"),
+                "hover": item.get("hover"),
+            }
+            for item in section.get("data") or []
+            if isinstance(item, dict)
+        ]
+        if not items:
+            continue
+        sections.append(
+            {"key": key, "title": title, "text": section.get("text"), "items": items}
+        )
+    return sections
