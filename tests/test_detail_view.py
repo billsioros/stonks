@@ -136,7 +136,7 @@ def test_detail_overview_renders_the_card_layout() -> None:
         at.session_state["detail_symbol"] = "NVDA"
         at.run()
         assert not at.exception
-        rendered = " ".join(str(markdown.value) for markdown in at.markdown)
+        rendered = " ".join(str(el.proto.body) for el in at.get("html"))
         assert 'class="sk-page-ticker"' in rendered
         assert 'class="sk-symbol"' in rendered
         assert 'class="sk-range-track"' in rendered
@@ -160,3 +160,77 @@ def test_sparkline_svg_draws_a_line_and_area() -> None:
 def test_sparkline_svg_needs_two_points() -> None:
     assert sparkline_svg([]) == ""
     assert sparkline_svg([5.0]) == ""
+
+
+def test_forecast_without_coverage_says_so_once() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    from stonks.detail import cache_key
+    from stonks.store import SQLiteStore
+
+    store = SQLiteStore()
+    keys = [cache_key("NVDA", "overview"), cache_key("NVDA", "forecast")]
+    store.cache_set(
+        keys[0],
+        {
+            "data": resolve_payload(
+                json.loads((FIXTURES / "nvda_overview.json").read_text())
+            ),
+            "fetched_at": 1.0,
+        },
+        ttl_seconds=3600,
+    )
+    store.cache_set(keys[1], {"data": {}, "fetched_at": 1.0}, ttl_seconds=3600)
+    try:
+        at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
+        at.session_state["page"] = "detail"
+        at.session_state["detail_symbol"] = "NVDA"
+        at.session_state["detail_section_NVDA"] = "Forecast"
+        at.run()
+        assert not at.exception
+        assert [str(item.value) for item in at.info] == [
+            "StockAnalysis has no analyst coverage for NVDA."
+        ]
+    finally:
+        for key in keys:
+            store.cache_delete(key)
+
+
+def test_chart_range_switch_reads_the_selected_span() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    from stonks.detail import cache_key
+    from stonks.store import SQLiteStore
+
+    store = SQLiteStore()
+    keys = [cache_key("NVDA", "overview"), "hist:NVDA:1Y"]
+    store.cache_set(
+        keys[0],
+        {
+            "data": resolve_payload(
+                json.loads((FIXTURES / "nvda_overview.json").read_text())
+            ),
+            "fetched_at": 1.0,
+        },
+        ttl_seconds=3600,
+    )
+    store.cache_set(
+        keys[1],
+        [{"date": f"2026-01-{day:02d}", "close": 100.0 + day} for day in range(1, 31)],
+        ttl_seconds=3600,
+    )
+    try:
+        at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
+        at.session_state["page"] = "detail"
+        at.session_state["detail_symbol"] = "NVDA"
+        at.session_state["detail_chart_span_NVDA"] = "1M"
+        at.run()
+        assert not at.exception
+        rendered = " ".join(str(el.proto.body) for el in at.get("html"))
+        # 1M is the last 21 sessions of the year, so January's first days drop out.
+        assert "2026-01-30" in rendered
+        assert "2026-01-10" in rendered
+        assert "2026-01-01" not in rendered
+    finally:
+        for key in keys:
+            store.cache_delete(key)

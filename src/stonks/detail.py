@@ -20,8 +20,13 @@ from stonks.store import SQLiteStore
 BASE_URL = "https://stockanalysis.com/stocks"
 HISTORY_URL = "https://stockanalysis.com/api/symbol/s/{symbol}/history"
 
-# Daily closes move every session; an hour is plenty for a sparkline.
+# Daily closes move every session; half an hour is plenty for a sparkline.
 HISTORY_TTL_SECONDS = 1800.0
+RANGES = ("1M", "6M", "1Y")
+
+# Trading days per span. One 1-year series serves every range because the
+# provider silently ignores `range=1M` and answers with the full year anyway.
+SPAN_TRADING_DAYS: dict[str, int | None] = {"1M": 21, "6M": 126, "1Y": None}
 
 
 PAGES = ("overview", "statistics", "forecast", "financials")
@@ -130,21 +135,29 @@ def load_history(
     *,
     fetch: Callable[[str], dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Load one range of daily closes, oldest first; empty when unavailable."""
-    key = f"hist:{symbol.strip().upper()}:{span}"
+    """Daily closes for one span, oldest first; empty when unavailable.
+
+    Ranges are cut from a cached one-year series so switching the range costs
+    no extra request and every span comes from the same snapshot.
+    """
+    key = f"hist:{symbol.strip().upper()}:1Y"
     cached = store.cache_get(key)
     if isinstance(cached, list) and cached:
-        return cached  # type: ignore[no-any-return]
+        rows = cached  # type: ignore[no-any-return]
+    else:
+        try:
+            payload = (fetch or fetch_json)(history_url(symbol, "1Y"))
+        except (OSError, ValueError):
+            stale = store.cache_get(key, allow_expired=True)
+            rows = stale if isinstance(stale, list) else []
+        else:
+            rows = parse_history(payload)
+            if rows:
+                store.cache_set(key, rows, ttl_seconds=HISTORY_TTL_SECONDS)
 
-    try:
-        payload = (fetch or fetch_json)(history_url(symbol, span))
-    except (OSError, ValueError):
-        stale = store.cache_get(key, allow_expired=True)
-        return stale if isinstance(stale, list) else []
-
-    rows = parse_history(payload)
-    if rows:
-        store.cache_set(key, rows, ttl_seconds=HISTORY_TTL_SECONDS)
+    limit = SPAN_TRADING_DAYS.get(span)
+    if limit and len(rows) > limit:
+        return rows[-limit:]
     return rows
 
 

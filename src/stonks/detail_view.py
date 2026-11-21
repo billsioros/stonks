@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import html
 import time
+from textwrap import dedent
 from typing import Any
 
 import pandas as pd
 import streamlit as st
 
-from stonks.detail import STATEMENTS, cache_key, load_history, load_page
+from stonks.detail import RANGES, STATEMENTS, cache_key, load_history, load_page
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,
@@ -157,12 +158,11 @@ def render_detail_page(store: SQLiteStore, symbol: str) -> None:
     row = _store_row(store, symbol)
 
     name = row.get("description") or symbol
-    st.markdown(
+    _html(
         f'<div class="sk-page-head">'
         f'<span class="sk-page-ticker">{_esc(symbol)}</span>'
         f'<span class="sk-page-name">{_esc(name)}</span>'
-        f"</div>",
-        unsafe_allow_html=True,
+        f"</div>"
     )
     stamp_col, refresh_col = st.columns([4, 1])
     with stamp_col:
@@ -199,6 +199,15 @@ def render_detail_page(store: SQLiteStore, symbol: str) -> None:
 def _esc(value: Any) -> str:
     """Escape provider text for the HTML cards; missing values keep the dash."""
     return html.escape(str(value), quote=True)
+
+
+def _html(markup: str) -> None:
+    """Render a card as real HTML.
+
+    ``st.markdown`` treats indented HTML as a code block and mangles inline
+    SVG, which is why the cards go through ``st.html`` instead.
+    """
+    st.html(dedent(markup).strip())
 
 
 def _move_class(value: Any) -> str:
@@ -245,24 +254,7 @@ def _render_quote_card(
             </div>
         </div>"""
 
-    chart_html = ""
-    history = load_history(store, symbol)
-    closes = [point["close"] for point in history]
-    if len(closes) >= 2 and closes[0]:
-        change = (closes[-1] / closes[0] - 1) * 100
-        trend = "up" if change > 0 else "down" if change < 0 else ""
-        chart_html = f"""
-        <div class="sk-chart-head">
-            <span class="sk-quote-label">1-year price</span>
-            <span class="sk-chart-change {trend}">{change:+.1f}%</span>
-        </div>
-        <div class="sk-chart">{sparkline_svg(closes)}</div>
-        <div class="sk-range-labels">
-            <span>{_esc(history[0]["date"])}</span>
-            <span>{_esc(history[-1]["date"])}</span>
-        </div>"""
-
-    st.markdown(
+    _html(
         f"""<div class="sk-symbol">
             <div class="sk-symbol-head">
                 <div>
@@ -272,10 +264,42 @@ def _render_quote_card(
                 <div class="sk-quote-meta">{meta_html}</div>
             </div>
             {range_html}
-            {chart_html}
-        </div>""",
-        unsafe_allow_html=True,
+        </div>"""
     )
+
+
+def _render_price_history(store: SQLiteStore, symbol: str) -> None:
+    """Price line card with a 1M / 6M / 1Y range switch."""
+    state_key = f"detail_chart_span_{symbol}"
+    with st.container(key="detail-chart"):
+        title_col, range_col = st.columns([3, 2], vertical_alignment="center")
+        with title_col:
+            _html('<div class="sk-card-title">Price history</div>')
+        with range_col:
+            span = st.segmented_control(
+                "Range",
+                options=list(RANGES),
+                default=st.session_state.get(state_key, "1Y"),
+                key=state_key,
+                label_visibility="collapsed",
+            )
+
+        history = load_history(store, symbol, span or "1Y")
+        closes = [point["close"] for point in history]
+        if len(closes) < 2 or not closes[0]:
+            st.caption("No price history available for this range.")
+            return
+
+        change = (closes[-1] / closes[0] - 1) * 100
+        trend = "up" if change > 0 else "down" if change < 0 else ""
+        _html(
+            f'<div class="sk-chart">{sparkline_svg(closes)}</div>'
+            f'<div class="sk-range-labels">'
+            f"<span>{_esc(history[0]['date'])}</span>"
+            f'<span class="sk-chart-change {trend}">{change:+.1f}%</span>'
+            f"<span>{_esc(history[-1]['date'])}</span>"
+            f"</div>"
+        )
 
 
 def _render_pills(items: list[tuple[str, str, Any]]) -> None:
@@ -285,7 +309,7 @@ def _render_pills(items: list[tuple[str, str, Any]]) -> None:
         f'<span class="sk-pill-value {_move_class(raw)}">{_esc(value)}</span></div>'
         for label, value, raw in items
     )
-    st.markdown(f'<div class="sk-pills">{cells}</div>', unsafe_allow_html=True)
+    _html(f'<div class="sk-pills">{cells}</div>')
 
 
 def _render_cells(items: list[tuple[str, str]]) -> None:
@@ -295,7 +319,7 @@ def _render_cells(items: list[tuple[str, str]]) -> None:
         f'<span class="sk-cell-value">{_esc(value)}</span></div>'
         for label, value in items
     )
-    st.markdown(f'<div class="sk-grid">{cells}</div>', unsafe_allow_html=True)
+    _html(f'<div class="sk-grid">{cells}</div>')
 
 
 def _render_profile_card(info: list[dict[str, Any]]) -> None:
@@ -304,7 +328,7 @@ def _render_profile_card(info: list[dict[str, Any]]) -> None:
         f'<span class="sk-kv-value">{_link_or_text(item)}</span></div>'
         for item in info
     )
-    st.markdown(f'<div class="sk-card">{rows}</div>', unsafe_allow_html=True)
+    _html(f'<div class="sk-card">{rows}</div>')
 
 
 def _link_or_text(item: dict[str, Any]) -> str:
@@ -342,7 +366,7 @@ def _render_news(items: list[dict[str, Any]]) -> None:
             )
         else:
             blocks.append(f'<div class="sk-news-item">{body}</div>')
-    st.markdown(f'<div class="sk-news">{"".join(blocks)}</div>', unsafe_allow_html=True)
+    _html(f'<div class="sk-news">{"".join(blocks)}</div>')
 
 
 def _render_overview(
@@ -352,6 +376,7 @@ def _render_overview(
     row: dict[str, Any],
 ) -> None:
     _render_quote_card(store, symbol, overview, row)
+    _render_price_history(store, symbol)
 
     _render_pills(
         [
@@ -399,10 +424,7 @@ def _render_overview(
         _render_profile_card(overview["info"])
 
     if overview.get("summary"):
-        st.markdown(
-            f'<div class="sk-card"><p>{_esc(overview["summary"])}</p></div>',
-            unsafe_allow_html=True,
-        )
+        _html(f'<div class="sk-card"><p>{_esc(overview["summary"])}</p></div>')
 
     news = overview.get("news") or []
     st.markdown('<div class="section-header">News</div>', unsafe_allow_html=True)
@@ -492,10 +514,9 @@ def metrics_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _render_card(title: str, rows: str, *, text: str | None = None) -> None:
     """One titled card holding label/value rows."""
     caption = f'<p class="sk-card-text">{_esc(text)}</p>' if text else ""
-    st.markdown(
+    _html(
         f'<div class="sk-card"><div class="sk-card-title">{_esc(title)}</div>'
-        f"{caption}{rows}</div>",
-        unsafe_allow_html=True,
+        f"{caption}{rows}</div>"
     )
 
 
@@ -537,19 +558,46 @@ def _render_metrics(store: SQLiteStore, symbol: str) -> None:
     _render_sections(metrics_sections(parse_statistics(data)))
 
 
+def _estimate_rows(forecast: dict[str, Any]) -> list[dict[str, Any]]:
+    """Flatten the per-period estimate stats into table rows."""
+    rows = []
+    for period, stats in (forecast.get("estimates") or {}).items():
+        for field, values in stats.items():
+            rows.append(
+                {
+                    "Basis": period.title(),
+                    "Metric": field,
+                    "Last": format_cell(values.get("last")),
+                    "This": format_cell(values.get("this")),
+                    "Growth": _signed_pct(values.get("growth")),
+                }
+            )
+    return rows
+
+
 def _render_forecast(store: SQLiteStore, symbol: str) -> None:
     data, fetched_at = load_page(store, symbol, "forecast")
     if data is None:
-        st.error("Could not load the forecast for this symbol.")
+        st.info(f"StockAnalysis has no forecast data for {symbol}.")
         return
+
     forecast = parse_forecast(data)
+    targets = forecast.get("targets")
+    ratings = forecast.get("current_ratings")
+    rows = _estimate_rows(forecast)
+    actions = forecast.get("ratings") or []
+
+    # Covered and uncovered symbols both land here; only say it once.
+    if not targets and not ratings and not rows and not actions:
+        st.info(f"StockAnalysis has no analyst coverage for {symbol}.")
+        return
+
     st.caption(f"as of {_as_of(fetched_at)}")
 
-    targets = forecast.get("targets")
-    st.markdown(
-        '<div class="section-header">Price targets</div>', unsafe_allow_html=True
-    )
     if targets:
+        st.markdown(
+            '<div class="section-header">Price targets</div>', unsafe_allow_html=True
+        )
         _render_pills(
             [
                 (label, format_cell(targets.get(key)), None)
@@ -564,12 +612,9 @@ def _render_forecast(store: SQLiteStore, symbol: str) -> None:
         )
         if targets.get("updated"):
             st.caption(f"updated {targets['updated']}")
-    else:
-        st.caption("No price targets available.")
 
-    ratings = forecast.get("current_ratings")
-    st.markdown('<div class="section-header">Ratings</div>', unsafe_allow_html=True)
     if ratings:
+        st.markdown('<div class="section-header">Ratings</div>', unsafe_allow_html=True)
         _render_pills(
             [
                 (label, format_cell(ratings.get(key)), None)
@@ -583,35 +628,20 @@ def _render_forecast(store: SQLiteStore, symbol: str) -> None:
                 )
             ]
         )
-    else:
-        st.caption("No analyst ratings available.")
 
-    estimates = forecast.get("estimates") or {}
-    st.markdown('<div class="section-header">Estimates</div>', unsafe_allow_html=True)
-    rows = []
-    for period, stats in estimates.items():
-        for field, values in stats.items():
-            rows.append(
-                {
-                    "Basis": period.title(),
-                    "Metric": field,
-                    "Last": format_cell(values.get("last")),
-                    "This": format_cell(values.get("this")),
-                    "Growth": _signed_pct(values.get("growth")),
-                }
-            )
     if rows:
+        st.markdown(
+            '<div class="section-header">Estimates</div>', unsafe_allow_html=True
+        )
         st.dataframe(
             pd.DataFrame(rows), width="stretch", hide_index=True, row_height=28
         )
-    else:
-        st.caption("No estimates available.")
 
-    actions = forecast.get("ratings") or []
-    st.markdown(
-        '<div class="section-header">Analyst actions</div>', unsafe_allow_html=True
-    )
     if actions:
+        st.markdown(
+            '<div class="section-header">Analyst actions</div>',
+            unsafe_allow_html=True,
+        )
         st.dataframe(
             pd.DataFrame(
                 [
@@ -631,5 +661,3 @@ def _render_forecast(store: SQLiteStore, symbol: str) -> None:
             hide_index=True,
             row_height=28,
         )
-    else:
-        st.caption("No analyst actions available.")

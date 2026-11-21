@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from stonks.detail import cache_key, load_page, page_url, resolve_payload
+from stonks.detail import cache_key, load_history, load_page, page_url, resolve_payload
 from stonks.store import SQLiteStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -147,3 +147,36 @@ def test_load_page_does_not_cache_unresolvable_payload(store: SQLiteStore) -> No
 
     assert load_page(store, "NVDA", "overview", fetch=fetch) == (None, None)
     assert store.cache_get("sym:NVDA:overview:-:annual") is None
+
+
+def test_load_history_slices_spans_from_one_year(store) -> None:
+    key = "hist:AAA:1Y"
+    store.cache_set(
+        key,
+        [{"date": f"2026-01-{day:02d}", "close": 100.0 + day} for day in range(1, 31)],
+        ttl_seconds=3600,
+    )
+    assert len(load_history(store, "AAA", "1Y")) == 30
+    assert len(load_history(store, "AAA", "6M")) == 30
+    one_month = load_history(store, "AAA", "1M")
+    assert len(one_month) == 21
+    assert one_month[-1]["date"] == "2026-01-30"
+
+
+def test_load_history_uses_one_fetch_for_every_span(monkeypatch) -> None:
+    store = SQLiteStore(db_path=Path("/tmp/stonks-history-test.db"))
+    store.cache_delete("hist:BBB:1Y")
+    calls: list[str] = []
+
+    def fake_fetch(url: str):
+        calls.append(url)
+        return {
+            "data": [{"t": f"2026-01-{d:02d}", "c": 10.0 + d} for d in range(1, 31)]
+        }
+
+    load_history(store, "BBB", "1M", fetch=fake_fetch)
+    load_history(store, "BBB", "1Y", fetch=fake_fetch)
+
+    assert len(calls) == 1
+    assert "range=1Y" in calls[0]
+    store.cache_delete("hist:BBB:1Y")
