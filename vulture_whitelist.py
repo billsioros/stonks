@@ -30,6 +30,11 @@ SQLiteStore.save_stock  # noqa: B018
 SQLiteStore.cache_get  # noqa: B018
 SQLiteStore.cache_set  # noqa: B018
 SQLiteStore.cache_delete  # noqa: B018
+SQLiteStore.add_alert  # noqa: B018
+SQLiteStore.get_alerts  # noqa: B018
+SQLiteStore.mark_alerts_seen  # noqa: B018
+SQLiteStore.count_unread_alerts  # noqa: B018
+SQLiteStore.prune_alerts  # noqa: B018
 SUPPORTED_COLUMNS  # noqa: B018
 load_page  # noqa: B018
 parse_overview  # noqa: B018

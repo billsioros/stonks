@@ -286,3 +286,62 @@ def test_cache_overwrite_replaces_value(store: SQLiteStore) -> None:
     store.cache_set("k", {"a": 1}, ttl_seconds=60)
     store.cache_set("k", {"a": 2}, ttl_seconds=60)
     assert store.cache_get("k") == {"a": 2}
+
+
+def test_add_alert_is_idempotent(store: SQLiteStore) -> None:
+    assert (
+        store.add_alert("NVDA", "pe_drop", "good", "P/E down 20%", None, "k1") is True
+    )
+    assert (
+        store.add_alert("NVDA", "pe_drop", "good", "P/E down 20%", None, "k1") is False
+    )
+    assert len(store.get_alerts()) == 1
+
+
+def test_get_alerts_unread_only_and_newest_first(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "big_move", "warn", "moved", None, "a1")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    alerts = store.get_alerts()
+    assert [a["symbol"] for a in alerts] == ["BBB", "AAA"]
+    store.mark_alerts_seen([alerts[0]["id"]])
+    assert [a["symbol"] for a in store.get_alerts()] == ["AAA"]
+    assert len(store.get_alerts(unread_only=False)) == 2
+
+
+def test_get_alerts_filters_by_symbol(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    assert [a["symbol"] for a in store.get_alerts(symbol="AAA")] == ["AAA"]
+
+
+def test_alert_row_exposes_all_columns(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", "100 vs 200", "a1")
+    alert = store.get_alerts()[0]
+    assert alert["detail"] == "100 vs 200"
+    assert alert["dedupe_key"] == "a1"
+    assert alert["created_at"] > 0
+    assert alert["seen_at"] is None
+
+
+def test_count_unread_and_mark_read(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    assert store.count_unread_alerts() == 2
+    store.mark_alerts_seen([a["id"] for a in store.get_alerts()])
+    assert store.count_unread_alerts() == 0
+
+
+def test_mark_alerts_seen_ignores_empty_list(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.mark_alerts_seen([])
+    assert store.count_unread_alerts() == 1
+
+
+def test_prune_alerts_drops_old_rows(store: SQLiteStore) -> None:
+    store.add_alert("OLD", "off_high", "good", "cheap", None, "o1")
+    with store._connect() as conn:
+        conn.execute("UPDATE alerts SET created_at = 0")
+        conn.commit()
+    store.add_alert("NEW", "off_high", "good", "cheap", None, "n1")
+    assert store.prune_alerts(14) == 1
+    assert [a["symbol"] for a in store.get_alerts(unread_only=False)] == ["NEW"]

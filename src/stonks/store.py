@@ -145,6 +145,19 @@ class SQLiteStore:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    detail TEXT,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    seen_at REAL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS stocks (
                     symbol TEXT PRIMARY KEY,
                     description TEXT,
@@ -463,6 +476,93 @@ class SQLiteStore:
         with self._connect() as conn:
             conn.execute("DELETE FROM kv_cache WHERE key=?", (key,))
             conn.commit()
+
+    # ── Alerts ───────────────────────────────────────────────────────
+
+    def add_alert(
+        self,
+        symbol: str,
+        kind: str,
+        severity: str,
+        title: str,
+        detail: str | None,
+        dedupe_key: str,
+    ) -> bool:
+        """Insert an alert unless its dedupe key was already recorded."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO alerts
+                   (symbol, kind, severity, title, detail, dedupe_key, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (symbol, kind, severity, title, detail, dedupe_key, time.time()),
+            )
+            conn.commit()
+        return cursor.rowcount > 0
+
+    def get_alerts(
+        self,
+        *,
+        unread_only: bool = True,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return alerts newest first, unread only unless told otherwise."""
+        where = []
+        params: list[Any] = []
+        if unread_only:
+            where.append("seen_at IS NULL")
+        if symbol is not None:
+            where.append("symbol = ?")
+            params.append(symbol)
+        where_sql = " AND ".join(where) if where else "1=1"
+        query = (
+            "SELECT id, symbol, kind, severity, title, detail, "
+            "dedupe_key, created_at, seen_at "
+            f"FROM alerts WHERE {where_sql} "  # nosec B608
+            "ORDER BY created_at DESC, id DESC LIMIT ?"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(query, [*params, limit]).fetchall()
+        return [
+            {
+                "id": r[0],
+                "symbol": r[1],
+                "kind": r[2],
+                "severity": r[3],
+                "title": r[4],
+                "detail": r[5],
+                "dedupe_key": r[6],
+                "created_at": r[7],
+                "seen_at": r[8],
+            }
+            for r in rows
+        ]
+
+    def mark_alerts_seen(self, ids: list[int]) -> None:
+        """Mark the given alerts as read."""
+        if not ids:
+            return
+        placeholders = ",".join(["?"] * len(ids))
+        query = f"UPDATE alerts SET seen_at = ? WHERE id IN ({placeholders})"  # nosec B608
+        with self._connect() as conn:
+            conn.execute(query, [time.time(), *ids])
+            conn.commit()
+
+    def count_unread_alerts(self) -> int:
+        """How many alerts have not been read yet."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM alerts WHERE seen_at IS NULL"
+            ).fetchone()
+        return int(row[0])
+
+    def prune_alerts(self, older_than_days: int = 14) -> int:
+        """Drop alerts older than the retention window."""
+        cutoff = time.time() - older_than_days * 86400
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
+            conn.commit()
+        return cursor.rowcount
 
     # ── Stocks ────────────────────────────────────────────────────────
 
