@@ -120,3 +120,75 @@ def parse_statistics(data: dict[str, Any]) -> list[dict[str, Any]]:
             {"key": key, "title": title, "text": section.get("text"), "items": items}
         )
     return sections
+
+
+_ESTIMATE_FIELDS = ("epsThis", "epsNext", "revenueThis", "revenueNext")
+_RATING_FIELDS = (
+    ("firm", "firm"),
+    ("analyst", "analyst"),
+    ("action_rt", "action"),
+    ("pt_now", "target_now"),
+    ("pt_old", "target_old"),
+    ("rating_new", "rating_new"),
+    ("rating_old", "rating_old"),
+    ("date", "date"),
+    ("time", "time"),
+)
+
+
+def parse_forecast(data: dict[str, Any]) -> dict[str, Any]:
+    """Parse the forecast payload into targets, estimates and analyst actions."""
+    raw_targets = data.get("targets")
+    targets = None
+    if isinstance(raw_targets, dict) and raw_targets:
+        targets = {
+            key: raw_targets.get(key)
+            for key in ("low", "median", "average", "high", "count", "updated")
+        }
+
+    raw_stats = (data.get("estimates") or {}).get("stats") or {}
+    estimates: dict[str, dict[str, Any]] = {}
+    for period in ("annual", "quarterly"):
+        period_stats = raw_stats.get(period) or {}
+        estimates[period] = {
+            field: {
+                "last": period_stats[field].get("last"),
+                "this": period_stats[field].get("this"),
+                "growth": period_stats[field].get("growth"),
+            }
+            for field in _ESTIMATE_FIELDS
+            if isinstance(period_stats.get(field), dict)
+        }
+
+    raw_ratings = data.get("currentRatings")
+    current_ratings = None
+    if isinstance(raw_ratings, dict) and raw_ratings:
+        current_ratings = {
+            key: raw_ratings.get(key)
+            for key in (
+                "consensus",
+                "score",
+                "count",
+                "strongBuy",
+                "buy",
+                "hold",
+                "sell",
+                "strongSell",
+            )
+        }
+
+    ratings = [
+        {local: item.get(source) for source, local in _RATING_FIELDS}
+        for item in data.get("ratings") or []
+        if isinstance(item, dict)
+    ]
+
+    return {
+        "targets": targets,
+        "estimates": estimates,
+        "current_ratings": current_ratings,
+        "recommendations": [
+            item for item in data.get("recommendations") or [] if isinstance(item, dict)
+        ],
+        "ratings": ratings,
+    }

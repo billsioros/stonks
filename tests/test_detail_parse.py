@@ -5,7 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from stonks.detail import resolve_payload
-from stonks.detail_parse import parse_overview, parse_statistics
+import pytest
+
+from stonks.detail_parse import (
+    parse_forecast,
+    parse_overview,
+    parse_statistics,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -79,3 +85,43 @@ def test_parse_statistics_covers_every_present_section() -> None:
 def test_parse_statistics_empty_payload() -> None:
     assert parse_statistics({}) == []
     assert parse_statistics({"valuation": {"data": []}}) == []
+
+
+# ── Forecast ─────────────────────────────────────────────────────────
+
+
+def test_parse_forecast_targets() -> None:
+    out = parse_forecast(_load("nvda_forecast"))
+    assert out["targets"] == {
+        "low": 130,
+        "median": 230,
+        "average": 240.51,
+        "high": 425,
+        "count": 41,
+        "updated": "2026-11-19",
+    }
+
+
+def test_parse_forecast_estimates_and_ratings_summary() -> None:
+    out = parse_forecast(_load("nvda_forecast"))
+    assert out["estimates"]["annual"]["epsThis"]["growth"] == pytest.approx(
+        102.70964360587004
+    )
+    assert out["current_ratings"]["consensus"] == "Buy"
+    assert out["current_ratings"]["count"] == 63
+
+
+def test_parse_forecast_analyst_actions() -> None:
+    action = parse_forecast(_load("nvda_forecast"))["ratings"][0]
+    assert action["firm"] == "Wedbush"
+    assert action["action"] == "Reiterates"
+    assert action["target_now"] == 293 and action["target_old"] == 275
+    assert action["rating_new"] == "Buy"
+
+
+def test_parse_forecast_empty_payload() -> None:
+    out = parse_forecast({})
+    assert out["targets"] is None
+    assert out["current_ratings"] is None
+    assert out["ratings"] == [] and out["recommendations"] == []
+    assert out["estimates"] == {"annual": {}, "quarterly": {}}
