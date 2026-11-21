@@ -11,6 +11,7 @@ from stonks.detail_parse import parse_statement, parse_statistics
 from stonks.detail_view import (
     format_cell,
     format_compact,
+    format_pct,
     metrics_sections,
     range_position,
     statement_frame,
@@ -97,3 +98,12 @@ def test_metrics_sections_tolerates_missing_groups() -> None:
         )
         == []
     )
+
+
+def test_format_pct_carries_its_suffix() -> None:
+    assert format_pct(94.5) == "+94.50%"
+    assert format_pct(-12.345) == "-12.35%"
+    assert format_pct(4.0, signed=False) == "4.00%"
+    assert format_pct(None) == "—"
+    assert format_pct(True) == "—"
+    assert format_pct("n/a") == "—"

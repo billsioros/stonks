@@ -236,6 +236,15 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     gap: 0.5rem;
 }
 
+/* Alerts banner: a card above the screener, hidden entirely when empty */
+[class*="st-key-alerts-banner"] {
+    background: var(--bg-card);
+    border: 1px solid var(--accent-border);
+    border-radius: 12px;
+    padding: 0.9rem 1rem 0.4rem;
+    margin-bottom: 1.2rem;
+}
+
 /* Active filter summary */
 .active-filters {
     background: var(--accent-soft);
@@ -424,6 +433,14 @@ def open_symbol(symbol: str) -> None:
 def close_detail() -> None:
     """Return to the screener, leaving its filters and paging untouched."""
     st.session_state["page"] = "screener"
+    # Streamlit keeps a dataframe's selection under its widget key, which cannot
+    # be cleared directly; a new epoch gives both tables fresh keys instead.
+    st.session_state["selection_epoch"] = st.session_state.get("selection_epoch", 0) + 1
+
+
+def _table_key(name: str) -> str:
+    """Widget key for a selectable table, versioned so Back clears selection."""
+    return f"{name}_{st.session_state.get('selection_epoch', 0)}"
 
 
 def _is_missing(val: object) -> bool:
@@ -954,7 +971,7 @@ def render_screener_table() -> None:
         height=min(44 * len(display_df) + 44, 900),
         on_select="rerun",
         selection_mode="single-row",
-        key="screener_table",
+        key=_table_key("screener_table"),
     )
     selected_rows = getattr(getattr(selection, "selection", None), "rows", None) or []
     if selected_rows:
@@ -1076,6 +1093,9 @@ def render_watchlist_tab() -> None:
         watchlist_df = pd.DataFrame()
 
     if not watchlist_df.empty:
+        # A symbol with unread alerts is marked here, so the badge's count has
+        # somewhere to point once the banner is dismissed.
+        alert_counts = store.unread_alert_counts()
         view_cols = [
             "symbol",
             "description",
@@ -1096,6 +1116,13 @@ def render_watchlist_tab() -> None:
         rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
         display_wl = display_wl.rename(columns=rename_map)
 
+        if "Symbol" in display_wl.columns:
+            marker = [
+                str(alert_counts[symbol]) if alert_counts.get(symbol) else "—"
+                for symbol in watchlist_df["symbol"]
+            ]
+            display_wl.insert(1, "Alerts", marker)
+
         if "Market Cap" in display_wl.columns:
             display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
         for col in display_wl.columns:
@@ -1111,7 +1138,7 @@ def render_watchlist_tab() -> None:
             row_height=44,
             on_select="rerun",
             selection_mode="single-row",
-            key="watchlist_table",
+            key=_table_key("watchlist_table"),
         )
         picked_rows = (
             getattr(getattr(watchlist_selection, "selection", None), "rows", None) or []
@@ -1300,9 +1327,56 @@ def _init_session_state() -> None:
         "page_size": DEFAULT_PAGE_SIZE,
         "page": "screener",
         "detail_symbol": None,
+        "selection_epoch": 0,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
+
+
+def _ago(epoch: float | None) -> str:
+    """Relative age of an alert, e.g. "12m ago" or "3d ago"."""
+    if not epoch:
+        return ""
+    delta = max(0.0, time.time() - epoch)
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    return f"{int(delta // 86400)}d ago"
+
+
+def render_alerts_banner() -> None:
+    """Show the unread watchlist alerts; renders nothing when there are none."""
+    store = get_store()
+    alerts = store.get_alerts()
+    if not alerts:
+        return
+
+    severity_icons = {"good": "🟢", "warn": "🟠", "info": "🔵"}
+    with st.container(key="alerts-banner"):
+        count = len(alerts)
+        st.info(
+            f"{count} unread alert{'s' if count != 1 else ''} for your watchlist",
+            icon="🔔",
+        )
+        for alert in alerts:
+            symbol_col, text_col = st.columns([1, 7])
+            with symbol_col:
+                if st.button(
+                    f"{alert['symbol']} ▸",
+                    key=f"alert_open_{alert['id']}",
+                    help=f"Open {alert['symbol']}",
+                ):
+                    open_symbol(alert["symbol"])
+                    st.rerun()
+            with text_col:
+                icon = severity_icons.get(alert["severity"], "•")
+                st.markdown(f"{icon} **{alert['title']}**")
+                meta = [alert.get("detail") or "", _ago(alert.get("created_at"))]
+                st.caption(" · ".join(part for part in meta if part))
+        if st.button("Mark all read", key="alerts_mark_read"):
+            store.mark_alerts_seen([alert["id"] for alert in alerts])
+            st.rerun()
 
 
 def main() -> None:
@@ -1336,10 +1410,14 @@ def main() -> None:
         render_detail_page(store, st.session_state["detail_symbol"])
         return
 
-    # Main content tabs
-    tab_screener, tab_watchlist = st.tabs(["📊 Screener", "⭐ Watchlist"])
+    # Main content tabs; unread alerts are visible from anywhere in the app.
+    unread = store.count_unread_alerts()
+    watchlist_label = f"⭐ Watchlist ({unread})" if unread else "⭐ Watchlist"
+    tab_screener, tab_watchlist = st.tabs(["📊 Screener", watchlist_label])
 
     with tab_screener:
+        render_alerts_banner()
+
         # Render the new top-level filters grid
         render_top_filters()
 

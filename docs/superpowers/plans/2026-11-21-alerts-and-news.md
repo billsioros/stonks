@@ -474,7 +474,88 @@ git commit -m "feat(app): badge the watchlist tab with the unread alert count"
 
 ---
 
-### Task 7: Full verification and docs
+### Task 7: Percent suffix on the Overview signal strip
+
+Carried over as a deferred minor from the Phase A review: the signal strip prints
+`94.50` where the source says `+94.50%`.
+
+**Files:**
+- Modify: `src/stonks/detail_view.py` (`format_compact` neighbourhood, `_render_overview` signals)
+- Test: `tests/test_detail_view.py`
+
+**Interfaces:**
+- Produces: `format_pct(value: Any, *, signed: bool = True) -> str` — `"+94.50%"`, `"4.00%"` with `signed=False`, `"—"` for anything that is not a number.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+def test_format_pct_carries_its_suffix():
+    assert format_pct(94.5) == "+94.50%"
+    assert format_pct(-12.345) == "-12.35%"
+    assert format_pct(4.0, signed=False) == "4.00%"
+    assert format_pct(None) == "—"
+    assert format_pct(True) == "—"
+    assert format_pct("n/a") == "—"
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `uv run pytest tests/test_detail_view.py -k format_pct -v`
+Expected: FAIL — `ImportError: format_pct`.
+
+- [ ] **Step 3: Implement**
+
+Add `format_pct` beside `format_compact` (bools and non-numbers return `"—"`), then use it for the strip's `Target upside`, `DCF upside`, `Lynch upside` (signed) and `Short float` (`signed=False`) entries. Leave the `Analyst rating` and `Forward P/E` entries on `format_cell` — they are not percentages.
+
+- [ ] **Step 4: Run tests**
+
+Run: `uv run pytest tests/test_detail_view.py -q`
+Expected: pass.
+
+---
+
+### Task 8: Clear the row selection when returning to the screener
+
+The second deferred minor: after Back, the previous row stays highlighted. Streamlit
+keeps dataframe selection under the widget key and exposes no API to clear it, so
+the tables take their key from a version counter that Back increments.
+
+**Files:**
+- Modify: `src/stonks/app.py` (`close_detail`, `_init_session_state`, both `st.dataframe` calls)
+- Test: `tests/test_navigation.py`
+
+**Interfaces:**
+- Produces: `_table_key(name: str) -> str` and the `selection_epoch` session key (default `0`).
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+def test_back_control_resets_row_selection_state():
+    at = _app()
+    at.session_state["page"] = "detail"
+    at.session_state["detail_symbol"] = "ZZZZ"
+    at.run()
+    next(b for b in at.button if "Back" in b.label).click().run()
+    assert at.session_state["selection_epoch"] == 1
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `uv run pytest tests/test_navigation.py -k selection -v`
+Expected: FAIL — `KeyError: 'selection_epoch'`.
+
+- [ ] **Step 3: Implement**
+
+Seed `"selection_epoch": 0` in `_init_session_state`, bump it in `close_detail`, and key both tables with `_table_key("screener_table")` / `_table_key("watchlist_table")`. The old widget state stays behind unused; the new key starts with an empty selection.
+
+- [ ] **Step 4: Run tests**
+
+Run: `uv run pytest tests/test_navigation.py -q`
+Expected: pass, including the pre-existing Back test.
+
+---
+
+### Task 9: Full verification and docs
 
 **Files:**
 - Modify: `README.md`

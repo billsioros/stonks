@@ -28,3 +28,14 @@ def test_back_control_restores_screener_and_filters() -> None:
     back.click().run()
     assert at.session_state["page"] == "screener"
     assert dict(at.session_state["active_filters"]) == before
+
+
+def test_back_control_resets_row_selection_state() -> None:
+    at = _app()
+    at.session_state["page"] = "detail"
+    at.session_state["detail_symbol"] = "ZZZZ"
+    at.run()
+    next(b for b in at.button if "Back" in b.label).click().run()
+    # A fresh epoch means a fresh dataframe widget key, so the old highlight
+    # does not come back with the screener.
+    assert at.session_state["selection_epoch"] == 1

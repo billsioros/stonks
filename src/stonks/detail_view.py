@@ -64,6 +64,13 @@ def format_cell(value: Any) -> str:
     return str(value)
 
 
+def format_pct(value: Any, *, signed: bool = True) -> str:
+    """Format a percentage field with its suffix; anything else is a dash."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "—"
+    return f"{value:+.2f}%" if signed else f"{value:.2f}%"
+
+
 def range_position(
     price: float | None, low: float | None, high: float | None
 ) -> float | None:
@@ -183,10 +190,10 @@ def _render_overview(
     st.markdown('<div class="section-header">Signals</div>', unsafe_allow_html=True)
     signals = [
         ("Analyst rating", format_cell(row.get("rating"))),
-        ("Target upside", format_cell(row.get("pt_upside_pct"))),
-        ("DCF upside", format_cell(row.get("dcf_upside_pct"))),
-        ("Lynch upside", format_cell(row.get("lynch_upside_pct"))),
-        ("Short float", format_cell(row.get("short_pct"))),
+        ("Target upside", format_pct(row.get("pt_upside_pct"))),
+        ("DCF upside", format_pct(row.get("dcf_upside_pct"))),
+        ("Lynch upside", format_pct(row.get("lynch_upside_pct"))),
+        ("Short float", format_pct(row.get("short_pct"), signed=False)),
         ("Forward P/E", format_cell(overview.get("forward_pe"))),
     ]
     cols = st.columns(len(signals))

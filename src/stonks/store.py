@@ -548,6 +548,15 @@ class SQLiteStore:
             conn.execute(query, [time.time(), *ids])
             conn.commit()
 
+    def unread_alert_counts(self) -> dict[str, int]:
+        """Unread alert count per symbol, for the watchlist marker column."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT symbol, COUNT(*) FROM alerts
+                   WHERE seen_at IS NULL GROUP BY symbol"""
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
+
     def count_unread_alerts(self) -> int:
         """How many alerts have not been read yet."""
         with self._connect() as conn:

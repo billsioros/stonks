@@ -345,3 +345,11 @@ def test_prune_alerts_drops_old_rows(store: SQLiteStore) -> None:
     store.add_alert("NEW", "off_high", "good", "cheap", None, "n1")
     assert store.prune_alerts(14) == 1
     assert [a["symbol"] for a in store.get_alerts(unread_only=False)] == ["NEW"]
+
+
+def test_unread_alert_counts_groups_by_symbol(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.add_alert("AAA", "big_move", "warn", "moved", None, "a2")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    store.mark_alerts_seen([store.get_alerts(symbol="BBB")[0]["id"]])
+    assert store.unread_alert_counts() == {"AAA": 2}

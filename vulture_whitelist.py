@@ -12,6 +12,7 @@ from stonks.detail_parse import (
 from stonks.detail_view import (
     format_cell,
     format_compact,
+    format_pct,
     metrics_sections,
     range_position,
     render_detail_page,
@@ -20,6 +21,7 @@ from stonks.detail_view import (
 )
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
+from stonks.worker import NEWS_ALERTS_PER_SYNC, fetch_watched_news
 
 LocalCache.delete  # noqa: B018
 SQLiteStore.get_screen  # noqa: B018
@@ -52,3 +54,7 @@ yoy_pct  # noqa: B018
 Alert  # noqa: B018
 week_bucket  # noqa: B018
 evaluate_alerts  # noqa: B018
+format_pct  # noqa: B018
+SQLiteStore.unread_alert_counts  # noqa: B018
+fetch_watched_news  # noqa: B018
+NEWS_ALERTS_PER_SYNC  # noqa: B018
