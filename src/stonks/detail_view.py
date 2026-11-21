@@ -7,6 +7,7 @@ a segmented control keeps it to one.
 
 from __future__ import annotations
 
+import html
 import time
 from typing import Any
 
@@ -132,9 +133,12 @@ def render_detail_page(store: SQLiteStore, symbol: str) -> None:
     overview = parse_overview(overview_data)
     row = _store_row(store, symbol)
 
+    name = row.get("description") or symbol
     st.markdown(
-        f'<div class="section-header">{symbol} · '
-        f"{(row.get('description') or symbol).upper()}</div>",
+        f'<div class="sk-page-head">'
+        f'<span class="sk-page-ticker">{_esc(symbol)}</span>'
+        f'<span class="sk-page-name">{_esc(name)}</span>'
+        f"</div>",
         unsafe_allow_html=True,
     )
     stamp_col, refresh_col = st.columns([4, 1])
@@ -169,90 +173,200 @@ def render_detail_page(store: SQLiteStore, symbol: str) -> None:
 # ── Overview ─────────────────────────────────────────────────────────
 
 
+def _esc(value: Any) -> str:
+    """Escape provider text for the HTML cards; missing values keep the dash."""
+    return html.escape(str(value), quote=True)
+
+
+def _move_class(value: Any) -> str:
+    """Colour a percentage pill by sign, leaving non-numbers neutral."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return ""
+    if value > 0:
+        return "up"
+    if value < 0:
+        return "down"
+    return ""
+
+
+def _render_quote_card(overview: dict[str, Any], row: dict[str, Any]) -> None:
+    """Hero surface: last price, the headline multiples and the 52-week slider."""
+    price = row.get("price")
+    low, high = row.get("week_52_low"), row.get("week_52_high")
+    position = range_position(price, low, high)
+
+    meta_parts = []
+    if overview.get("market_cap") is not None:
+        meta_parts.append(f"Market cap {_esc(format_cell(overview['market_cap']))}")
+    if overview.get("pe_ratio") is not None:
+        meta_parts.append(f"P/E {_esc(format_cell(overview['pe_ratio']))}")
+    if overview.get("forward_pe") is not None:
+        meta_parts.append(f"Forward P/E {_esc(format_cell(overview['forward_pe']))}")
+    meta_html = "<br>".join(meta_parts) if meta_parts else "—"
+
+    range_html = ""
+    if low is not None and high is not None:
+        pct = 0.0 if position is None else position * 100
+        range_html = f"""
+        <div class="sk-range">
+            <div class="sk-range-track">
+                <div class="sk-range-fill" style="width: {pct:.1f}%"></div>
+                <div class="sk-range-dot" style="left: {pct:.1f}%"></div>
+            </div>
+            <div class="sk-range-labels">
+                <span>52w low {_esc(format_cell(low))}</span>
+                <span>{pct:.0f}% of range</span>
+                <span>52w high {_esc(format_cell(high))}</span>
+            </div>
+        </div>"""
+
+    st.markdown(
+        f"""<div class="sk-symbol">
+            <div class="sk-symbol-head">
+                <div>
+                    <div class="sk-quote-label">Last price</div>
+                    <div class="sk-price">{_esc(format_cell(price))}</div>
+                </div>
+                <div class="sk-quote-meta">{meta_html}</div>
+            </div>
+            {range_html}
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def _render_pills(items: list[tuple[str, str, Any]]) -> None:
+    """A row of small labelled tiles; `raw` decides the colour of the value."""
+    cells = "".join(
+        f'<div class="sk-pill"><span class="sk-pill-label">{_esc(label)}</span>'
+        f'<span class="sk-pill-value {_move_class(raw)}">{_esc(value)}</span></div>'
+        for label, value, raw in items
+    )
+    st.markdown(f'<div class="sk-pills">{cells}</div>', unsafe_allow_html=True)
+
+
+def _render_cells(items: list[tuple[str, str]]) -> None:
+    """A single card made of label/value rows, two per row on wide screens."""
+    cells = "".join(
+        f'<div class="sk-cell"><span class="sk-cell-label">{_esc(label)}</span>'
+        f'<span class="sk-cell-value">{_esc(value)}</span></div>'
+        for label, value in items
+    )
+    st.markdown(f'<div class="sk-grid">{cells}</div>', unsafe_allow_html=True)
+
+
+def _render_profile_card(info: list[dict[str, Any]]) -> None:
+    rows = "".join(
+        f'<div class="sk-kv"><span class="sk-kv-label">{_esc(item.get("label"))}</span>'
+        f'<span class="sk-kv-value">{_link_or_text(item)}</span></div>'
+        for item in info
+    )
+    st.markdown(f'<div class="sk-card">{rows}</div>', unsafe_allow_html=True)
+
+
+def _link_or_text(item: dict[str, Any]) -> str:
+    value = _esc(format_cell(item.get("value")))
+    url = item.get("url")
+    if not url:
+        return value
+    return (
+        f'<a href="{html.escape(str(url), quote=True)}" target="_blank" '
+        f'rel="noopener" style="color: var(--accent-primary);">{value}</a>'
+    )
+
+
+def _render_news(items: list[dict[str, Any]]) -> None:
+    blocks = []
+    for item in items[:5]:
+        title = _esc(item.get("title") or "Untitled")
+        meta = " · ".join(
+            _esc(part)
+            for part in (
+                format_cell(item.get("source")),
+                format_cell(item.get("ago")),
+            )
+            if part != "—"
+        )
+        body = (
+            f'<div class="sk-news-title">{title}</div>'
+            f'<div class="sk-news-meta">{meta or "—"}</div>'
+        )
+        url = item.get("url")
+        if url:
+            blocks.append(
+                f'<a class="sk-news-item" href="{html.escape(str(url), quote=True)}"'
+                f' target="_blank" rel="noopener">{body}</a>'
+            )
+        else:
+            blocks.append(f'<div class="sk-news-item">{body}</div>')
+    st.markdown(f'<div class="sk-news">{"".join(blocks)}</div>', unsafe_allow_html=True)
+
+
 def _render_overview(
     store: SQLiteStore,
     symbol: str,
     overview: dict[str, Any],
     row: dict[str, Any],
 ) -> None:
-    price = row.get("price")
-    low, high = row.get("week_52_low"), row.get("week_52_high")
-    position = range_position(price, low, high)
+    _render_quote_card(overview, row)
 
-    cols = st.columns(4)
-    cols[0].metric("Price", format_cell(price))
-    cols[1].metric("52-week range", f"{format_cell(low)} – {format_cell(high)}")
-    cols[2].metric(
-        "Range position", "—" if position is None else f"{position * 100:.0f}%"
+    _render_pills(
+        [
+            ("Analyst rating", format_cell(row.get("rating")), None),
+            (
+                "Target upside",
+                format_pct(row.get("pt_upside_pct")),
+                row.get("pt_upside_pct"),
+            ),
+            (
+                "DCF upside",
+                format_pct(row.get("dcf_upside_pct")),
+                row.get("dcf_upside_pct"),
+            ),
+            (
+                "Lynch upside",
+                format_pct(row.get("lynch_upside_pct")),
+                row.get("lynch_upside_pct"),
+            ),
+            ("Short float", format_pct(row.get("short_pct"), signed=False), None),
+            ("Forward P/E", format_cell(overview.get("forward_pe")), None),
+        ]
     )
-    cols[3].metric("Market cap", format_cell(overview.get("market_cap")))
 
-    st.markdown('<div class="section-header">Signals</div>', unsafe_allow_html=True)
-    signals = [
-        ("Analyst rating", format_cell(row.get("rating"))),
-        ("Target upside", format_pct(row.get("pt_upside_pct"))),
-        ("DCF upside", format_pct(row.get("dcf_upside_pct"))),
-        ("Lynch upside", format_pct(row.get("lynch_upside_pct"))),
-        ("Short float", format_pct(row.get("short_pct"), signed=False)),
-        ("Forward P/E", format_cell(overview.get("forward_pe"))),
-    ]
-    cols = st.columns(len(signals))
-    for col, (label, value) in zip(cols, signals):
-        col.markdown(f"**{label}**<br>{value}", unsafe_allow_html=True)
-
-    st.markdown('<div class="section-header">Key data</div>', unsafe_allow_html=True)
-    key_rows = [
-        ("Revenue (TTM)", overview.get("revenue")),
-        ("Revenue growth", overview.get("revenue_growth")),
-        ("Net income (TTM)", overview.get("net_income")),
-        ("Net income growth", overview.get("net_income_growth")),
-        ("EPS (TTM)", overview.get("eps")),
-        ("P/E", overview.get("pe_ratio")),
-        ("Shares out", overview.get("shares_out")),
-        ("Beta", overview.get("beta")),
-        ("Dividend", overview.get("dividend")),
-        (
-            overview.get("earnings_date_label") or "Earnings date",
-            overview.get("earnings_date"),
-        ),
-    ]
-    for start in range(0, len(key_rows), 2):
-        cols = st.columns(2)
-        for col, (label, value) in zip(cols, key_rows[start : start + 2]):
-            col.markdown(f"**{label}**<br>{format_cell(value)}", unsafe_allow_html=True)
+    _render_cells(
+        [
+            ("Revenue (TTM)", format_cell(overview.get("revenue"))),
+            ("Revenue growth", format_cell(overview.get("revenue_growth"))),
+            ("Net income (TTM)", format_cell(overview.get("net_income"))),
+            ("Net income growth", format_cell(overview.get("net_income_growth"))),
+            ("EPS (TTM)", format_cell(overview.get("eps"))),
+            ("P/E", format_cell(overview.get("pe_ratio"))),
+            ("Shares out", format_cell(overview.get("shares_out"))),
+            ("Beta", format_cell(overview.get("beta"))),
+            ("Dividend", format_cell(overview.get("dividend"))),
+            (
+                overview.get("earnings_date_label") or "Earnings date",
+                format_cell(overview.get("earnings_date")),
+            ),
+        ]
+    )
 
     if overview.get("info"):
         st.markdown('<div class="section-header">Profile</div>', unsafe_allow_html=True)
-        for item in overview["info"]:
-            label, value = item["label"], format_cell(item["value"])
-            if item.get("url"):
-                st.markdown(f"**{label}:** [{value}]({item['url']})")
-            else:
-                st.markdown(f"**{label}:** {value}")
+        _render_profile_card(overview["info"])
 
     if overview.get("summary"):
-        st.markdown(overview["summary"])
+        st.markdown(
+            f'<div class="sk-card"><p>{_esc(overview["summary"])}</p></div>',
+            unsafe_allow_html=True,
+        )
 
     news = overview.get("news") or []
     st.markdown('<div class="section-header">News</div>', unsafe_allow_html=True)
-    if not news:
+    if news:
+        _render_news(news)
+    else:
         st.caption("No headlines available right now.")
-    for item in news[:5]:
-        if item.get("url"):
-            st.markdown(f"[{item['title']}]({item['url']})")
-        else:
-            st.markdown(item.get("title") or "—")
-        st.caption(
-            " · ".join(
-                part
-                for part in (
-                    format_cell(item.get("source")),
-                    format_cell(item.get("ago")),
-                )
-                if part != "—"
-            )
-            or "—"
-        )
 
 
 # ── Financials ───────────────────────────────────────────────────────

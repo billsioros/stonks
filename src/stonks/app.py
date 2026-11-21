@@ -245,6 +245,230 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     margin-bottom: 1.2rem;
 }
 
+/* Symbol detail page: roomies surfaces — flat cards, hairline borders, tabular
+   numbers, indigo only where it marks something. */
+.sk-page-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.35rem;
+}
+
+.sk-page-ticker {
+    color: var(--text-primary);
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.sk-page-name {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+.sk-symbol {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.3rem 1.4rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-symbol-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.sk-quote-label {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+.sk-price {
+    color: var(--text-primary);
+    font-size: 2.1rem;
+    font-weight: 600;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+}
+
+.sk-quote-meta {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    text-align: right;
+    line-height: 1.7;
+}
+
+.sk-range {
+    margin-top: 1.2rem;
+}
+
+.sk-range-track {
+    position: relative;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(248, 250, 252, 0.07);
+}
+
+.sk-range-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 999px;
+    background: var(--accent-primary);
+    opacity: 0.85;
+}
+
+.sk-range-dot {
+    position: absolute;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    border: 2px solid var(--accent-primary);
+    transform: translate(-50%, -50%);
+}
+
+.sk-range-labels {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.sk-pills {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: 0.6rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-pill {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.7rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.sk-pill-label {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+.sk-pill-value {
+    color: var(--text-primary);
+    font-size: 1rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.sk-pill-value.up { color: var(--success); }
+.sk-pill-value.down { color: var(--danger); }
+
+.sk-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.3rem;
+}
+
+.sk-cell {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid rgba(248, 250, 252, 0.05);
+}
+
+.sk-cell-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.sk-cell-value {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.88rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.sk-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 0.95rem 1.15rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-card p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.65;
+}
+
+.sk-kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.42rem 0;
+    font-size: 0.85rem;
+    border-bottom: 1px solid rgba(248, 250, 252, 0.05);
+}
+
+.sk-kv:last-child { border-bottom: none; }
+.sk-kv-label { color: var(--text-muted); }
+.sk-kv-value { color: var(--text-primary); font-weight: 500; text-align: right; }
+
+.sk-news {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-news-item {
+    display: block;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.75rem 0.95rem;
+    text-decoration: none !important;
+    transition: border-color 0.15s ease;
+}
+
+.sk-news-item:hover { border-color: var(--accent-border); }
+
+.sk-news-title {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.sk-news-meta {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 0.3rem;
+}
+
 /* Active filter summary */
 .active-filters {
     background: var(--accent-soft);

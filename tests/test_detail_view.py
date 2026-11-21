@@ -107,3 +107,30 @@ def test_format_pct_carries_its_suffix() -> None:
     assert format_pct(None) == "—"
     assert format_pct(True) == "—"
     assert format_pct("n/a") == "—"
+
+
+def test_detail_overview_renders_the_card_layout() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    from stonks.detail import cache_key
+    from stonks.store import SQLiteStore
+
+    store = SQLiteStore()
+    key = cache_key("NVDA", "overview")
+    payload = resolve_payload(json.loads((FIXTURES / "nvda_overview.json").read_text()))
+    store.cache_set(key, {"data": payload, "fetched_at": 1.0}, ttl_seconds=3600)
+    try:
+        at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
+        at.session_state["page"] = "detail"
+        at.session_state["detail_symbol"] = "NVDA"
+        at.run()
+        assert not at.exception
+        rendered = " ".join(str(markdown.value) for markdown in at.markdown)
+        assert 'class="sk-page-ticker"' in rendered
+        assert 'class="sk-symbol"' in rendered
+        assert 'class="sk-range-track"' in rendered
+        assert 'class="sk-pills"' in rendered
+        assert 'class="sk-grid"' in rendered
+        assert 'class="sk-news-item"' in rendered
+    finally:
+        store.cache_delete(key)
