@@ -10,6 +10,7 @@ import pytest
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,
+    parse_statement,
     parse_statistics,
 )
 
@@ -125,3 +126,63 @@ def test_parse_forecast_empty_payload() -> None:
     assert out["current_ratings"] is None
     assert out["ratings"] == [] and out["recommendations"] == []
     assert out["estimates"] == {"annual": {}, "quarterly": {}}
+
+
+# ── Financial statements ─────────────────────────────────────────────
+
+
+def test_parse_statement_annual_periods_and_rows() -> None:
+    st = parse_statement(_load("nvda_income_annual"))
+    assert st["periods"][0] == {"key": "TTM", "label": "TTM", "is_ttm": True}
+    assert st["periods"][1]["label"] == "FY2026"
+    assert st["periods"][1]["is_ttm"] is False
+    assert len(st["rows"]) == 53
+    assert st["rows"][0]["label"] == "Operating Revenue"
+    assert len(st["rows"][0]["values"]) == len(st["periods"])
+
+
+def test_parse_statement_quarterly_labels() -> None:
+    st = parse_statement(_load("nvda_income_quarterly"))
+    assert st["periods"][0]["key"] == "2026-10-25"
+    assert st["periods"][0]["label"].startswith("Q")
+    assert all(not p["is_ttm"] for p in st["periods"])
+
+
+def test_parse_statement_pro_sentinel_becomes_none() -> None:
+    payload = {
+        "financialData": {
+            "datekey": ["TTM", "2026-01-25"],
+            "fiscalYear": [None, "2026"],
+            "fiscalQuarter": [None, None],
+            "revenue": [100, "[PRO]"],
+        },
+        "map": [{"id": "revenue", "title": "Revenue"}],
+        "statement": "income-statement",
+        "period": "annual",
+    }
+    st = parse_statement(payload)
+    assert st["rows"][0] == {
+        "id": "revenue",
+        "label": "Revenue",
+        "values": [100, None],
+    }
+
+
+def test_parse_statement_pads_short_line_items() -> None:
+    payload = {
+        "financialData": {
+            "datekey": ["TTM", "2026-01-25"],
+            "fiscalYear": [None, "2026"],
+            "fiscalQuarter": [None, None],
+            "revenue": [100],
+        },
+        "map": [{"id": "revenue", "title": "Revenue"}],
+        "statement": "income-statement",
+        "period": "annual",
+    }
+    assert parse_statement(payload)["rows"][0]["values"] == [100, None]
+
+
+def test_parse_statement_empty_payload() -> None:
+    st = parse_statement({})
+    assert st["periods"] == [] and st["rows"] == []

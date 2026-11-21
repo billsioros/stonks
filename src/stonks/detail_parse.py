@@ -192,3 +192,52 @@ def parse_forecast(data: dict[str, Any]) -> dict[str, Any]:
         ],
         "ratings": ratings,
     }
+
+
+def _statement_value(value: Any) -> float | None:
+    """Keep real numbers; ``[PRO]`` and other placeholders become None."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
+def parse_statement(data: dict[str, Any]) -> dict[str, Any]:
+    """Parse a financial statement payload into periods and ordered rows."""
+    financial = data.get("financialData") or {}
+    datekeys = financial.get("datekey") or []
+    fiscal_years = financial.get("fiscalYear") or []
+    fiscal_quarters = financial.get("fiscalQuarter") or []
+    quarterly = data.get("period") == "quarterly"
+
+    periods: list[dict[str, Any]] = []
+    for index, key in enumerate(datekeys):
+        year = fiscal_years[index] if index < len(fiscal_years) else None
+        quarter = fiscal_quarters[index] if index < len(fiscal_quarters) else None
+        is_ttm = key == "TTM"
+        if is_ttm:
+            label = "TTM"
+        elif quarterly and quarter and year:
+            label = f"{quarter} {year}"
+        elif not quarterly and year:
+            label = f"FY{year}"
+        else:
+            label = str(key)
+        periods.append({"key": key, "label": label, "is_ttm": is_ttm})
+
+    rows: list[dict[str, Any]] = []
+    for entry in data.get("map") or []:
+        if not isinstance(entry, dict):
+            continue
+        raw = financial.get(entry.get("id")) or []
+        values = [_statement_value(value) for value in raw[: len(periods)]]
+        values += [None] * (len(periods) - len(values))
+        rows.append(
+            {"id": entry.get("id"), "label": entry.get("title"), "values": values}
+        )
+
+    return {
+        "statement": data.get("statement"),
+        "period": data.get("period"),
+        "periods": periods,
+        "rows": rows,
+    }
