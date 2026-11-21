@@ -13,7 +13,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from stonks.detail import STATEMENTS, load_page
+from stonks.detail import STATEMENTS, cache_key, load_page
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,
@@ -105,8 +105,6 @@ def _clear_cache(store: SQLiteStore, symbol: str) -> None:
     for statement in STATEMENTS:
         for period in ("annual", "quarterly"):
             pages.append(("financials", statement, period))
-    from stonks.detail import cache_key
-
     for page, statement, period in pages:
         store.cache_delete(cache_key(symbol, page, statement=statement, period=period))
 
