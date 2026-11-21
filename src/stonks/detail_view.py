@@ -14,7 +14,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from stonks.detail import STATEMENTS, cache_key, load_page
+from stonks.detail import STATEMENTS, cache_key, load_history, load_page
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,
@@ -70,6 +70,29 @@ def format_pct(value: Any, *, signed: bool = True) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return "—"
     return f"{value:+.2f}%" if signed else f"{value:.2f}%"
+
+
+def sparkline_svg(values: list[float], *, width: int = 720, height: int = 140) -> str:
+    """Inline SVG price line: flat indigo stroke over a soft area fill."""
+    if len(values) < 2:
+        return ""
+    low, high = min(values), max(values)
+    span = high - low or 1.0
+    pad = 4.0
+    step = (width - 2 * pad) / (len(values) - 1)
+    points = [
+        (pad + index * step, height - pad - (value - low) / span * (height - 2 * pad))
+        for index, value in enumerate(values)
+    ]
+    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
+    area = f"{pad:.1f},{height - pad:.1f} {line} {width - pad:.1f},{height - pad:.1f}"
+    return (
+        f'<svg class="sk-spark" viewBox="0 0 {width} {height}" '
+        'preserveAspectRatio="none" role="img" aria-label="Price history">'
+        f'<polygon points="{area}" fill="rgba(99, 102, 241, 0.12)" />'
+        f'<polyline points="{line}" fill="none" stroke="#6366f1" stroke-width="2" '
+        'stroke-linejoin="round" stroke-linecap="round" /></svg>'
+    )
 
 
 def range_position(
@@ -189,8 +212,10 @@ def _move_class(value: Any) -> str:
     return ""
 
 
-def _render_quote_card(overview: dict[str, Any], row: dict[str, Any]) -> None:
-    """Hero surface: last price, the headline multiples and the 52-week slider."""
+def _render_quote_card(
+    store: SQLiteStore, symbol: str, overview: dict[str, Any], row: dict[str, Any]
+) -> None:
+    """Hero surface: last price, multiples, 52-week slider and a price line."""
     price = row.get("price")
     low, high = row.get("week_52_low"), row.get("week_52_high")
     position = range_position(price, low, high)
@@ -220,6 +245,23 @@ def _render_quote_card(overview: dict[str, Any], row: dict[str, Any]) -> None:
             </div>
         </div>"""
 
+    chart_html = ""
+    history = load_history(store, symbol)
+    closes = [point["close"] for point in history]
+    if len(closes) >= 2 and closes[0]:
+        change = (closes[-1] / closes[0] - 1) * 100
+        trend = "up" if change > 0 else "down" if change < 0 else ""
+        chart_html = f"""
+        <div class="sk-chart-head">
+            <span class="sk-quote-label">1-year price</span>
+            <span class="sk-chart-change {trend}">{change:+.1f}%</span>
+        </div>
+        <div class="sk-chart">{sparkline_svg(closes)}</div>
+        <div class="sk-range-labels">
+            <span>{_esc(history[0]["date"])}</span>
+            <span>{_esc(history[-1]["date"])}</span>
+        </div>"""
+
     st.markdown(
         f"""<div class="sk-symbol">
             <div class="sk-symbol-head">
@@ -230,6 +272,7 @@ def _render_quote_card(overview: dict[str, Any], row: dict[str, Any]) -> None:
                 <div class="sk-quote-meta">{meta_html}</div>
             </div>
             {range_html}
+            {chart_html}
         </div>""",
         unsafe_allow_html=True,
     )
@@ -308,7 +351,7 @@ def _render_overview(
     overview: dict[str, Any],
     row: dict[str, Any],
 ) -> None:
-    _render_quote_card(overview, row)
+    _render_quote_card(store, symbol, overview, row)
 
     _render_pills(
         [
@@ -401,14 +444,17 @@ def _render_financials(store: SQLiteStore, symbol: str) -> None:
         format_func=lambda key: STATEMENT_LABELS[key],
         key=f"fin_statement_{symbol}",
     )
-    period = st.radio(
-        "Period",
-        options=["annual", "quarterly"],
-        format_func=str.title,
-        horizontal=True,
-        key=f"fin_period_{symbol}",
-    )
-    show_growth = st.toggle("Show YoY growth", key=f"fin_growth_{symbol}")
+    period_col, growth_col = st.columns([2, 1])
+    with period_col:
+        period = st.radio(
+            "Period",
+            options=["annual", "quarterly"],
+            format_func=str.title,
+            horizontal=True,
+            key=f"fin_period_{symbol}",
+        )
+    with growth_col:
+        show_growth = st.toggle("Show YoY growth", key=f"fin_growth_{symbol}")
 
     data, fetched_at = load_page(
         store, symbol, "financials", statement=statement, period=period
@@ -419,6 +465,11 @@ def _render_financials(store: SQLiteStore, symbol: str) -> None:
 
     parsed = parse_statement(data)
     labels, rows = statement_frame(parsed, show_growth=show_growth)
+    st.markdown(
+        f'<div class="sk-card-title">{_esc(STATEMENT_LABELS[statement])} · '
+        f"{_esc(str(period).title())}</div>",
+        unsafe_allow_html=True,
+    )
     st.caption(f"as of {_as_of(fetched_at)} · {len(parsed['periods'])} periods")
     st.dataframe(
         pd.DataFrame(rows, columns=labels),
@@ -438,27 +489,34 @@ def metrics_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [by_key[key] for key in METRICS_KEYS if key in by_key]
 
 
+def _render_card(title: str, rows: str, *, text: str | None = None) -> None:
+    """One titled card holding label/value rows."""
+    caption = f'<p class="sk-card-text">{_esc(text)}</p>' if text else ""
+    st.markdown(
+        f'<div class="sk-card"><div class="sk-card-title">{_esc(title)}</div>'
+        f"{caption}{rows}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def _render_sections(sections: list[dict[str, Any]]) -> None:
+    """Statistics and metrics as a two-column grid of cards, not wide tables."""
     if not sections:
         st.info("No statistics available for this symbol.")
         return
-    for section in sections:
-        st.markdown(
-            f'<div class="section-header">{section["title"]}</div>',
-            unsafe_allow_html=True,
-        )
-        if section.get("text"):
-            st.caption(section["text"])
-        frame = pd.DataFrame(
-            [
-                {
-                    "Metric": format_cell(item.get("title")),
-                    "Value": format_cell(item.get("value")),
-                }
+    for start in range(0, len(sections), 2):
+        pair = sections[start : start + 2]
+        cols = st.columns(len(pair))
+        for col, section in zip(cols, pair):
+            rows = "".join(
+                f'<div class="sk-kv"><span class="sk-kv-label">'
+                f"{_esc(format_cell(item.get('title')))}</span>"
+                f'<span class="sk-kv-value">{_esc(format_cell(item.get("value")))}'
+                "</span></div>"
                 for item in section["items"]
-            ]
-        )
-        st.dataframe(frame, width="stretch", hide_index=True, row_height=28)
+            )
+            with col:
+                _render_card(section["title"], rows, text=section.get("text"))
 
 
 def _render_statistics(store: SQLiteStore, symbol: str) -> None:
@@ -492,9 +550,18 @@ def _render_forecast(store: SQLiteStore, symbol: str) -> None:
         '<div class="section-header">Price targets</div>', unsafe_allow_html=True
     )
     if targets:
-        cols = st.columns(5)
-        for col, key in zip(cols, ("low", "median", "average", "high", "count")):
-            col.metric(key.title(), format_cell(targets.get(key)))
+        _render_pills(
+            [
+                (label, format_cell(targets.get(key)), None)
+                for label, key in (
+                    ("Low", "low"),
+                    ("Median", "median"),
+                    ("Average", "average"),
+                    ("High", "high"),
+                    ("Analysts", "count"),
+                )
+            ]
+        )
         if targets.get("updated"):
             st.caption(f"updated {targets['updated']}")
     else:
@@ -503,14 +570,19 @@ def _render_forecast(store: SQLiteStore, symbol: str) -> None:
     ratings = forecast.get("current_ratings")
     st.markdown('<div class="section-header">Ratings</div>', unsafe_allow_html=True)
     if ratings:
-        cols = st.columns(6)
-        for col, key in zip(
-            cols, ("consensus", "strongBuy", "buy", "hold", "sell", "strongSell")
-        ):
-            col.metric(
-                key.replace("Buy", " Buy").replace("Sell", " Sell").title(),
-                format_cell(ratings.get(key)),
-            )
+        _render_pills(
+            [
+                (label, format_cell(ratings.get(key)), None)
+                for label, key in (
+                    ("Consensus", "consensus"),
+                    ("Strong buy", "strongBuy"),
+                    ("Buy", "buy"),
+                    ("Hold", "hold"),
+                    ("Sell", "sell"),
+                    ("Strong sell", "strongSell"),
+                )
+            ]
+        )
     else:
         st.caption("No analyst ratings available.")
 

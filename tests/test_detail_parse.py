@@ -9,6 +9,7 @@ import pytest
 from stonks.detail import resolve_payload
 from stonks.detail_parse import (
     parse_forecast,
+    parse_history,
     parse_overview,
     parse_statement,
     parse_statistics,
@@ -186,3 +187,26 @@ def test_parse_statement_pads_short_line_items() -> None:
 def test_parse_statement_empty_payload() -> None:
     st = parse_statement({})
     assert st["periods"] == [] and st["rows"] == []
+
+
+def test_parse_history_sorts_and_drops_bad_rows() -> None:
+    payload = {
+        "status": 200,
+        "data": [
+            {"t": "2026-11-20", "c": 125.53},
+            {"t": "2026-11-18", "c": "n/a"},
+            {"t": "", "c": 1.0},
+            {"c": 2.0},
+            {"t": "2026-11-19", "c": True},
+            {"t": "2026-11-17", "c": 140.0},
+        ],
+    }
+    assert parse_history(payload) == [
+        {"date": "2026-11-17", "close": 140.0},
+        {"date": "2026-11-20", "close": 125.53},
+    ]
+
+
+def test_parse_history_handles_missing_payload() -> None:
+    assert parse_history(None) == []
+    assert parse_history({"status": 500}) == []

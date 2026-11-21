@@ -97,6 +97,28 @@ def parse_overview(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def parse_history(payload: Any) -> list[dict[str, Any]]:
+    """Parse a daily history payload into ``{date, close}`` rows, oldest first.
+
+    The provider serves newest first; rows without a usable date or close are
+    dropped rather than interpolated.
+    """
+    rows = payload.get("data") if isinstance(payload, dict) else payload
+    out: list[dict[str, Any]] = []
+    for row in rows or []:
+        if not isinstance(row, dict):
+            continue
+        date = row.get("t")
+        close = row.get("c")
+        if not isinstance(date, str) or not date:
+            continue
+        if isinstance(close, bool) or not isinstance(close, (int, float)):
+            continue
+        out.append({"date": date, "close": float(close)})
+    out.sort(key=lambda entry: entry["date"])
+    return out
+
+
 def parse_statistics(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Parse the statistics payload into titled sections in display order."""
     sections: list[dict[str, Any]] = []

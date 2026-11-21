@@ -13,10 +13,16 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from stonks.detail_parse import parse_history
 from stonks.stockanalysis import fetch_json
 from stonks.store import SQLiteStore
 
 BASE_URL = "https://stockanalysis.com/stocks"
+HISTORY_URL = "https://stockanalysis.com/api/symbol/s/{symbol}/history"
+
+# Daily closes move every session; an hour is plenty for a sparkline.
+HISTORY_TTL_SECONDS = 1800.0
+
 
 PAGES = ("overview", "statistics", "forecast", "financials")
 STATEMENTS = ("income-statement", "balance-sheet", "cash-flow-statement", "ratios")
@@ -49,6 +55,12 @@ def page_url(
     if page == "overview":
         return f"{BASE_URL}/{slug}/__data.json"
     return f"{BASE_URL}/{slug}/{page}/__data.json"
+
+
+def history_url(symbol: str, span: str = "1Y") -> str:
+    """Build the daily price-history URL for one symbol."""
+    slug = symbol.strip().lower()
+    return f"{HISTORY_URL.format(symbol=slug)}?range={span}&period=Daily"
 
 
 def cache_key(
@@ -109,6 +121,31 @@ def resolve_payload(payload: Any) -> Any:
         return resolved
 
     return value_at(0, ())
+
+
+def load_history(
+    store: SQLiteStore,
+    symbol: str,
+    span: str = "1Y",
+    *,
+    fetch: Callable[[str], dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Load one range of daily closes, oldest first; empty when unavailable."""
+    key = f"hist:{symbol.strip().upper()}:{span}"
+    cached = store.cache_get(key)
+    if isinstance(cached, list) and cached:
+        return cached  # type: ignore[no-any-return]
+
+    try:
+        payload = (fetch or fetch_json)(history_url(symbol, span))
+    except (OSError, ValueError):
+        stale = store.cache_get(key, allow_expired=True)
+        return stale if isinstance(stale, list) else []
+
+    rows = parse_history(payload)
+    if rows:
+        store.cache_set(key, rows, ttl_seconds=HISTORY_TTL_SECONDS)
+    return rows
 
 
 def load_page(

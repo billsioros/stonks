@@ -14,6 +14,7 @@ from stonks.detail_view import (
     format_pct,
     metrics_sections,
     range_position,
+    sparkline_svg,
     statement_frame,
     yoy_pct,
 )
@@ -119,6 +120,16 @@ def test_detail_overview_renders_the_card_layout() -> None:
     key = cache_key("NVDA", "overview")
     payload = resolve_payload(json.loads((FIXTURES / "nvda_overview.json").read_text()))
     store.cache_set(key, {"data": payload, "fetched_at": 1.0}, ttl_seconds=3600)
+    history_key = "hist:NVDA:1Y"
+    store.cache_set(
+        history_key,
+        [
+            {"date": "2025-11-21", "close": 100.0},
+            {"date": "2026-06-01", "close": 90.0},
+            {"date": "2026-11-20", "close": 125.0},
+        ],
+        ttl_seconds=3600,
+    )
     try:
         at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
         at.session_state["page"] = "detail"
@@ -131,6 +142,21 @@ def test_detail_overview_renders_the_card_layout() -> None:
         assert 'class="sk-range-track"' in rendered
         assert 'class="sk-pills"' in rendered
         assert 'class="sk-grid"' in rendered
+        assert 'class="sk-chart"' in rendered
+        assert "sk-spark" in rendered
         assert 'class="sk-news-item"' in rendered
     finally:
         store.cache_delete(key)
+        store.cache_delete(history_key)
+
+
+def test_sparkline_svg_draws_a_line_and_area() -> None:
+    svg = sparkline_svg([100.0, 90.0, 110.0])
+    assert svg.startswith("<svg")
+    assert svg.count("polyline") == 1
+    assert "<polygon" in svg
+
+
+def test_sparkline_svg_needs_two_points() -> None:
+    assert sparkline_svg([]) == ""
+    assert sparkline_svg([5.0]) == ""

@@ -424,6 +424,48 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     line-height: 1.65;
 }
 
+.sk-card-title {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.6rem;
+}
+
+.sk-card-text {
+    margin: 0 0 0.5rem !important;
+    color: var(--text-muted) !important;
+    font-size: 0.78rem !important;
+}
+
+.sk-chart-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1.2rem;
+}
+
+.sk-chart {
+    height: 140px;
+    margin-top: 0.5rem;
+}
+
+.sk-chart svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.sk-chart-change {
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+}
+
+.sk-chart-change.up { color: var(--success); }
+.sk-chart-change.down { color: var(--danger); }
+
 .sk-kv {
     display: flex;
     justify-content: space-between;
