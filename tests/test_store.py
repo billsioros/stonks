@@ -218,6 +218,10 @@ def test_store_filters_sort_search_and_preserves_values(store: SQLiteStore) -> N
     assert total == 1
     assert [row["symbol"] for row in rows] == ["BBB"]
 
+    rows, _, total = store.get_stocks(filters={"symbol": {"values": ["CCC", "AAA"]}})
+    assert total == 2
+    assert sorted(row["symbol"] for row in rows) == ["AAA", "CCC"]
+
     rows, _, total = store.get_stocks(search_query="Alpha")
     assert total == 1
     assert rows[0]["symbol"] == "AAA"

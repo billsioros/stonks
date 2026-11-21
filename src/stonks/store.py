@@ -489,7 +489,9 @@ class SQLiteStore:
             *VALUATION_COLUMNS,
             *FLAG_COLUMNS,
         }
-        enum_columns = {"exchange", "type", "currency", "mic"}
+        # "symbol" is not an enum column, but callers legitimately need to
+        # constrain the query to an explicit list (e.g. the watchlist).
+        enum_columns = {"exchange", "type", "currency", "mic", "symbol"}
 
         if filters:
             for col, spec in filters.items():

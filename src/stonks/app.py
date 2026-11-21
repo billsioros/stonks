@@ -524,19 +524,8 @@ def render_sidebar_filters() -> dict[str, Any]:
     with st.sidebar:
         # ── Section label ────────────────────────────────────────
         st.markdown(
-            '<div class="sk-side-title">🎯 Filters</div>', unsafe_allow_html=True
+            '<div class="sk-side-title">🧭 Screens</div>', unsafe_allow_html=True
         )
-
-        # ── Search ───────────────────────────────────────────────
-        search_query = st.text_input(
-            "🔍 Search",
-            value=st.session_state.get("search_query", ""),
-            placeholder="Symbol or company name...",
-            key="search_input",
-        )
-        st.session_state["search_query"] = search_query
-
-        st.divider()
 
         # ── Popular Screens ──────────────────────────────────────
         with st.expander("🌟 Popular Screens", expanded=False):
@@ -1003,33 +992,44 @@ def render_watchlist_tab() -> None:
         '<div class="section-header">⭐ Watchlist</div>', unsafe_allow_html=True
     )
 
-    all_symbols = store.get_unique_values("symbol")
-    if not all_symbols:
-        all_symbols = []
+    query = st.text_input(
+        "Search symbol or company",
+        key="watchlist_search",
+        placeholder="Type a symbol or company name, e.g. AAPL or Apple...",
+    )
 
-    col_add, col_btn = st.columns([3, 1])
-    with col_add:
-        add_symbol = st.selectbox(
-            "Add to watchlist",
-            options=[""] + sorted(all_symbols),
-            key="watchlist_add_symbol",
-            label_visibility="collapsed",
-            placeholder="Select a symbol to add...",
-        )
-    with col_btn:
-        if (
-            st.button(
-                "⭐ Add",
-                key="watchlist_add_btn",
-                use_container_width=True,
-                type="primary",
+    # The universe is too large for a plain selectbox, so the typed query is
+    # resolved against the database and the best matches are offered instead.
+    matches: list[dict[str, Any]] = []
+    picked: str | None = None
+    if query.strip():
+        matches, _, _ = store.get_stocks(search_query=query, page_size=8)
+        if matches:
+            labels = [
+                f"{row['symbol']} · {row.get('description') or ''}".rstrip(" ·")
+                for row in matches
+            ]
+            choice = st.selectbox(
+                "Matches",
+                options=labels,
+                key="watchlist_match",
+                label_visibility="collapsed",
             )
-            and add_symbol
-        ):
-            store.add_to_watchlist(add_symbol)
-            st.toast(f"⭐ Added {add_symbol} to watchlist!", icon="✅")
-            time.sleep(0.5)
-            st.rerun()
+            picked = matches[labels.index(choice)]["symbol"]
+        else:
+            st.caption("No symbol or company matches that search.")
+
+    add_clicked = st.button(
+        "⭐ Add to watchlist",
+        key="watchlist_add_btn",
+        type="primary",
+        disabled=picked is None,
+    )
+    if add_clicked and picked:
+        store.add_to_watchlist(picked)
+        st.toast(f"⭐ Added {picked} to watchlist!", icon="✅")
+        time.sleep(0.5)
+        st.rerun()
 
     st.divider()
 
