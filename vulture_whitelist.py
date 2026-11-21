@@ -1,6 +1,7 @@
 # Vulture whitelist for methods that are used in tests or intended for public API
 from stonks.cache import LocalCache
 
+from stonks.detail import load_page
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 
@@ -15,3 +16,4 @@ SQLiteStore.cache_get  # noqa: B018
 SQLiteStore.cache_set  # noqa: B018
 SQLiteStore.cache_delete  # noqa: B018
 SUPPORTED_COLUMNS  # noqa: B018
+load_page  # noqa: B018

@@ -439,13 +439,19 @@ class SQLiteStore:
             )
             conn.commit()
 
-    def cache_get(self, key: str) -> Any:
-        """Return a cached value, or None when missing, expired or unreadable."""
+    def cache_get(self, key: str, *, allow_expired: bool = False) -> Any:
+        """Return a cached value, or None when missing, expired or unreadable.
+
+        ``allow_expired`` returns a stale entry too, which callers use as a
+        fallback when the provider cannot be reached.
+        """
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT value, expires_at FROM kv_cache WHERE key=?", (key,)
             ).fetchone()
-        if row is None or row[1] is None or row[1] < time.time():
+        if row is None or row[1] is None:
+            return None
+        if not allow_expired and row[1] < time.time():
             return None
         try:
             return json.loads(row[0])
