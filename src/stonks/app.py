@@ -24,6 +24,7 @@ from stonks.config import (
     PAGE_SIZE_OPTIONS,
     VIEW_PRESETS,
 )
+from stonks.detail_view import render_detail_page
 from stonks.presets import POPULAR_SCREENS
 from stonks.store import SQLiteStore
 
@@ -412,6 +413,17 @@ footer {
 @st.cache_resource
 def get_store() -> SQLiteStore:
     return SQLiteStore()
+
+
+def open_symbol(symbol: str) -> None:
+    """Switch the app to the detail page for `symbol`."""
+    st.session_state["detail_symbol"] = symbol
+    st.session_state["page"] = "detail"
+
+
+def close_detail() -> None:
+    """Return to the screener, leaving its filters and paging untouched."""
+    st.session_state["page"] = "screener"
 
 
 def _is_missing(val: object) -> bool:
@@ -892,6 +904,8 @@ def render_screener_table() -> None:
     else:
         hf_mask = pd.Series(False, index=page_df.index)
 
+    raw_symbols = [row.get("symbol") for row in page_rows]
+
     watchlist_symbols = set(store.get_watchlist_symbols())
     if "symbol" in page_df.columns:
         page_df["symbol"] = page_df["symbol"].apply(
@@ -932,13 +946,22 @@ def render_screener_table() -> None:
             return ["background-color: rgba(248, 250, 252, 0.03)"] * len(row)
         return [""] * len(row)
 
-    st.dataframe(
+    selection = st.dataframe(
         display_df.style.apply(_row_style, axis=1),
         width="stretch",
         hide_index=True,
         row_height=44,
         height=min(44 * len(display_df) + 44, 900),
+        on_select="rerun",
+        selection_mode="single-row",
+        key="screener_table",
     )
+    selected_rows = getattr(getattr(selection, "selection", None), "rows", None) or []
+    if selected_rows:
+        index = selected_rows[0]
+        if 0 <= index < len(raw_symbols) and raw_symbols[index]:
+            open_symbol(str(raw_symbols[index]))
+            st.rerun()
 
     if total_pages > 1:
         pag_col1, pag_col2, pag_col3, pag_col4, pag_col5 = st.columns([1, 1, 3, 1, 1])
@@ -1081,7 +1104,23 @@ def render_watchlist_tab() -> None:
             elif col in ("P/E", "Beta", "DCF Fair Value", "Lynch Fair Value"):
                 display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
 
-        st.dataframe(display_wl, width="stretch", hide_index=True, row_height=44)
+        watchlist_selection = st.dataframe(
+            display_wl,
+            width="stretch",
+            hide_index=True,
+            row_height=44,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="watchlist_table",
+        )
+        picked_rows = (
+            getattr(getattr(watchlist_selection, "selection", None), "rows", None) or []
+        )
+        if picked_rows:
+            index = picked_rows[0]
+            if 0 <= index < len(watchlist_df):
+                open_symbol(str(watchlist_df.iloc[index]["symbol"]))
+                st.rerun()
 
         csv = watchlist_df.to_csv(index=False).encode("utf-8")
         st.download_button(
@@ -1259,6 +1298,8 @@ def _init_session_state() -> None:
         "sort_ascending": screen["sort_ascending"],
         "current_page": 1,
         "page_size": DEFAULT_PAGE_SIZE,
+        "page": "screener",
+        "detail_symbol": None,
     }
     for key, value in defaults.items():
         st.session_state.setdefault(key, value)
@@ -1285,6 +1326,15 @@ def main() -> None:
 
     sync_info = store.get_last_sync_info()
     render_pipeline_hud(sync_info)
+
+    if st.session_state.get("page") == "detail" and st.session_state.get(
+        "detail_symbol"
+    ):
+        if st.button("← Back to screener", key="detail_back"):
+            close_detail()
+            st.rerun()
+        render_detail_page(store, st.session_state["detail_symbol"])
+        return
 
     # Main content tabs
     tab_screener, tab_watchlist = st.tabs(["📊 Screener", "⭐ Watchlist"])
