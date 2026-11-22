@@ -15,6 +15,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from stonks import report_view
 from stonks.detail import RANGES, STATEMENTS, cache_key, load_history, load_page
 from stonks.detail_parse import (
     parse_forecast,
@@ -171,6 +172,8 @@ def render_detail_page(store: SQLiteStore, symbol: str) -> None:
         if st.button("🔄 Refresh", key=f"detail_refresh_{symbol}"):
             _clear_cache(store, symbol)
             st.rerun()
+
+    report_view.render_symbol_report(store, symbol)
 
     section = st.segmented_control(
         "Section",

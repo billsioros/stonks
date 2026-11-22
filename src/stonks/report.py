@@ -1,11 +1,10 @@
-"""Prompt construction and the opt-in OpenRouter screener report.
+"""Prompt construction and the opt-in OpenRouter reports.
 
-The prompt builder turns the filtered screener universe into prompt text: no
-network call and no Streamlit, so the payload is testable without a runtime.
-It carries aggregate figures and ticker symbols only -- never a company
-description -- so no row-level prose leaves the machine.
-`request_report` is the one network call, made only when the user opts in;
-`app.py` owns the widgets.
+The screener builder turns the filtered universe into aggregate prompt text;
+the symbol builder turns one ticker's screener row and StockAnalysis pages into
+a decision memo. Both are pure: no network call and no Streamlit, so payloads
+are testable without a runtime. `request_report` is the one network call, made
+only when the user opts in; `report_view.py` owns the widgets.
 """
 
 from __future__ import annotations
@@ -24,10 +23,12 @@ from stonks.config import COLUMN_DISPLAY_NAMES
 
 __all__ = [
     "REPORT_MODEL",
+    "SYMBOL_SYSTEM_INSTRUCTION",
     "SYSTEM_INSTRUCTION",
     "explain_error",
     "request_report",
     "screener_report_prompt",
+    "symbol_report_prompt",
 ]
 
 REPORT_MODEL: str = "openrouter/free"
@@ -66,6 +67,53 @@ REPORT_SECTIONS: str = (
     "Three or four short, plain sentences condensing the report: the most telling "
     "figures and the 1-2 names worth researching further -- every claim backed by "
     "figures from the data. No recap of above headings.\n"
+    "\n"
+    "Data:\n"
+)
+
+SYMBOL_SYSTEM_INSTRUCTION: str = (
+    "You are a fundamental investment analyst writing a decision memo about one "
+    "stock. Use only the figures and text provided. Quantify every claim, keep "
+    "facts separate from interpretation, and treat missing fields as unavailable "
+    "rather than guessing. Today's price is the decision price: judge valuation "
+    "against it. This is research support, not financial advice."
+)
+
+# A decision memo, not a screener summary: the verdict is about buying at the
+# price shown in the data, and the risk section is deliberately prominent.
+SYMBOL_REPORT_SECTIONS: str = (
+    "Write an investment decision memo as markdown with exactly these sections, "
+    "in this order:\n"
+    "\n"
+    "## Business and moat\n"
+    "What the company does, its industry, and the durable advantages or "
+    "weaknesses the data actually supports.\n"
+    "\n"
+    "## Growth and profitability\n"
+    "Revenue and earnings trends, margins, returns on capital, and whether "
+    "growth is translating into profit. Cite exact figures.\n"
+    "\n"
+    "## Cash flow and balance sheet\n"
+    "Cash generation, capital spending, liquidity, debt and coverage. Separate "
+    "accounting profit from cash the business actually keeps.\n"
+    "\n"
+    "## Valuation at today's price\n"
+    "Judge today's price against earnings, cash flow, the supplied fair values "
+    "and analyst targets. Say explicitly what is already priced in.\n"
+    "\n"
+    "## Risks\n"
+    "The strongest case against buying now. Lead with the two or three biggest "
+    "threats, quantify each with figures from the data, and include leverage, "
+    "coverage, short interest, valuation, dividend durability and the supplied "
+    "risk scores where present. Do not soften them.\n"
+    "\n"
+    "## What would change the answer\n"
+    "Concrete figures or events that would flip the verdict either way.\n"
+    "\n"
+    "## TL;DR\n"
+    "Start with a single word, YES or NO, meaning whether to buy at today's "
+    "price. Follow with two to four short sentences naming the deciding figures "
+    "and the main risk. No hedging, and no recap of the headings above.\n"
     "\n"
     "Data:\n"
 )
@@ -249,22 +297,270 @@ def screener_report_prompt(
     return REPORT_SECTIONS + "\n".join(sections)
 
 
+_STATEMENT_LABELS: dict[str, str] = {
+    "income-statement": "Income statement",
+    "balance-sheet": "Balance sheet",
+    "cash-flow-statement": "Cash flow statement",
+    "ratios": "Ratios",
+}
+
+
+def _value_text(value: Any) -> str:
+    """Render a cell for the prompt, naming missing data explicitly."""
+    if value is None or value == "":
+        return "not available"
+    if isinstance(value, str):
+        return value
+    number = _number(value)
+    return f"{number:.2f}" if number is not None else str(value)
+
+
+def _symbol_row_pairs(row: Mapping[str, Any]) -> list[tuple[str, str]]:
+    """Every screener field for one ticker, with today's price called out."""
+    pairs: list[tuple[str, str]] = []
+    for key, label in COLUMN_DISPLAY_NAMES.items():
+        if key == "price":
+            label = "Price today"
+        value = row.get(key)
+        text = _pct(value) if key.endswith("_pct") else _value_text(value)
+        pairs.append((label, text))
+    return pairs
+
+
+_OVERVIEW_LABELS: tuple[tuple[str, str], ...] = (
+    ("summary", "Business description"),
+    ("revenue", "Revenue"),
+    ("revenue_growth", "Revenue growth"),
+    ("net_income", "Net income"),
+    ("net_income_growth", "Net income growth"),
+    ("eps", "EPS"),
+    ("pe_ratio", "P/E"),
+    ("forward_pe", "Forward P/E"),
+    ("shares_out", "Shares outstanding"),
+    ("beta", "Beta"),
+    ("dividend", "Dividend"),
+    ("ex_dividend_date", "Ex-dividend date"),
+    ("analyst_rating", "Analyst rating"),
+    ("analyst_target", "Analyst target"),
+    ("earnings_date", "Earnings date"),
+)
+
+
+def _statistics_block(sections: Sequence[Mapping[str, Any]]) -> str:
+    blocks: list[str] = []
+    for section in sections:
+        title = section.get("title") or section.get("key") or "Statistics"
+        blocks.append(f"### {title}")
+        if section.get("text"):
+            blocks.append(str(section["text"]))
+        items = section.get("items") or []
+        if not items:
+            blocks.append("not available")
+            continue
+        rows = [
+            (
+                item.get("title") or item.get("id") or "",
+                _value_text(item.get("value")),
+                _value_text(item.get("hover")),
+            )
+            for item in items
+            if isinstance(item, Mapping)
+        ]
+        blocks.append(_md_table(["Field", "Value", "Exact"], rows))
+    return "\n\n".join(blocks) if blocks else "not available"
+
+
+def _statement_table(data: Mapping[str, Any]) -> str:
+    all_periods = data.get("periods") or []
+    periods = all_periods[
+        :3
+    ]  # Most recent first; keeps the prompt within model limits.
+    note = (
+        f"Showing the 3 most recent periods of {len(all_periods)}.\n"
+        if len(all_periods) > 3
+        else ""
+    )
+    headers = ["Metric", *[str(p.get("label") or p.get("key") or "") for p in periods]]
+    rows: list[list[str]] = []
+    for item in data.get("rows") or []:
+        values = [_value_text(value) for value in item.get("values") or []][
+            : len(periods)
+        ]
+        values += ["not available"] * (len(headers) - 1 - len(values))
+        rows.append([str(item.get("label") or item.get("id") or ""), *values])
+    return note + _md_table(headers, rows)
+
+
+def _forecast_block(forecast: Mapping[str, Any] | None) -> str:
+    if not forecast:
+        return "not available"
+    parts: list[str] = []
+    targets = forecast.get("targets") or {}
+    parts.append(
+        "Analyst price targets:\n"
+        + _md_table(
+            ["Metric", "Value"],
+            [
+                ("Low", _value_text(targets.get("low"))),
+                ("Analyst price target (median)", _value_text(targets.get("median"))),
+                ("Average", _value_text(targets.get("average"))),
+                ("High", _value_text(targets.get("high"))),
+                ("Count", _value_text(targets.get("count"))),
+                ("Updated", _value_text(targets.get("updated"))),
+            ],
+        )
+    )
+    consensus = forecast.get("current_ratings") or {}
+    parts.append(
+        "Analyst consensus:\n"
+        + _md_table(
+            ["Metric", "Value"],
+            [(key, _value_text(value)) for key, value in consensus.items()],
+        )
+    )
+    estimate_rows: list[tuple[str, str, str, str, str]] = []
+    for basis, metrics in (forecast.get("estimates") or {}).items():
+        for metric, values in metrics.items():
+            estimate_rows.append(
+                (
+                    str(basis),
+                    str(metric),
+                    _value_text(values.get("last")),
+                    _value_text(values.get("this")),
+                    _pct(values.get("growth")),
+                )
+            )
+    parts.append(
+        "Analyst estimates:\n"
+        + _md_table(
+            ["Basis", "Metric", "Last", "This", "Growth"],
+            estimate_rows or [("not available", "", "", "", "")],
+        )
+    )
+    actions = forecast.get("ratings") or []
+    parts.append(
+        "Recent analyst actions:\n"
+        + _md_table(
+            ["Date", "Firm", "Action", "Target now", "Target before", "Rating"],
+            [
+                (
+                    _value_text(item.get("date")),
+                    _value_text(item.get("firm")),
+                    _value_text(item.get("action")),
+                    _value_text(item.get("target_now")),
+                    _value_text(item.get("target_old")),
+                    _value_text(item.get("rating_new")),
+                )
+                for item in actions
+                if isinstance(item, Mapping)
+            ]
+            or [("not available", "", "", "", "", "")],
+        )
+    )
+    return "\n\n".join(parts)
+
+
+def _history_block(history: Sequence[Mapping[str, Any]]) -> str:
+    if len(history) < 2:
+        return "not available"
+    first, last = history[0], history[-1]
+    start, end = _number(first.get("close")), _number(last.get("close"))
+    change = ((end / start - 1.0) * 100.0) if start and end else None
+    return _md_table(
+        ["Metric", "Value"],
+        [
+            ("First date", _value_text(first.get("date"))),
+            ("First close", _num(start)),
+            ("Last date", _value_text(last.get("date"))),
+            ("Last close", _num(end)),
+            ("Change", _pct(change)),
+        ],
+    )
+
+
+def _news_block(news: Sequence[Mapping[str, Any]]) -> str:
+    if not news:
+        return "not available"
+    return _md_table(
+        ["Headline", "Source", "When", "Summary"],
+        [
+            (
+                _value_text(item.get("title")),
+                _value_text(item.get("source")),
+                _value_text(item.get("ago")),
+                _value_text(item.get("summary")),
+            )
+            for item in news
+            if isinstance(item, Mapping)
+        ],
+    )
+
+
+def symbol_report_prompt(
+    symbol: str,
+    *,
+    row: Mapping[str, Any] | None = None,
+    overview: Mapping[str, Any] | None = None,
+    statistics: Sequence[Mapping[str, Any]] | None = None,
+    forecast: Mapping[str, Any] | None = None,
+    statements: Mapping[str, Mapping[str, Any]] | None = None,
+    history: Sequence[Mapping[str, Any]] | None = None,
+    news: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
+    """One symbol's cached data as the input to an investment decision memo.
+
+    Every supplied field is included so the verdict can be checked against the
+    figures; missing provider sections are named rather than silently skipped.
+    """
+    overview = overview or {}
+    statement_blocks: list[str] = []
+    for key, data in (statements or {}).items():
+        if not data:  # PRO-gated or failed pages carry no rows.
+            continue
+        statement, _, period = key.partition(" ")
+        label = _STATEMENT_LABELS.get(statement, statement)
+        statement_blocks.append(f"### {label} — {period}\n" + _statement_table(data))
+    sections = [
+        f"Symbol: {symbol}",
+        "Screener row:\n"
+        + _md_table(["Metric", "Value"], _symbol_row_pairs(row or {})),
+        "Overview:\n"
+        + _md_table(
+            ["Metric", "Value"],
+            [
+                (label, _value_text(overview.get(key)))
+                for key, label in _OVERVIEW_LABELS
+            ],
+        ),
+        "Statistics:\n" + _statistics_block(statistics or []),
+        "Forecast:\n" + _forecast_block(forecast),
+        "Financial statements:\n"
+        + ("\n\n".join(statement_blocks) if statement_blocks else "not available"),
+        "Price history:\n" + _history_block(history or []),
+        "Recent news:\n"
+        + _news_block(news if news is not None else overview.get("news") or []),
+    ]
+    return SYMBOL_REPORT_SECTIONS + "\n\n".join(sections)
+
+
 def request_report(
     prompt: str,
     *,
     api_key: str,
     model: str = REPORT_MODEL,
     client: OpenRouter | None = None,
+    system_instruction: str = SYSTEM_INSTRUCTION,
+    max_tokens: int = 1024,
 ) -> str:
     """Send `prompt` to OpenRouter and return the reply text, or "" when absent.
 
     The only network call in the module, and only made when the user opts in.
     An injected `client` is used as-is and never closed; with no `client` one is
     built from `api_key`. Errors are not caught -- the caller decides how to
-    surface them.
+    surface them. The symbol report overrides the instruction and token budget.
     """
     messages: list[ChatSystemMessageTypedDict | ChatUserMessageTypedDict] = [
-        {"role": "system", "content": SYSTEM_INSTRUCTION},
+        {"role": "system", "content": system_instruction},
         {"role": "user", "content": prompt},
     ]
     owned = client if client is not None else OpenRouter(api_key=api_key)
@@ -272,7 +568,7 @@ def request_report(
         messages=messages,
         model=model,
         temperature=0.4,
-        max_tokens=1024,
+        max_tokens=max_tokens,
         stream=False,
     )
     if not result.choices:

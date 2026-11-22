@@ -6,7 +6,6 @@ Run with: streamlit run src/stonks/app.py
 import base64
 import logging
 import math
-import os
 import re
 import time
 from datetime import datetime
@@ -17,7 +16,7 @@ from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
-from stonks import report, sanity
+from stonks import report, report_view, sanity
 from stonks.backtest_view import render_backtest_tab
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
@@ -1036,55 +1035,6 @@ def render_top_filters() -> dict[str, Any]:
     return filters  # type: ignore[no-any-return]
 
 
-@st.cache_data(show_spinner=False)
-def _cached_report(prompt: str, api_key: str, model: str) -> str:
-    """Cache the report per prompt, key and model so a rerun never buys it twice."""
-    return report.request_report(prompt, api_key=api_key, model=model)
-
-
-def render_llm_report(*, scope_key: str, heading: str, prompt: str) -> None:
-    """The opt-in AI screener report: one collapsible section, everything inside it.
-
-    `scope_key` namespaces every widget so two reports never share a key. The
-    API key comes from the environment when present and otherwise from a
-    password field; the button only asks the model when a key is present. The
-    reply is cached, and a network or SDK failure is shown to the reader rather
-    than crashing the tab.
-    """
-    api_key = os.environ.get("OPENROUTER_API_KEY")
-    model = os.environ.get("OPENROUTER_MODEL") or report.REPORT_MODEL
-    generated = st.session_state.get(scope_key, False)
-    with st.expander(heading, expanded=bool(generated), key=f"{scope_key}-report"):
-        if st.toggle("Debug: prompt sent to OpenRouter", key=f"{scope_key}-debug"):
-            with st.container(height=180, border=True):
-                st.code(prompt, language="text")
-        if not api_key:
-            key_col, button_col = st.columns((3, 1), vertical_alignment="bottom")
-            api_key = key_col.text_input(
-                "OpenRouter API key (set OPENROUTER_API_KEY to skip this field)",
-                type="password",
-                key=f"{scope_key}-key",
-            )
-            clicked = button_col.button(
-                "Generate report", key=f"{scope_key}-btn", disabled=not api_key
-            )
-        else:
-            clicked = st.button("Generate report", key=f"{scope_key}-btn")
-        st.caption(
-            f"Model: {model} — only aggregate figures and ticker symbols are sent."
-        )
-        if api_key and (generated or clicked):
-            with st.spinner("Asking OpenRouter…"):
-                try:
-                    reply = _cached_report(prompt, api_key, model)
-                except Exception as exc:  # noqa: BLE001 - any SDK/network failure must not crash the tab
-                    st.error(report.explain_error(exc))
-                else:
-                    st.session_state[scope_key] = reply
-                    with st.container(border=True):
-                        st.markdown(reply)
-
-
 def render_screener_table() -> None:
     """Render the main screener table with controls using DB-level filtering."""
     store = get_store()
@@ -1278,7 +1228,7 @@ def render_screener_table() -> None:
     prompt = report.screener_report_prompt(
         report_rows, total_matching, active_filters, search_query, view_preset
     )
-    render_llm_report(
+    report_view.render_llm_report(
         scope_key="screener-llm-report",
         heading="🤖 AI report",
         prompt=prompt,
