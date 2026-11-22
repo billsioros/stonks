@@ -20,6 +20,12 @@ HISTORY_URL = (
     "https://stockanalysis.com/api/symbol/s/{symbol}/history?range=10Y&period=Monthly"
 )
 
+# Map user-friendly tickers to StockAnalysis provider symbols.
+# VUAA (Vanguard S&P 500 UCITS ETF) maps to VOO for API compatibility.
+SYMBOL_MAP = {
+    "VUAA": "VOO",
+}
+
 # Monthly bars change once a month; a few hours of cache is generous.
 HISTORY_TTL_SECONDS = 6 * 3600.0
 
@@ -193,6 +199,52 @@ def simulate(
     }
 
 
+def _benchmark_result(
+    store: SQLiteStore,
+    benchmark: str,
+    result: dict[str, Any],
+    initial: float,
+) -> dict[str, Any]:
+    """Grow the benchmark over the portfolio's months, for side-by-side stats."""
+    from stonks.backtest import SYMBOL_MAP
+
+    ticker = SYMBOL_MAP.get(benchmark.strip().upper(), benchmark.strip().upper())
+    series = monthly_prices(store, ticker)
+    if not series:
+        return {"benchmark_error": f"No monthly price history for {ticker}."}
+    keys = sorted(series)
+    if len(keys) < 2:
+        return {"benchmark_error": f"{ticker} has no history in the selected window."}
+    # Filter to the portfolio's date window
+    start_key = result["start"][:7]
+    end_key = result["end"][:7]
+    filtered = {k: series[k] for k in keys if start_key <= k <= end_key}
+    if len(filtered) < 2:
+        return {"benchmark_error": f"{ticker} has no history in the selected window."}
+    stats = simulate(
+        {ticker: filtered},
+        {ticker: 1.0},
+        rebalance="none",
+        initial=initial,
+    )
+    if "error" in stats:
+        return {"benchmark_error": f"Could not grow {ticker}: {stats['error']}"}
+    return {
+        "benchmark": {
+            "symbol": ticker,
+            "start": stats["start"],
+            "end": stats["end"],
+            "final": stats["final"],
+            "total_return_pct": stats["total_return_pct"],
+            "cagr_pct": stats["cagr_pct"],
+            "stdev_pct": stats["stdev_pct"],
+            "max_drawdown_pct": stats["max_drawdown_pct"],
+            "yearly": stats["yearly"],
+            "curve": stats["curve"],
+        }
+    }
+
+
 def run_backtest(
     store: SQLiteStore,
     symbols: list[str],
@@ -202,6 +254,7 @@ def run_backtest(
     start: str | None = None,
     end: str | None = None,
     initial: float = 10_000.0,
+    benchmark: str | None = None,
     fetch: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Load each symbol's history and simulate the portfolio.
@@ -262,4 +315,6 @@ def run_backtest(
         ticker: weight / sum(chosen.values()) * 100 for ticker, weight in chosen.items()
     }
     result["rebalance"] = rebalance
+    if benchmark:
+        result.update(_benchmark_result(store, benchmark, result, initial))
     return result

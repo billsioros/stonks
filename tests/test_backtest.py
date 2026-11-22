@@ -11,7 +11,12 @@ from stonks.backtest import (
     run_backtest,
     simulate,
 )
-from stonks.backtest_view import parse_symbols, parse_weights
+from stonks.backtest_view import (
+    default_settings,
+    parse_portfolio,
+    parse_symbols,
+    parse_weights,
+)
 from stonks.store import SQLiteStore
 
 
@@ -141,3 +146,87 @@ def test_parse_symbols_and_weights() -> None:
         parse_weights("sixty")
     with pytest.raises(ValueError):
         parse_weights("60, -40")
+
+
+def test_run_backtest_grows_the_benchmark_over_the_same_window(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    months = _months(2020, 24)
+    prices = {month: 100.0 * 1.01**index for index, month in enumerate(months)}
+    store.cache_set("hist:AAA:10Y:Monthly", prices, 3600)
+    store.cache_set("hist:BMB:10Y:Monthly", prices, 3600)
+
+    result = run_backtest(
+        store,
+        ["AAA"],
+        start="2020-05-01",
+        end="2021-04-30",
+        benchmark="bmb",
+    )
+
+    assert "benchmark_error" not in result
+    benchmark = result["benchmark"]
+    assert benchmark["symbol"] == "BMB"
+    assert benchmark["start"] == result["start"] == "2020-05"
+    assert benchmark["end"] == result["end"] == "2021-04"
+    assert benchmark["final"] == pytest.approx(result["final"])
+    assert benchmark["cagr_pct"] == pytest.approx(result["cagr_pct"])
+
+
+def test_missing_benchmark_does_not_fail_the_portfolio(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.cache_set(
+        "hist:AAA:10Y:Monthly",
+        {"2020-01": 100.0, "2020-02": 110.0},
+        3600,
+    )
+
+    result = run_backtest(store, ["AAA"], benchmark="NOPE")
+
+    assert result["total_return_pct"] == pytest.approx(10.0)
+    assert "NOPE" in result["benchmark_error"]
+    assert "benchmark" not in result
+
+
+def test_parse_portfolio_rows() -> None:
+    assert parse_portfolio(
+        [
+            {"Symbol": " vuaa ", "Weight %": None},
+            {"Symbol": "GOOGL", "Weight %": float("nan")},
+        ]
+    ) == (["VUAA", "GOOGL"], None)
+    assert parse_portfolio(
+        [{"Symbol": "VUAA", "Weight %": 60}, {"Symbol": "CROX", "Weight %": 40}]
+    ) == (["VUAA", "CROX"], [60.0, 40.0])
+    with pytest.raises(ValueError):
+        parse_portfolio([])
+    with pytest.raises(ValueError):
+        parse_portfolio([{"Symbol": "AAA", "Weight %": None}, {"Symbol": "AAA"}])
+    with pytest.raises(ValueError):
+        parse_portfolio([{"Symbol": "AAA", "Weight %": 60}, {"Symbol": "BBB"}])
+    with pytest.raises(ValueError):
+        parse_portfolio([{"Symbol": "AAA", "Weight %": -5}])
+
+
+def test_default_portfolio_is_the_editable_four_symbol_preset() -> None:
+    settings = default_settings()
+    assert settings["symbols"] == ["VUAA", "GOOGL", "NVDA", "CROX"]
+    assert settings["benchmark"] == "VUAA"
+    assert settings["weights"] is None
+
+
+def test_saved_backtests_round_trip(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    assert store.list_backtests() == []
+
+    store.save_backtest("Main", {"symbols": ["VUAA"], "weights": None})
+    saved = store.list_backtests()
+    assert [item["name"] for item in saved] == ["Main"]
+    assert saved[0]["settings"]["symbols"] == ["VUAA"]
+
+    store.save_backtest("Main", {"symbols": ["GOOGL", "NVDA"], "weights": [60, 40]})
+    saved = store.list_backtests()
+    assert len(saved) == 1
+    assert saved[0]["settings"]["weights"] == [60, 40]
+
+    store.delete_backtest("Main")
+    assert store.list_backtests() == []

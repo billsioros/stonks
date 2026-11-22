@@ -103,6 +103,14 @@ class SQLiteStore:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS saved_backtests (
+                    name TEXT PRIMARY KEY,
+                    settings TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS watchlist (
                     symbol TEXT PRIMARY KEY,
                     added_at REAL NOT NULL,
@@ -295,6 +303,45 @@ class SQLiteStore:
         """Delete a saved screen."""
         with self._connect() as conn:
             conn.execute("DELETE FROM saved_screens WHERE name=?", (name,))
+            conn.commit()
+
+    # ── Saved Backtests ──────────────────────────────────────────────
+
+    def save_backtest(self, name: str, settings: dict[str, Any]) -> None:
+        """Save or update a backtest configuration (symbols, weights, dates)."""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO saved_backtests (name, settings, created_at, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(name) DO UPDATE SET
+                     settings=excluded.settings,
+                     updated_at=excluded.updated_at
+                """,
+                (name, json.dumps(settings), now, now),
+            )
+            conn.commit()
+
+    def list_backtests(self) -> list[dict[str, Any]]:
+        """Return saved backtest settings, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT name, settings, created_at, updated_at FROM saved_backtests ORDER BY updated_at DESC"
+            ).fetchall()
+        return [
+            {
+                "name": row[0],
+                "settings": json.loads(row[1]),
+                "created_at": row[2],
+                "updated_at": row[3],
+            }
+            for row in rows
+        ]
+
+    def delete_backtest(self, name: str) -> None:
+        """Delete a saved backtest."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM saved_backtests WHERE name=?", (name,))
             conn.commit()
 
     # ── Watchlist ────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 # Vulture whitelist for methods that are used in tests or intended for public API
 from stonks.cache import LocalCache
+from stonks.backtest_view import parse_symbols, parse_weights
 
 from stonks.alerts import Alert, evaluate_alerts, week_bucket
 from stonks.detail import load_page
@@ -58,3 +59,5 @@ format_pct  # noqa: B018
 SQLiteStore.unread_alert_counts  # noqa: B018
 fetch_watched_news  # noqa: B018
 NEWS_ALERTS_PER_SYNC  # noqa: B018
+parse_symbols  # noqa: B018
+parse_weights  # noqa: B018
