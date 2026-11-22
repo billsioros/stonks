@@ -6,6 +6,7 @@ Run with: streamlit run src/stonks/app.py
 import base64
 import logging
 import math
+import os
 import re
 import time
 from datetime import datetime
@@ -16,7 +17,7 @@ from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
-from stonks import sanity
+from stonks import report, sanity
 from stonks.backtest_view import render_backtest_tab
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
@@ -34,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # ── Page configuration ──────────────────────────────────────────────
 st.set_page_config(
-    page_title="Stonks — Stock Screener",
+    page_title="Stonks",
     page_icon="src/stonks/assets/favicon.png",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -143,21 +144,8 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     text-align: right;
 }
 
-.sk-pulse {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.35rem 0.85rem;
-    border-radius: 999px;
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
-    color: var(--text-primary);
-    font-size: 0.82rem;
-    font-weight: 600;
-}
-
 .sk-meta p {
-    margin: 0.55rem 0 0;
+    margin: 0;
     color: var(--text-secondary);
     font-size: 0.85rem;
 }
@@ -766,7 +754,6 @@ def render_header() -> None:
             <h1>Stonks</h1>
         </div>
         <div class="sk-meta">
-            <span class="sk-pulse">● Auto-sync</span>
             <p>Fundamental screener · data from StockAnalysis.com</p>
         </div>
     </div>
@@ -1049,10 +1036,58 @@ def render_top_filters() -> dict[str, Any]:
     return filters  # type: ignore[no-any-return]
 
 
+@st.cache_data(show_spinner=False)
+def _cached_report(prompt: str, api_key: str, model: str) -> str:
+    """Cache the report per prompt, key and model so a rerun never buys it twice."""
+    return report.request_report(prompt, api_key=api_key, model=model)
+
+
+def render_llm_report(*, scope_key: str, heading: str, prompt: str) -> None:
+    """The opt-in AI screener report: one collapsible section, everything inside it.
+
+    `scope_key` namespaces every widget so two reports never share a key. The
+    API key comes from the environment when present and otherwise from a
+    password field; the button only asks the model when a key is present. The
+    reply is cached, and a network or SDK failure is shown to the reader rather
+    than crashing the tab.
+    """
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    model = os.environ.get("OPENROUTER_MODEL") or report.REPORT_MODEL
+    generated = st.session_state.get(scope_key, False)
+    with st.expander(heading, expanded=bool(generated), key=f"{scope_key}-report"):
+        if st.toggle("Debug: prompt sent to OpenRouter", key=f"{scope_key}-debug"):
+            with st.container(height=180, border=True):
+                st.code(prompt, language="text")
+        if not api_key:
+            key_col, button_col = st.columns((3, 1), vertical_alignment="bottom")
+            api_key = key_col.text_input(
+                "OpenRouter API key (set OPENROUTER_API_KEY to skip this field)",
+                type="password",
+                key=f"{scope_key}-key",
+            )
+            clicked = button_col.button(
+                "Generate report", key=f"{scope_key}-btn", disabled=not api_key
+            )
+        else:
+            clicked = st.button("Generate report", key=f"{scope_key}-btn")
+        st.caption(
+            f"Model: {model} — only aggregate figures and ticker symbols are sent."
+        )
+        if api_key and (generated or clicked):
+            with st.spinner("Asking OpenRouter…"):
+                try:
+                    reply = _cached_report(prompt, api_key, model)
+                except Exception as exc:  # noqa: BLE001 - any SDK/network failure must not crash the tab
+                    st.error(report.explain_error(exc))
+                else:
+                    st.session_state[scope_key] = reply
+                    with st.container(border=True):
+                        st.markdown(reply)
+
+
 def render_screener_table() -> None:
     """Render the main screener table with controls using DB-level filtering."""
     store = get_store()
-    st.markdown('<div class="section-header">📊 Screener</div>', unsafe_allow_html=True)
 
     ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1, 1])
 
@@ -1231,6 +1266,23 @@ def render_screener_table() -> None:
             return ["background-color: rgba(248, 250, 252, 0.03)"] * len(row)
         return [""] * len(row)
 
+    # The report speaks for the whole filtered universe, not just this page.
+    report_rows, _, _ = store.get_stocks(
+        filters=active_filters,
+        search_query=search_query,
+        sort_column=sort_column,
+        sort_ascending=st.session_state.get("sort_ascending", True),
+        page=1,
+        page_size=max(total_matching, 1),
+    )
+    prompt = report.screener_report_prompt(
+        report_rows, total_matching, active_filters, search_query, view_preset
+    )
+    render_llm_report(
+        scope_key="screener-llm-report",
+        heading="🤖 AI report",
+        prompt=prompt,
+    )
     selection = st.dataframe(
         display_df.style.apply(_row_style, axis=1),
         width="stretch",

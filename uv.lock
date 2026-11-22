@@ -1077,6 +1077,15 @@ wheels = [
 ]
 
 [[package]]
+name = "jsonpath-python"
+version = "1.1.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/18/4ca8742534a5993ff383f7602e325ce2d5d7cc93d72ac5e1cdedbea8a458/jsonpath_python-1.1.6.tar.gz", hash = "sha256:dded9932b4ec41fb8726e09c83afa4e6be618f938c2db287cc2a81723c639671", size = 88178, upload-time = "2026-05-07T01:26:34.482Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/8a/1270a6803bd821cbfcdda387eaa13cb41a7b1f7b9bd145979b3bfb9d6cb7/jsonpath_python-1.1.6-py3-none-any.whl", hash = "sha256:a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4", size = 14453, upload-time = "2026-05-07T01:26:33.306Z" },
+]
+
+[[package]]
 name = "jsonpointer"
 version = "3.1.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1921,6 +1930,21 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/ad/483d9e262f4b831000062e5d8a45e342166ec8aaa1195264982bca267e62/numpy-2.4.4-cp314-cp314t-win32.whl", hash = "sha256:dddbbd259598d7240b18c9d87c56a9d2fb3b02fe266f49a7c101532e78c1d871", size = 6155500, upload-time = "2026-03-29T13:21:28.205Z" },
     { url = "https://files.pythonhosted.org/packages/c7/03/2fc4e14c7bd4ff2964b74ba90ecb8552540b6315f201df70f137faa5c589/numpy-2.4.4-cp314-cp314t-win_amd64.whl", hash = "sha256:a7164afb23be6e37ad90b2f10426149fd75aee07ca55653d2aa41e66c4ef697e", size = 12637755, upload-time = "2026-03-29T13:21:31.107Z" },
     { url = "https://files.pythonhosted.org/packages/58/78/548fb8e07b1a341746bfbecb32f2c268470f45fa028aacdbd10d9bc73aab/numpy-2.4.4-cp314-cp314t-win_arm64.whl", hash = "sha256:ba203255017337d39f89bdd58417f03c4426f12beed0440cfd933cb15f8669c7", size = 10566643, upload-time = "2026-03-29T13:21:34.339Z" },
+]
+
+[[package]]
+name = "openrouter"
+version = "1.3.203"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpcore" },
+    { name = "httpx" },
+    { name = "jsonpath-python" },
+    { name = "pydantic" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d0/72/dea55664246a7f0d57448eee2f5fc2e6b611c82dadec4beafc06c891f222/openrouter-1.3.203.tar.gz", hash = "sha256:f4baac9b10debaae15611898f9d370e1a52538d9ca09faaff2867954e74b75d4", size = 701537, upload-time = "2026-11-21T18:17:12.308Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/31/79/e6b13de10bac92352aa831584ed9cc978e97da8d13ee0f4896fc3b49fdbd/openrouter-1.3.203-py3-none-any.whl", hash = "sha256:0b67f12195db31a2684cbf15feb05eee4311dacc0757d00b7423ac5ae83531fb", size = 1508669, upload-time = "2026-11-21T18:17:10.505Z" },
 ]
 
 [[package]]
@@ -3221,9 +3245,11 @@ wheels = [
 
 [[package]]
 name = "stonks"
-version = "2.2.0"
+version = "2.3.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
+    { name = "openrouter" },
     { name = "pandas" },
     { name = "pyarrow" },
     { name = "schedule" },
@@ -3264,6 +3290,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "openrouter", specifier = ">=1.3.63" },
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "pyarrow", specifier = ">=23.0.1" },
     { name = "schedule", specifier = ">=1.2.2" },
