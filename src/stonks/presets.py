@@ -10,6 +10,26 @@ from typing import Any
 #   sort_column: default sort column
 #   sort_ascending: default sort direction
 
+
+def default_screen() -> dict[str, Any]:
+    """The screen the app opens with, also the reference for the sanity check.
+
+    Its filters are the ones StockAnalysis's own screener is checked against
+    (36 symbols at the time of writing).
+    """
+    preset = next(
+        (screen for screen in POPULAR_SCREENS if "Quality Screen" in screen["name"]),
+        POPULAR_SCREENS[0],
+    )
+    return {
+        "name": preset["name"],
+        "filters": preset["filters"].copy(),
+        "view_preset": preset.get("view_preset", "Overview"),
+        "sort_column": preset.get("sort_column"),
+        "sort_ascending": preset.get("sort_ascending", True),
+    }
+
+
 POPULAR_SCREENS: list[dict[str, Any]] = [
     {
         "name": "💎 The Quality Screen",

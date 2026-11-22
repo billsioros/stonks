@@ -332,6 +332,14 @@ class SQLiteStore:
             rows = conn.execute("SELECT symbol FROM watchlist").fetchall()
         return [r[0] for r in rows]
 
+    def get_hedge_buy_symbols(self) -> list[str]:
+        """Return the symbols currently flagged as a largest hedge fund buy."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT symbol FROM stocks WHERE hedge_fund_buys = 1"
+            ).fetchall()
+        return [r[0] for r in rows]
+
     # ── Sync Status ──────────────────────────────────────────────────
 
     def update_sync_status(

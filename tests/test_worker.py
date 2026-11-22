@@ -2,8 +2,19 @@
 
 from unittest.mock import MagicMock
 
+import pytest
+
+from stonks import sanity, worker
 from stonks.store import SQLiteStore
 from stonks.worker import fetch_watched_news, job
+
+
+@pytest.fixture(autouse=True)
+def _offline_sanity(monkeypatch):
+    """The job's cross-checks hit four live sites; tests stub them out."""
+    monkeypatch.setattr(sanity, "load_report", lambda store: None)
+    monkeypatch.setattr(sanity, "run_sanity_checks", lambda store: [])
+    monkeypatch.setattr(sanity, "save_report", lambda store, results: None)
 
 
 def _stub_store(monkeypatch) -> MagicMock:
@@ -222,3 +233,36 @@ def test_fetch_watched_news_skips_unreachable_symbols(monkeypatch, tmp_path):
 
     assert fetch_watched_news(store, ["ZZZZ"]) == 0
     assert store.get_alerts(unread_only=False) == []
+
+
+def test_sanity_checks_run_when_the_report_is_stale(monkeypatch) -> None:
+    store = MagicMock(spec=SQLiteStore)
+    monkeypatch.setattr(sanity, "load_report", lambda store: None)
+    monkeypatch.setattr(
+        sanity,
+        "run_sanity_checks",
+        lambda store: [sanity.CheckResult("A", "b", True, "c")],
+    )
+    saved = {}
+    monkeypatch.setattr(
+        sanity,
+        "save_report",
+        lambda store, results: saved.update(count=len(results)),
+    )
+
+    worker._maybe_run_sanity_checks(store)
+
+    assert saved == {"count": 1}
+
+
+def test_sanity_checks_skip_a_fresh_report(monkeypatch) -> None:
+    store = MagicMock(spec=SQLiteStore)
+    monkeypatch.setattr(sanity, "load_report", lambda store: {"checked_at": 1.0})
+    monkeypatch.setattr(sanity, "report_is_fresh", lambda report: True)
+
+    def fail(store):
+        raise AssertionError("checks should not run while the report is fresh")
+
+    monkeypatch.setattr(sanity, "run_sanity_checks", fail)
+
+    worker._maybe_run_sanity_checks(store)

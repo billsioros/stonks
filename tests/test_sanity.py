@@ -1,0 +1,228 @@
+"""Tests for the reference-site cross-checks."""
+
+from __future__ import annotations
+
+import json
+
+from stonks import sanity
+from stonks.sanity import CheckResult
+from stonks.stockanalysis import INITIAL_URL
+from stonks.store import SQLiteStore
+from stonks.valuation import lynch_fair_value, upside_pct
+
+
+def _month_series(
+    start_year: int, count: int, base: float, step: float
+) -> dict[str, float]:
+    months: dict[str, float] = {}
+    year, month = start_year, 1
+    for index in range(count):
+        months[f"{year}-{month:02d}"] = base + step * index
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+    return months
+
+
+def _seed_portfolio(store: SQLiteStore) -> None:
+    # December 2016 through December 2024, the window the check compares.
+    store.cache_set("hist:SPY:10Y:Monthly", _month_series(2016, 97, 200.0, 3.0), 3600)
+    store.cache_set("hist:BND:10Y:Monthly", _month_series(2016, 97, 80.0, 0.1), 3600)
+
+
+def test_stockanalysis_check_compares_the_screen(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(
+        sanity, "default_screen", lambda: {"filters": {"market_cap": {"min": 0}}}
+    )
+    symbols = ["AAA", "BBB", "CCC"]
+    universe = {
+        "data": {
+            "columns": ["s", "n", "industry"],
+            "rows": [[symbol, f"{symbol} Inc", "Tech"] for symbol in symbols],
+        }
+    }
+    metrics = {
+        "data": {
+            "data": {symbol: {"marketCap": 100.0, "price": 10.0} for symbol in symbols}
+        }
+    }
+
+    def fetch(url: str):
+        return universe if url == INITIAL_URL else metrics
+
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.replace_stocks(
+        [{"symbol": symbol, "market_cap": 100.0} for symbol in symbols]
+    )
+    result = sanity.check_stockanalysis(store, fetch=fetch)
+    assert result.ok is True
+    assert "3 symbols now vs 3 stored" in result.detail
+
+    store.replace_stocks([{"symbol": f"OLD{i}", "market_cap": 1.0} for i in range(10)])
+    diverged = sanity.check_stockanalysis(store, fetch=fetch)
+    assert diverged.ok is False
+    assert "3 added" in diverged.detail
+
+
+def test_stockanalysis_check_fails_on_an_empty_payload(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+
+    def fetch(url: str):
+        if url == INITIAL_URL:
+            return {"data": {"columns": [], "rows": []}}
+        return {"data": {"data": {}}}
+
+    result = sanity.check_stockanalysis(store, fetch=fetch)
+    assert result.ok is False
+    assert "no rows" in result.detail
+
+
+def test_hedgefollow_check_compares_flags(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    symbols = [f"HF{i}" for i in range(300)]
+    store.replace_stocks(
+        [{"symbol": symbol, "hedge_fund_buys": 1} for symbol in symbols]
+    )
+
+    monkeypatch.setattr(
+        sanity, "fetch_largest_buys", lambda fetch=None: dict.fromkeys(symbols, 1.0)
+    )
+    assert sanity.check_hedgefollow(store).ok is True
+
+    monkeypatch.setattr(
+        sanity,
+        "fetch_largest_buys",
+        lambda fetch=None: dict.fromkeys(symbols[:50], 1.0),
+    )
+    assert sanity.check_hedgefollow(store).ok is False
+
+    monkeypatch.setattr(sanity, "fetch_largest_buys", lambda fetch=None: None)
+    unavailable = sanity.check_hedgefollow(store)
+    assert unavailable.ok is False
+    assert "token or payload changed" in unavailable.detail
+
+
+def test_gurufocus_check_recomputes_lynch_values(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    rows = []
+    for index in range(3):
+        eps = 2.0 + index
+        growth = 15.0
+        fair = lynch_fair_value(eps, growth)
+        rows.append(
+            {
+                "symbol": f"GF{index}",
+                "market_cap": 1000.0 - index,
+                "price": 20.0,
+                "eps_ttm": eps,
+                "eps_growth_5y_pct": growth,
+                "lynch_fair_value": fair,
+                "lynch_upside_pct": upside_pct(fair, 20.0),
+            }
+        )
+    store.replace_stocks(rows)
+    assert sanity.check_gurufocus_models(store).ok is True
+
+    broken = dict(rows[1], lynch_fair_value=1.0)
+    store.replace_stocks([rows[0], broken, rows[2]])
+    result = sanity.check_gurufocus_models(store)
+    assert result.ok is False
+    assert "GF1" in result.detail
+
+
+def test_parse_portfolio_visualizer_reads_the_summary() -> None:
+    page = """
+    <table><tr><td>Annualized Return (CAGR)</td><td>9.39%</td><td>14.82%</td></tr>
+    <tr><td>Standard Deviation</td><td>10.86%</td><td>16.2%</td></tr>
+    <tr><td>Best Year</td><td>22.27%</td><td>31.49%</td></tr>
+    <tr><td>Worst Year</td><td>-16.15%</td><td>-18.11%</td></tr></table>
+    """
+    metrics = sanity.parse_portfolio_visualizer(page)
+    assert metrics == {
+        "cagr_pct": 9.39,
+        "stdev_pct": 10.86,
+        "best_year_pct": 22.27,
+        "worst_year_pct": -16.15,
+    }
+
+
+def test_portfoliovisualizer_check_compares_both_engines(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    _seed_portfolio(store)
+    ours = sanity.run_backtest(store, ["SPY", "BND"], [60.0, 40.0], start="2017-01")
+    page = (
+        "<p>Annualized Return (CAGR) "
+        f"{ours['cagr_pct']:.2f}% 14.82% Standard Deviation "
+        f"{ours['stdev_pct']:.2f}% 16.31% Best Year {ours['best_year_pct']:.2f}% "
+        f"Worst Year {ours['worst_year_pct']:.2f}%</p>"
+    )
+    result = sanity.check_portfoliovisualizer(store, post=lambda url, data: page)
+    assert result.ok is True
+
+    drifted = sanity.check_portfoliovisualizer(
+        store,
+        post=lambda url, data: "<p>Annualized Return (CAGR) 1.00% 15.00%</p>",
+    )
+    assert drifted.ok is False
+    assert "CAGR" in drifted.detail
+
+
+def test_portfoliovisualizer_check_flags_a_changed_page(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    _seed_portfolio(store)
+    result = sanity.check_portfoliovisualizer(
+        store, post=lambda url, data: "<p>Something else entirely</p>"
+    )
+    assert result.ok is False
+    assert "no CAGR" in result.detail
+
+
+def test_run_sanity_checks_isolates_a_failing_platform(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(sanity, "check_stockanalysis", explode)
+    monkeypatch.setattr(
+        sanity,
+        "check_hedgefollow",
+        lambda store, fetch=None: CheckResult("HedgeFollow", "x", True, "ok"),
+    )
+    monkeypatch.setattr(
+        sanity,
+        "check_gurufocus_models",
+        lambda store, sample_size=50: CheckResult("GuruFocus", "x", True, "ok"),
+    )
+    monkeypatch.setattr(
+        sanity,
+        "check_portfoliovisualizer",
+        lambda store, post=None, fetch=None: CheckResult("PV", "x", True, "ok"),
+    )
+
+    results = sanity.run_sanity_checks(store)
+    assert len(results) == 4
+    assert results[0].ok is False
+    assert "boom" in results[0].detail
+
+
+def test_report_round_trip_and_freshness(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    assert sanity.load_report(store) is None
+    assert sanity.report_is_fresh(None) is False
+
+    sanity.save_report(store, [CheckResult("A", "b", False, "c")], checked_at=100.0)
+    report = sanity.load_report(store)
+    assert report is not None
+    assert report["results"][0]["platform"] == "A"
+    assert sanity.report_is_fresh(report, now=200.0) is True
+    assert (
+        sanity.report_is_fresh(report, now=100.0 + sanity.SANITY_TTL_SECONDS + 1)
+        is False
+    )
+
+    store.save_metadata(sanity.REPORT_KEY, "not json")
+    assert sanity.load_report(store) is None
+    store.save_metadata(sanity.REPORT_KEY, json.dumps({"results": "nope"}))
+    assert sanity.load_report(store) is None

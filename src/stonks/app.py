@@ -16,6 +16,8 @@ from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
+from stonks import sanity
+from stonks.backtest_view import render_backtest_tab
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
     DEFAULT_PAGE_SIZE,
@@ -25,7 +27,7 @@ from stonks.config import (
     VIEW_PRESETS,
 )
 from stonks.detail_view import render_detail_page
-from stonks.presets import POPULAR_SCREENS
+from stonks.presets import POPULAR_SCREENS, default_screen
 from stonks.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
@@ -1567,18 +1569,8 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
 
 
 def _default_screen() -> dict[str, Any]:
-    """Return the screen the app opens with."""
-    preset = next(
-        (s for s in POPULAR_SCREENS if "Quality Screen" in s["name"]),
-        POPULAR_SCREENS[0],
-    )
-    return {
-        "name": preset["name"],
-        "filters": preset["filters"].copy(),
-        "view_preset": preset.get("view_preset", "Overview"),
-        "sort_column": preset.get("sort_column"),
-        "sort_ascending": preset.get("sort_ascending", True),
-    }
+    """Return the screen the app opens with (the sanity check's reference)."""
+    return default_screen()
 
 
 def _init_session_state() -> None:
@@ -1609,6 +1601,34 @@ def _ago(epoch: float | None) -> str:
     if delta < 86400:
         return f"{int(delta // 3600)}h ago"
     return f"{int(delta // 86400)}d ago"
+
+
+def render_sanity_banner(store: SQLiteStore) -> None:
+    """Report the reference-site checks that diverged, if any did."""
+    report = sanity.load_report(store)
+    if not report:
+        return
+    failures = [result for result in report["results"] if result.get("ok") is False]
+    if not failures:
+        return
+
+    with st.container(key="sanity-banner"):
+        st.error(
+            f"Cross-check failed on {len(failures)} platform"
+            f"{'s' if len(failures) != 1 else ''} — a provider or model may have "
+            "diverged from what the app expects.",
+            icon="⚠️",
+        )
+        for failure in failures:
+            st.markdown(
+                f"**{failure.get('platform', '?')}** · {failure.get('check', '')} — "
+                f"{failure.get('detail', '')}"
+            )
+        st.caption(
+            "Checked "
+            f"{_ago(report.get('checked_at'))} by the worker; "
+            "nothing here changes the data on screen."
+        )
 
 
 def render_alerts_banner() -> None:
@@ -1666,6 +1686,7 @@ def main() -> None:
 
     sync_info = store.get_last_sync_info()
     render_pipeline_hud(sync_info)
+    render_sanity_banner(store)
 
     if st.session_state.get("page") == "detail" and st.session_state.get(
         "detail_symbol"
@@ -1679,7 +1700,9 @@ def main() -> None:
     # Main content tabs; unread alerts are visible from anywhere in the app.
     unread = store.count_unread_alerts()
     watchlist_label = f"⭐ Watchlist ({unread})" if unread else "⭐ Watchlist"
-    tab_screener, tab_watchlist = st.tabs(["📊 Screener", watchlist_label])
+    tab_screener, tab_watchlist, tab_backtest = st.tabs(
+        ["📊 Screener", watchlist_label, "🧪 Backtest"]
+    )
 
     with tab_screener:
         render_alerts_banner()
@@ -1693,6 +1716,9 @@ def main() -> None:
 
     with tab_watchlist:
         render_watchlist_tab()
+
+    with tab_backtest:
+        render_backtest_tab(store)
 
     # Footer
     st.markdown(

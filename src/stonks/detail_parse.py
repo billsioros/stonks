@@ -97,11 +97,13 @@ def parse_overview(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def parse_history(payload: Any) -> list[dict[str, Any]]:
-    """Parse a daily history payload into ``{date, close}`` rows, oldest first.
+def parse_history(payload: Any, *, adjusted: bool = False) -> list[dict[str, Any]]:
+    """Parse a history payload into ``{date, close}`` rows, oldest first.
 
     The provider serves newest first; rows without a usable date or close are
-    dropped rather than interpolated.
+    dropped rather than interpolated. ``adjusted`` prefers the dividend-adjusted
+    close (``a``), falling back to the raw close for bars that lack it — a
+    backtest needs total return, a price chart wants the traded price.
     """
     rows = payload.get("data") if isinstance(payload, dict) else payload
     out: list[dict[str, Any]] = []
@@ -109,7 +111,7 @@ def parse_history(payload: Any) -> list[dict[str, Any]]:
         if not isinstance(row, dict):
             continue
         date = row.get("t")
-        close = row.get("c")
+        close = (row.get("a") if adjusted else None) or row.get("c")
         if not isinstance(date, str) or not date:
             continue
         if isinstance(close, bool) or not isinstance(close, (int, float)):

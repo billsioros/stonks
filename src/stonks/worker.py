@@ -6,6 +6,7 @@ from typing import Any
 
 import schedule
 
+from stonks import sanity
 from stonks.alerts import evaluate_alerts
 from stonks.config import DATA_DIR, WORKER_INTERVAL_MINUTES
 from stonks.detail import load_page
@@ -93,6 +94,19 @@ def fetch_watched_news(store: SQLiteStore, symbols: list[str]) -> int:
     return inserted
 
 
+def _maybe_run_sanity_checks(store: SQLiteStore) -> None:
+    """Re-run the reference-site checks every few hours and keep the verdicts."""
+    if sanity.report_is_fresh(sanity.load_report(store)):
+        return
+    results = sanity.run_sanity_checks(store)
+    sanity.save_report(store, results)
+    diverged = [result.platform for result in results if result.ok is False]
+    if diverged:
+        logger.warning("⚠️ Cross-check diverged on: %s", ", ".join(diverged))
+    else:
+        logger.info("✅ Cross-checks agree with the reference sites")
+
+
 def job() -> None:
     """Sync the full StockAnalysis screener dataset into the local store."""
     logger.info("🚀 Starting data sync...")
@@ -128,6 +142,8 @@ def job() -> None:
         news = fetch_watched_news(store, sorted(watched))
         if changed or news:
             logger.info("🔔 %s change alerts, %s news alerts", changed, news)
+
+        _maybe_run_sanity_checks(store)
 
         logger.info("✅ Synced %s symbols", len(rows))
     except Exception:
