@@ -352,4 +352,35 @@ def test_unread_alert_counts_groups_by_symbol(store: SQLiteStore) -> None:
     store.add_alert("AAA", "big_move", "warn", "moved", None, "a2")
     store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
     store.mark_alerts_seen([store.get_alerts(symbol="BBB")[0]["id"]])
+
     assert store.unread_alert_counts() == {"AAA": 2}
+
+
+def test_schema_migration_adds_side_by_side_columns(tmp_path) -> None:
+    db_path = tmp_path / "test_migration.db"
+    store = SQLiteStore(db_path=db_path)
+    with store._connect() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(stocks)")}
+    assert "shares_insiders_percent" in cols
+    assert "cyclical_peak_risk" in cols
+    assert "valuation_triangulation" in cols
+    assert "valuation_upside_capped_pct" in cols
+
+
+def test_startup_backfill_populates_shares_insiders_percent(tmp_path) -> None:
+    db_path = tmp_path / "test_backfill.db"
+    store = SQLiteStore(db_path=db_path)
+    with store._connect() as conn:
+        conn.execute(
+            "INSERT INTO stocks (symbol, shares_insiders_pct) VALUES (?, ?)",
+            ("TEST", 0.05),
+        )
+        conn.commit()
+    # Re-instantiating triggers startup migration/backfill
+    store._migrate_schema(store._connect())
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT shares_insiders_pct, shares_insiders_percent FROM stocks WHERE symbol='TEST'"
+        ).fetchone()
+    assert row[0] == 0.05
+    assert row[1] == 5.0

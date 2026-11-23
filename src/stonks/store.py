@@ -19,6 +19,22 @@ VALUATION_COLUMNS = (
 # when the list could not be read during that sync.
 FLAG_COLUMNS = ("hedge_fund_buys",)
 
+# Normalised and composite metrics that live beside the original columns so the
+# reference-site benchmarks keep reading unmutated values.
+NEW_COLUMNS = (
+    "shares_insiders_percent",
+    "cyclical_peak_risk",
+    "valuation_triangulation",
+    "valuation_upside_capped_pct",
+)
+
+_NEW_COLUMN_TYPES = {
+    "shares_insiders_percent": "REAL",
+    "cyclical_peak_risk": "INTEGER",
+    "valuation_triangulation": "TEXT",
+    "valuation_upside_capped_pct": "REAL",
+}
+
 STOCK_FIELDS = [
     "symbol",
     "description",
@@ -68,10 +84,14 @@ STOCK_FIELDS = [
     "roe_5y_avg_pct",
     "roic_5y_avg_pct",
     "shares_insiders_pct",
+    "shares_insiders_percent",
     "industry",
     "short_pct",
     "rating",
     "pt_upside_pct",
+    "cyclical_peak_risk",
+    "valuation_triangulation",
+    "valuation_upside_capped_pct",
     *VALUATION_COLUMNS,
     *FLAG_COLUMNS,
 ]
@@ -215,6 +235,7 @@ class SQLiteStore:
                     roe_5y_avg_pct REAL,
                     roic_5y_avg_pct REAL,
                     shares_insiders_pct REAL,
+                    shares_insiders_percent REAL,
                     industry TEXT,
                     short_pct REAL,
                     rating TEXT,
@@ -224,6 +245,9 @@ class SQLiteStore:
                     lynch_fair_value REAL,
                     lynch_upside_pct REAL,
                     hedge_fund_buys INTEGER,
+                    cyclical_peak_risk INTEGER,
+                    valuation_triangulation TEXT,
+                    valuation_upside_capped_pct REAL,
                     updated_at REAL
                 )
             """)
@@ -241,7 +265,27 @@ class SQLiteStore:
                     conn.execute(
                         f"ALTER TABLE stocks ADD COLUMN {column} INTEGER"  # nosec B608
                     )
+            self._migrate_schema(conn)
             conn.commit()
+
+    @staticmethod
+    def _migrate_schema(conn: sqlite3.Connection) -> None:
+        """Add the side-by-side metrics and backfill them on existing databases."""
+        stock_columns = {row[1] for row in conn.execute("PRAGMA table_info(stocks)")}
+        for column_name in NEW_COLUMNS:
+            if column_name not in stock_columns:
+                column_type = _NEW_COLUMN_TYPES[column_name]
+                conn.execute(
+                    f"ALTER TABLE stocks ADD COLUMN {column_name} {column_type}"  # nosec B608
+                )
+
+        # Backfill the true percentage from the fraction the benchmark checks use.
+        conn.execute("""
+            UPDATE stocks
+            SET shares_insiders_percent = shares_insiders_pct * 100.0
+            WHERE shares_insiders_percent IS NULL AND shares_insiders_pct IS NOT NULL
+        """)
+        conn.commit()
 
     # ── Saved Screens ────────────────────────────────────────────────
 
@@ -688,6 +732,9 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "shares_insiders_percent",
+            "cyclical_peak_risk",
+            "valuation_upside_capped_pct",
             "short_pct",
             "pt_upside_pct",
             *VALUATION_COLUMNS,
@@ -695,7 +742,14 @@ class SQLiteStore:
         }
         # "symbol" is not an enum column, but callers legitimately need to
         # constrain the query to an explicit list (e.g. the watchlist).
-        enum_columns = {"exchange", "type", "currency", "mic", "symbol"}
+        enum_columns = {
+            "exchange",
+            "type",
+            "currency",
+            "mic",
+            "symbol",
+            "valuation_triangulation",
+        }
 
         if filters:
             for col, spec in filters.items():
@@ -767,10 +821,14 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "shares_insiders_percent",
             "industry",
             "short_pct",
             "rating",
             "pt_upside_pct",
+            "cyclical_peak_risk",
+            "valuation_triangulation",
+            "valuation_upside_capped_pct",
             *VALUATION_COLUMNS,
             *FLAG_COLUMNS,
         ]
@@ -847,7 +905,7 @@ class SQLiteStore:
 
     def get_unique_values(self, column: str) -> list[str]:
         """Get unique values for an enum column."""
-        allowed = {"exchange", "type", "currency", "mic"}
+        allowed = {"exchange", "type", "currency", "mic", "valuation_triangulation"}
         if column not in allowed:
             return []
 

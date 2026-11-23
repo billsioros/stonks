@@ -67,7 +67,11 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "roa_5y_avg_pct": "ROA (5Y) %",
     "roe_5y_avg_pct": "ROE (5Y) %",
     "roic_5y_avg_pct": "ROIC (5Y) %",
-    "shares_insiders_pct": "Shares Insiders %",
+    "shares_insiders_pct": "Shares Insiders (Ratio)",
+    "shares_insiders_percent": "Shares Insiders %",
+    "cyclical_peak_risk": "Cyclical Peak Risk",
+    "valuation_triangulation": "Valuation Consensus",
+    "valuation_upside_capped_pct": "Upside (Capped %)",
     "industry": "Industry",
     "short_pct": "Short % Shares",
     "rating": "Rating",
@@ -94,6 +98,14 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "dcf_upside_pct",
         "lynch_fair_value",
         "lynch_upside_pct",
+        "valuation_triangulation",
+        "valuation_upside_capped_pct",
+        "shares_insiders_pct",
+        "shares_insiders_percent",
+        "cyclical_peak_risk",
+        "fcf_margin_pct",
+        "current_ratio",
+        "short_pct",
         "hedge_fund_buys",
     ],
     "Valuation": [
@@ -155,6 +167,13 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "dcf_upside_pct",
         "lynch_fair_value",
         "lynch_upside_pct",
+        "valuation_triangulation",
+        "valuation_upside_capped_pct",
+        "shares_insiders_pct",
+        "shares_insiders_percent",
+        "cyclical_peak_risk",
+        "fcf_margin_pct",
+        "current_ratio",
         "hedge_fund_buys",
     ],
     "All Columns": COLUMN_DISPLAY_NAMES.keys(),
@@ -201,6 +220,9 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
     "roe_5y_avg_pct",
     "roic_5y_avg_pct",
     "shares_insiders_pct",
+    "shares_insiders_percent",
+    "cyclical_peak_risk",
+    "valuation_upside_capped_pct",
     "short_pct",
     "pt_upside_pct",
     "dcf_fair_value",
@@ -211,4 +233,10 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
 ]
 
 # ── Enum filter columns ─────────────────────────────────────────────
-ENUM_FILTER_COLUMNS: list[str] = ["exchange", "type", "currency", "mic"]
+ENUM_FILTER_COLUMNS: list[str] = [
+    "exchange",
+    "type",
+    "currency",
+    "mic",
+    "valuation_triangulation",
+]
