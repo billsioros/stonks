@@ -2,6 +2,66 @@
 
 <!-- version list -->
 
+## v2.5.0 (2026-11-23)
+
+### Bug Fixes
+
+- Drop the active-filter summary and move the column guide below the table
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- Keep the worker loop alive and contextualise the 13F whale flag
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- Rate a single model as unrated, warn on malformed sync times, and widen the drift tolerance
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- **store**: Atomic queries, safe LIMIT/OFFSET parameterization, and StockQueryResult
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- **store**: Filter validation for unknown columns, empty enum lists, and inverted bounds
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- **ui**: HTML tag replacement, filter pruning, and sync staleness banner
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+### Features
+
+- Fold the 13F caveat into the column guide ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- Send company profiles to the screener report and explain every column
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- **stockanalysis**: Ingest shares_insiders_percent alongside shares_insiders_pct
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- **store**: Expand schema with side-by-side metrics and backfill
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- **valuation**: Add cyclical peak detection and valuation triangulation classification
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+- **worker,sanity**: Persist sync health metadata and guard sanity truncation
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+### Testing
+
+- Seed the screener and detail rows instead of relying on a local database
+  ([#3](https://github.com/billsioros/stonks/pull/3),
+  [`48cbb5b`](https://github.com/billsioros/stonks/commit/48cbb5bcb70ab891ba10ae0a184382538b3e188f))
+
+
 ## v2.4.0 (2026-11-23)
 
 ### Features
