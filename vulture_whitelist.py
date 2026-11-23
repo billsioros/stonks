@@ -4,7 +4,15 @@ from stonks.backtest_view import parse_symbols, parse_weights
 
 from stonks.alerts import Alert, evaluate_alerts, week_bucket
 from stonks.detail import load_page
-from stonks.dossier import Check, Dossier, Gate, coverage, gate_status
+from stonks.dossier import (
+    Check,
+    Dossier,
+    Gate,
+    coverage,
+    gate_status,
+    industry_medians,
+    quality_gate,
+)
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,
@@ -39,6 +47,8 @@ Dossier.provenance  # noqa: B018
 Dossier.coverage  # noqa: B018
 gate_status  # noqa: B018
 coverage  # noqa: B018
+industry_medians  # noqa: B018
+quality_gate  # noqa: B018
 
 LocalCache.delete  # noqa: B018
 SQLiteStore.get_screen  # noqa: B018
