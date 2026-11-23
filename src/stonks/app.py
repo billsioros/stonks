@@ -4,11 +4,11 @@ Run with: streamlit run src/stonks/app.py
 """
 
 import base64
-import html
 import logging
 import math
 import re
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -19,8 +19,6 @@ import streamlit as st
 
 from stonks import report, report_view, sanity
 from stonks.backtest_view import render_backtest_tab
-from collections.abc import Sequence
-
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
     COLUMN_HELP,
@@ -504,21 +502,6 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     margin-top: 0.3rem;
 }
 
-/* Active filter summary */
-.active-filters {
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 1.5rem;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-}
-
-.active-filters strong {
-    color: var(--text-primary);
-}
-
 /* Pagination */
 .pagination-info {
     color: var(--text-secondary);
@@ -759,15 +742,6 @@ def _prune_filters(filters: dict[str, Any]) -> dict[str, Any]:
             continue
         pruned[col] = cleaned
     return pruned
-
-
-def _format_filter_tags(parts: list[str]) -> str:
-    """Render filter descriptions as HTML, escaping user-supplied values."""
-    tags = []
-    for part in parts:
-        safe = html.escape(part)
-        tags.append(re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", safe))
-    return " · ".join(tags)
 
 
 def apply_screen_state(screen: dict[str, Any]) -> None:
@@ -1174,34 +1148,6 @@ def render_screener_table() -> None:
     if total_matching == 0 and (active_filters or search_query):
         st.warning("⚠️ **No stocks match your current filters.**")
 
-    if active_filters or search_query:
-        filter_parts = []
-
-        for col, spec in active_filters.items():
-            display = COLUMN_DISPLAY_NAMES.get(col, col)
-            parts = []
-            if "min" in spec:
-                parts.append(f"≥ {spec['min']}")
-            if "max" in spec:
-                parts.append(f"≤ {spec['max']}")
-            if "values" in spec:
-                parts.append(f"∈ {spec['values']}")
-
-            if parts:
-                filter_parts.append(f"**{display}**: {', '.join(parts)}")
-
-        if search_query:
-            filter_parts.append(f'🔍 **Search**: "{search_query}"')
-
-        if filter_parts:
-            st.markdown(
-                f"""<div class="active-filters">
-                🎯 <strong>Active filters:</strong> {_format_filter_tags(filter_parts)}
-                &nbsp;|&nbsp; Matching: <strong>{total_matching:,}</strong> stocks
-                </div>""",
-                unsafe_allow_html=True,
-            )
-
     preset_cols = VIEW_PRESETS.get(view_preset, [])
     if not preset_cols:
         visible_cols = [
@@ -1298,11 +1244,6 @@ def render_screener_table() -> None:
             "on its own."
         )
 
-    guide = _column_guide_markdown(visible_cols)
-    if guide:
-        with st.expander("📖 What the columns mean"):
-            st.markdown(guide)
-
     selection = st.dataframe(
         display_df.style.apply(_row_style, axis=1),
         width="stretch",
@@ -1363,6 +1304,11 @@ def render_screener_table() -> None:
         mime="text/csv",
         key="download_csv",
     )
+
+    guide = _column_guide_markdown(visible_cols)
+    if guide:
+        with st.expander("📖 What the columns mean"):
+            st.markdown(guide)
 
 
 def render_watchlist_tab() -> None:

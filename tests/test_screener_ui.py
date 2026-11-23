@@ -17,15 +17,6 @@ def test_prune_filters_removes_empty_bounds_and_values() -> None:
     assert pruned["valid_enum"] == {"values": ["NYSE"]}
 
 
-def test_format_filter_tags_closes_strong_tags_safely() -> None:
-    parts = ["**P/E**: ≥ 10, ≤ 25", "**Symbol**: ∈ ['AAPL', '<script>']"]
-    html_output = app._format_filter_tags(parts)
-    assert "<strong>P/E</strong>" in html_output
-    assert "<script>" not in html_output  # Safely escaped
-    assert "&lt;script&gt;" in html_output
-    assert html_output.count("<strong>") == html_output.count("</strong>")
-
-
 def test_apply_screen_state_prunes_filters_and_defaults_sort_ascending(
     monkeypatch,
 ) -> None:
