@@ -30,6 +30,7 @@ from stonks.detail_view import (
     statement_frame,
     yoy_pct,
 )
+from stonks.edgar import EdgarUnavailable, edgar_json, resolve_cik, user_agent
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 from stonks.worker import NEWS_ALERTS_PER_SYNC, fetch_watched_news
@@ -89,3 +90,7 @@ fetch_watched_news  # noqa: B018
 NEWS_ALERTS_PER_SYNC  # noqa: B018
 parse_symbols  # noqa: B018
 parse_weights  # noqa: B018
+EdgarUnavailable  # noqa: B018
+edgar_json  # noqa: B018
+resolve_cik  # noqa: B018
+user_agent  # noqa: B018
