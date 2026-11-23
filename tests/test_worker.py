@@ -55,7 +55,8 @@ def test_job_persists_every_fetched_row(monkeypatch):
     assert calls == [0.12]
     assert [row["hedge_fund_buys"] for row in rows] == [1, 0]
     store.replace_stocks.assert_called_once_with(rows)
-    store.save_metadata.assert_called_once_with("universe_size", 2)
+    # Sync health now rides along with the universe size.
+    store.save_metadata.assert_any_call("universe_size", 2)
 
 
 def test_job_skips_writes_when_fetch_returns_no_rows(monkeypatch):
@@ -67,7 +68,10 @@ def test_job_skips_writes_when_fetch_returns_no_rows(monkeypatch):
     job()
 
     store.replace_stocks.assert_not_called()
-    store.save_metadata.assert_not_called()
+    store.save_metadata.assert_any_call("last_sync_status", "failed")
+    store.save_metadata.assert_any_call(
+        "last_sync_error", "No screener data returned from provider"
+    )
 
 
 def test_job_persists_rows_when_hedgefollow_is_unavailable(monkeypatch):
@@ -97,7 +101,8 @@ def test_job_leaves_store_untouched_when_fetch_fails(monkeypatch):
     job()
 
     store.replace_stocks.assert_not_called()
-    store.save_metadata.assert_not_called()
+    store.save_metadata.assert_any_call("last_sync_status", "failed")
+    store.save_metadata.assert_any_call("last_sync_error", "stockanalysis unavailable")
 
 
 def _real_store(monkeypatch, tmp_path) -> SQLiteStore:
@@ -253,6 +258,36 @@ def test_sanity_checks_run_when_the_report_is_stale(monkeypatch) -> None:
     worker._maybe_run_sanity_checks(store)
 
     assert saved == {"count": 1}
+
+
+def test_job_persists_failure_metadata_on_exception(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+
+    def fail_fetch(*args, **kwargs):
+        raise ConnectionError("StockAnalysis timeout")
+
+    monkeypatch.setattr(worker, "fetch_rows", fail_fetch)
+
+    job()
+    assert store.get_metadata("last_sync_status") == "failed"
+    assert "StockAnalysis timeout" in store.get_metadata("last_sync_error")
+
+
+def test_job_persists_success_metadata(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    _stub_discount_rate(monkeypatch)
+    monkeypatch.setattr(
+        worker, "fetch_rows", lambda *a, **k: [{"symbol": "AAPL", "market_cap": 100.0}]
+    )
+    monkeypatch.setattr(worker, "fetch_largest_buys", lambda: set())
+
+    job()
+    assert store.get_metadata("last_sync_status") == "success"
+    assert store.get_metadata("last_successful_sync_at") is not None
 
 
 def test_sanity_checks_skip_a_fresh_report(monkeypatch) -> None:

@@ -25,6 +25,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 from stonks.backtest import run_backtest
 from stonks.hedgefollow import fetch_largest_buys
@@ -45,6 +46,20 @@ REPORT_KEY = "sanity_report"
 # enough to catch a unit change, a broken parser or a re-derived formula.
 SCREEN_TOLERANCE_SHARE = 0.10
 SCREEN_TOLERANCE_MIN = 2
+# The provider pages its screener; a total at or above this bound means the
+# snapshot was silently truncated rather than that the market changed.
+SCREEN_MAX_ROWS = 100_000
+# Spot-checked columns and the relative drift allowed between the live snapshot
+# and the stored one (the two reads are hours apart, not the same instant).
+DRIFT_COLUMNS = (
+    "free_cash_flow",
+    "net_income",
+    "ev_to_ebitda",
+    "shares_insiders_pct",
+    "gross_margin_pct",
+)
+DRIFT_RELATIVE_TOLERANCE = 0.02
+DRIFT_SAMPLE_SIZE = 10
 HEDGE_OVERLAP_MIN = 0.60
 LYNCH_RELATIVE_TOLERANCE = 0.01
 PV_CAGR_TOLERANCE = 2.5
@@ -161,13 +176,15 @@ def check_stockanalysis(
             f"no stored rows to compare yet ({total} live symbols)",
         )
 
+    truncated = total >= SCREEN_MAX_ROWS
     added = sorted(fresh_symbols - stored_symbols)
     missing = sorted(stored_symbols - fresh_symbols)
     changed = len(added) + len(missing)
     allowed = max(
         SCREEN_TOLERANCE_MIN, round(len(stored_symbols) * SCREEN_TOLERANCE_SHARE)
     )
-    ok = total > 0 and changed <= allowed
+    drift = _metric_drift(fresh, stored)
+    ok = total > 0 and changed <= allowed and not truncated and not drift
     detail = (
         f"{total} symbols now vs {stored_total} stored "
         f"(site: {DEFAULT_SCREEN_SIZE}); "
@@ -177,7 +194,43 @@ def check_stockanalysis(
         detail += (
             f" (e.g. {'+'.join(added[:3]) or '—'} / {'-'.join(missing[:3]) or '—'})"
         )
+    if truncated:
+        detail += f"; truncated at {SCREEN_MAX_ROWS:,} rows"
+    if drift:
+        detail += f"; metric drift on {', '.join(drift[:3])}"
     return CheckResult(platform, "Default screener", ok, detail)
+
+
+def _metric_drift(
+    fresh: list[dict[str, Any]],
+    stored: list[dict[str, Any]],
+    sample_size: int = DRIFT_SAMPLE_SIZE,
+) -> list[str]:
+    """Symbols whose spot-checked metrics moved further than the tolerance."""
+    fresh_by_symbol = {row.get("symbol"): row for row in fresh}
+    drifted: list[str] = []
+    checked = 0
+    for row in stored:
+        symbol = row.get("symbol")
+        other = fresh_by_symbol.get(symbol)
+        if other is None:
+            continue
+        checked += 1
+        for column in DRIFT_COLUMNS:
+            left = row.get(column)
+            right = other.get(column)
+            if not isinstance(left, (int, float)) or not isinstance(
+                right, (int, float)
+            ):
+                continue
+            if left == right:
+                continue
+            scale = max(abs(left), abs(right))
+            if scale > 0 and abs(left - right) / scale > DRIFT_RELATIVE_TOLERANCE:
+                drifted.append(f"{symbol}.{column}")
+        if checked >= sample_size:
+            break
+    return drifted
 
 
 def check_hedgefollow(

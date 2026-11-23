@@ -25,6 +25,35 @@ def _month_series(
     return months
 
 
+def test_stockanalysis_sanity_check_asserts_under_100k_rows(
+    monkeypatch, tmp_path
+) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    monkeypatch.setattr(sanity, "default_screen", lambda: {"filters": {}})
+    rows = [{"symbol": f"S{i}", "market_cap": 1.0} for i in range(10)]
+    monkeypatch.setattr(sanity, "fetch_rows", lambda *a, **k: rows)
+    # The check needs stored rows to compare the live screen against.
+    store.replace_stocks(rows)
+
+    result = sanity.check_stockanalysis(store)
+    assert result.ok is True
+
+
+def test_stockanalysis_sanity_check_rejects_a_truncated_universe(
+    monkeypatch, tmp_path
+) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    monkeypatch.setattr(sanity, "default_screen", lambda: {"filters": {}})
+    rows = [{"symbol": f"S{i}", "market_cap": 1.0} for i in range(10)]
+    monkeypatch.setattr(sanity, "fetch_rows", lambda *a, **k: rows)
+    store.replace_stocks(rows)
+    monkeypatch.setattr(sanity, "SCREEN_MAX_ROWS", 5)
+
+    result = sanity.check_stockanalysis(store)
+    assert result.ok is False
+    assert "truncated" in result.detail.lower()
+
+
 def _seed_portfolio(store: SQLiteStore) -> None:
     # December 2016 through December 2024, the window the check compares.
     store.cache_set("hist:SPY:10Y:Monthly", _month_series(2016, 97, 200.0, 3.0), 3600)
