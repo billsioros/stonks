@@ -487,6 +487,10 @@ TRAILING_ONLY = "Trailing evidence only"
 
 def _as_date(value: object) -> date | None:
     """Parse an ISO or provider-style date, ignoring anything unparsable."""
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
     if not isinstance(value, str):
         return None
     text = value.strip()
@@ -906,7 +910,16 @@ def build_dossier(
         ("screener", "stored row snapshot", stamp)
     ]
     if evidence.cik:
-        latest = evidence.latest_10k or evidence.latest_10q
+        filing_dates = [
+            (parsed, raw)
+            for raw in (evidence.latest_10k, evidence.latest_10q)
+            if raw and (parsed := _as_date(raw)) is not None
+        ]
+        latest = (
+            max(filing_dates, key=lambda item: (item[0], item[1]))[1]
+            if filing_dates
+            else None
+        )
         provenance.append(
             (
                 "sec",

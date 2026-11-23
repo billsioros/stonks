@@ -149,7 +149,9 @@ def resolve_cik(symbol: str, *, store: SQLiteStore, fetch: Any = None) -> str | 
             continue
         cik = entry.get("cik_str")
         if isinstance(cik, bool) or not isinstance(cik, (int, str)):
-            return None
+            raise EdgarUnavailable(f"Missing CIK for ticker {symbol}")
         digits = str(cik)
-        return digits.zfill(10) if digits.isdigit() else None
+        if not digits.isdigit():
+            raise EdgarUnavailable(f"Malformed CIK for ticker {symbol}: {digits!r}")
+        return digits.zfill(10)
     return None

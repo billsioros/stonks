@@ -696,7 +696,7 @@ def test_efts_hit_parsing_yields_count_date_accession_link(store: SQLiteStore) -
     assert f"ciks={CIK}" in calls[0][0]
     assert calls[0][1] == {"User-Agent": USER_AGENT}
     # The same cache contract as every other EDGAR entry, for seven days.
-    assert store.cache_get(f"edgar:{CIK}:efts:material weakness") == EFTS_HITS
+    assert store.cache_get(f"edgar:{CIK}:efts:material weakness:10-K,10-Q") == EFTS_HITS
 
 
 def test_efts_hits_are_limited_to_the_latest_10k_and_10q(
@@ -738,7 +738,7 @@ def test_efts_caches_each_phrase_for_seven_days(
         "covenant", CIK, forms=("10-K",), store=store, fetch=fetch
     )
 
-    assert ttls == [(f"edgar:{CIK}:efts:covenant", 7 * 24 * 60 * 60)]
+    assert ttls == [(f"edgar:{CIK}:efts:covenant:10-K", 7 * 24 * 60 * 60)]
 
 
 @pytest.mark.parametrize(

@@ -128,6 +128,7 @@ DATA_POINT_MAP: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "fcf_margin_pct": ("fcfMargin", _identity),
     "revenue_growth_5y_pct": ("revenueGrowth5Y", _identity),
     "eps_growth_5y_pct": ("epsGrowth5Y", _identity),
+    "eps_growth_10y_pct": ("epsGrowth10Y", _identity),
     "beta": ("beta", _identity),
     "week_52_high": ("high52", _identity),
     "week_52_low": ("low52", _identity),
@@ -236,6 +237,7 @@ def _add_valuation(
     price = row.get("price")
     dcf = dcf_fair_value(point.get("eps"), point.get("epsGrowth10Y"), discount_rate)
     lynch = lynch_fair_value(point.get("eps"), point.get("epsGrowth5Y"))
+    row["dcf_discount_rate_pct"] = discount_rate * 100
     row["dcf_fair_value"] = dcf
     row["dcf_upside_pct"] = upside_pct(dcf, price)
     row["lynch_fair_value"] = lynch

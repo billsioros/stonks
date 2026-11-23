@@ -88,7 +88,7 @@ def search_filings(
     changed payload as "no matches" would pass a red-flag check.
     """
     query = urlencode({"q": f'"{phrase}"', "forms": ",".join(forms), "ciks": cik})
-    cache_key = f"edgar:{cik}:efts:{phrase}"
+    cache_key = f"edgar:{cik}:efts:{phrase}:{','.join(forms)}"
     if filing_digest is not None:
         cache_key = f"{cache_key}:{filing_digest}"
     payload = edgar.edgar_json(

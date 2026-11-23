@@ -5,7 +5,7 @@ import math
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from stonks.config import DB_PATH
 
@@ -15,6 +15,10 @@ VALUATION_COLUMNS = (
     "lynch_fair_value",
     "lynch_upside_pct",
 )
+
+# Inputs persisted beside the fair values so GuruFocus checks can recompute the
+# DCF model from the same data the screener used.
+DCF_INPUT_COLUMNS = ("eps_growth_10y_pct", "dcf_discount_rate_pct")
 
 # 1 when the symbol is in HedgeFollow's largest hedge fund buys, 0 when not, NULL
 # when the list could not be read during that sync.
@@ -61,6 +65,7 @@ STOCK_FIELDS = [
     "fcf_margin_pct",
     "revenue_growth_5y_pct",
     "eps_growth_5y_pct",
+    "eps_growth_10y_pct",
     "beta",
     "price",
     "week_52_high",
@@ -94,6 +99,7 @@ STOCK_FIELDS = [
     "valuation_triangulation",
     "valuation_upside_capped_pct",
     *VALUATION_COLUMNS,
+    *DCF_INPUT_COLUMNS,
     *FLAG_COLUMNS,
 ]
 
@@ -129,7 +135,7 @@ class StockQueryResult(tuple[Any, ...]):
         total_pages: int,
         total_matching: int,
         warnings: list[str] | None = None,
-    ) -> "StockQueryResult":
+    ) -> Self:
         instance = super().__new__(cls, (rows, total_pages, total_matching))
         instance.rows = rows
         instance.total_pages = total_pages
@@ -265,6 +271,8 @@ class SQLiteStore:
                     long_term_debt_to_equity REAL,
                     asset_turnover REAL,
                     eps_ttm REAL,
+                    eps_growth_10y_pct REAL,
+                    dcf_discount_rate_pct REAL,
                     net_income REAL,
                     free_cash_flow REAL,
                     fcf_growth_5y_pct REAL,
@@ -296,7 +304,7 @@ class SQLiteStore:
             stock_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(stocks)")
             }
-            for column in VALUATION_COLUMNS:
+            for column in (*VALUATION_COLUMNS, *DCF_INPUT_COLUMNS):
                 if column not in stock_columns:
                     conn.execute(
                         f"ALTER TABLE stocks ADD COLUMN {column} REAL"  # nosec B608
@@ -753,6 +761,7 @@ class SQLiteStore:
             "fcf_margin_pct",
             "revenue_growth_5y_pct",
             "eps_growth_5y_pct",
+            *DCF_INPUT_COLUMNS,
             "beta",
             "price",
             "revenue_growth_3y_pct",
@@ -867,6 +876,7 @@ class SQLiteStore:
             "fcf_margin_pct",
             "revenue_growth_5y_pct",
             "eps_growth_5y_pct",
+            *DCF_INPUT_COLUMNS,
             "beta",
             "price",
             "week_52_high",

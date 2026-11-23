@@ -32,7 +32,7 @@ from stonks.hedgefollow import fetch_largest_buys
 from stonks.presets import default_screen
 from stonks.stockanalysis import fetch_rows
 from stonks.store import SQLiteStore
-from stonks.valuation import lynch_fair_value, upside_pct
+from stonks.valuation import dcf_fair_value, lynch_fair_value, upside_pct
 
 # StockAnalysis's screener with the app's default filters returned 36 symbols
 # when the screen was last verified against the site by hand.
@@ -63,7 +63,7 @@ DRIFT_COLUMNS = (
 DRIFT_RELATIVE_TOLERANCE = 0.10
 DRIFT_SAMPLE_SIZE = 10
 HEDGE_OVERLAP_MIN = 0.60
-LYNCH_RELATIVE_TOLERANCE = 0.01
+MODEL_RELATIVE_TOLERANCE = 0.01
 PV_CAGR_TOLERANCE = 2.5
 PV_STDEV_TOLERANCE = 1.0
 PV_YEAR_TOLERANCE = 1.0
@@ -269,10 +269,20 @@ def check_hedgefollow(
     return CheckResult(platform, "Largest HF Buys", ok, detail)
 
 
-def check_gurufocus_models(store: SQLiteStore, sample_size: int = 50) -> CheckResult:
-    """Recompute the GuruFocus DCF/Lynch values the store already holds.
+def _check_gurufocus_model(
+    store: SQLiteStore,
+    *,
+    check: str,
+    model: str,
+    inputs: tuple[str, ...],
+    fair_value_column: str,
+    upside_column: str,
+    compute: Callable[..., float | None],
+    sample_size: int,
+) -> CheckResult:
+    """Recompute one stored GuruFocus fair-value column from its stored inputs.
 
-    gurufocus.com answers automated requests with 403, so this check proves the
+    gurufocus.com answers automated requests with 403, so these checks prove the
     stored fair values still follow the published formulas from the same inputs
     — the part that drifts when the model or its units change.
     """
@@ -283,22 +293,25 @@ def check_gurufocus_models(store: SQLiteStore, sample_size: int = 50) -> CheckRe
     checked = 0
     broken: list[str] = []
     for row in rows:
-        eps, growth = row.get("eps_ttm"), row.get("eps_growth_5y_pct")
-        if not isinstance(eps, (int, float)) or not isinstance(growth, (int, float)):
+        values = tuple(row.get(name) for name in inputs)
+        if not all(
+            isinstance(value, (int, float)) and not isinstance(value, bool)
+            for value in values
+        ):
             continue
-        expected = lynch_fair_value(eps, growth)
-        stored = row.get("lynch_fair_value")
+        checked += 1
+        expected = compute(*values)
+        stored = row.get(fair_value_column)
         if expected is None and stored is None:
-            checked += 1
             continue
         if expected is None or stored is None or stored == 0:
             broken.append(str(row.get("symbol")))
             continue
-        if abs(stored - expected) > abs(expected) * LYNCH_RELATIVE_TOLERANCE:
+        if abs(stored - expected) > abs(expected) * MODEL_RELATIVE_TOLERANCE:
             broken.append(str(row.get("symbol")))
             continue
         price = row.get("price")
-        stored_upside = row.get("lynch_upside_pct")
+        stored_upside = row.get(upside_column)
         expected_upside = upside_pct(expected, price)
         if (
             stored_upside is not None
@@ -307,20 +320,50 @@ def check_gurufocus_models(store: SQLiteStore, sample_size: int = 50) -> CheckRe
         ):
             broken.append(str(row.get("symbol")))
             continue
-        checked += 1
 
     if not checked:
         return CheckResult(
             platform,
-            "DCF + Peter Lynch models",
+            check,
             None,
             "no stored rows with earnings and growth data to check",
         )
-    ok = not broken
-    detail = f"{checked} rows match the DCF / Lynch formulas"
+    detail = f"{checked - len(broken)} rows match the {model} formula"
     if broken:
-        detail = f"{len(broken)} of {checked + len(broken)} rows diverge (e.g. {', '.join(broken[:3])})"
-    return CheckResult(platform, "DCF + Peter Lynch models", ok, detail)
+        detail = (
+            f"{len(broken)} of {checked} rows diverge (e.g. {', '.join(broken[:3])})"
+        )
+    return CheckResult(platform, check, not broken, detail)
+
+
+def check_gurufocus_dcf(store: SQLiteStore, sample_size: int = 50) -> CheckResult:
+    """Verify the stored DCF fair values against their stored model inputs."""
+    return _check_gurufocus_model(
+        store,
+        check="DCF model",
+        model="DCF",
+        inputs=("eps_ttm", "eps_growth_10y_pct", "dcf_discount_rate_pct"),
+        fair_value_column="dcf_fair_value",
+        upside_column="dcf_upside_pct",
+        compute=lambda eps, growth, rate_pct: dcf_fair_value(
+            eps, growth, rate_pct / 100
+        ),
+        sample_size=sample_size,
+    )
+
+
+def check_gurufocus_lynch(store: SQLiteStore, sample_size: int = 50) -> CheckResult:
+    """Verify the stored Peter Lynch fair values against their stored inputs."""
+    return _check_gurufocus_model(
+        store,
+        check="Peter Lynch model",
+        model="Peter Lynch",
+        inputs=("eps_ttm", "eps_growth_5y_pct"),
+        fair_value_column="lynch_fair_value",
+        upside_column="lynch_upside_pct",
+        compute=lynch_fair_value,
+        sample_size=sample_size,
+    )
 
 
 def check_portfoliovisualizer(
@@ -414,7 +457,8 @@ def run_sanity_checks(
     for check in (
         lambda: check_stockanalysis(store, fetch=fetch),
         lambda: check_hedgefollow(store, fetch=hedge_fetch),
-        lambda: check_gurufocus_models(store),
+        lambda: check_gurufocus_dcf(store),
+        lambda: check_gurufocus_lynch(store),
         lambda: check_portfoliovisualizer(store, post=pv_post, fetch=fetch),
     ):
         try:

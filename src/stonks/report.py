@@ -41,7 +41,8 @@ UNVERIFIED_HEADING = "## What this dossier could not verify"
 SYSTEM_INSTRUCTION: str = (
     "You are a stock-screening assistant. Be concise and informative: short, "
     "scannable markdown with no filler. Use only the figures provided -- do not "
-    "invent data or make price predictions. This is research support, not "
+    "invent data or make price predictions. Cite every figure with its source "
+    "row and field from the data below. This is research support, not "
     "financial advice."
 )
 
@@ -77,6 +78,10 @@ REPORT_SECTIONS: str = (
     "largest 13F buys. Filings lag up to 45 days and a crowded position is not "
     "a signal by itself; do not penalize a stock because hedge_fund_buys is 0.\n"
     "\n"
+    "Citations: inline every figure or claim with the source row and field it "
+    "came from, e.g. `[Source: AAPL, pe_ratio]` or `[Source: Overview, Median "
+    "P/E]`. A section heading is not a source.\n"
+    "\n"
     "Data:\n"
 )
 
@@ -85,8 +90,10 @@ SYMBOL_SYSTEM_INSTRUCTION: str = (
     "stock. Use only the figures and text provided. Quantify every claim, keep "
     "facts separate from interpretation, and treat missing fields as unavailable "
     "rather than guessing. Today's price is the decision price: judge valuation "
-    "against it. Cite the check id behind every dossier claim. Never assert a "
-    "moat, catalyst or filing fact that is absent from the dossier. Treat an "
+    "against it. Cite the check id behind every dossier claim. For filing facts, "
+    "cite the accession number and filing date too, e.g. `[Source: "
+    "filings.material_weakness, 0000320193-26-000001, 2026-02-01]`. Never assert "
+    "a moat, catalyst or filing fact that is absent from the dossier. Treat an "
     "unverified check as unknown, never as favourable evidence, and keep trailing "
     "results separate from forward estimates. Name the dossier's check coverage "
     "and the single most important unknown in the TL;DR. If the filings gate "

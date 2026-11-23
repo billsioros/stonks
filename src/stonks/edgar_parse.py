@@ -352,6 +352,12 @@ def _statement_value(
         if identifier.casefold() not in wanted and label.casefold() not in wanted:
             continue
         values = _sequence(row.get("values"))
+        # A TTM-only statement cannot stand in for an annual or quarterly fact:
+        # the vendor value it would be compared against uses a different period.
+        # Statements without period metadata keep the legacy "scan all values"
+        # behavior so older callers and fixtures remain readable.
+        if periods and not positions:
+            return None
         for index in positions or range(len(values)):
             if index < len(values):
                 value = _number(values[index])
@@ -454,9 +460,18 @@ def _debt_coverage_check(
     row: Mapping[str, Any], statements: Mapping[str, Any], facts: Mapping[str, Any]
 ) -> Check:
     ladder = maturity_ladder(facts)
-    cash = _vendor_value(row, statements, _CASH_VENDOR)
+    cash_fact = _first_fact(facts, _CASH_TAGS, "USD")
+    vendor_cash = _vendor_value(row, statements, _CASH_VENDOR)
+    cash_value = (
+        cash_fact.value if cash_fact else (vendor_cash.value if vendor_cash else None)
+    )
+    cash_source = (
+        cash_fact.detail
+        if cash_fact
+        else (vendor_cash.source if vendor_cash else "no cash figure")
+    )
     fcf = _vendor_value(row, statements, _FCF_VENDOR)
-    sources = f"XBRL maturity ladder; {cash.source if cash else 'no cash figure'} + {fcf.source if fcf else 'no free-cash-flow figure'}"
+    sources = f"XBRL maturity ladder; {cash_source} + {fcf.source if fcf else 'no free-cash-flow figure'}"
 
     if ladder is None:
         return Check(
@@ -468,7 +483,7 @@ def _debt_coverage_check(
             sources,
         )
     due = ladder[0][1]
-    if due <= 0 or cash is None or fcf is None:
+    if due <= 0 or cash_value is None or fcf is None:
         reason = (
             "no next-12-month maturity"
             if due <= 0
@@ -483,12 +498,12 @@ def _debt_coverage_check(
             sources,
         )
 
-    ratio = (cash.value + fcf.value) / due
+    ratio = (cash_value + fcf.value) / due
     return Check(
         "filings.debt_coverage",
         "Debt maturities are covered",
         "pass" if ratio >= COVERAGE_MIN else "fail",
-        f"({_money(cash.value)} cash + {_money(fcf.value)} FCF) / "
+        f"({_money(cash_value)} cash + {_money(fcf.value)} FCF) / "
         f"{_money(due)} due in 12m = {ratio:.2f}",
         f">= {COVERAGE_MIN:.1f}",
         sources,

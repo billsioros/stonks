@@ -148,7 +148,7 @@ def test_hedgefollow_check_compares_flags(monkeypatch, tmp_path) -> None:
     assert "token or payload changed" in unavailable.detail
 
 
-def test_gurufocus_check_recomputes_lynch_values(tmp_path) -> None:
+def test_gurufocus_lynch_check_recomputes_lynch_values(tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     rows = []
     for index in range(3):
@@ -167,11 +167,11 @@ def test_gurufocus_check_recomputes_lynch_values(tmp_path) -> None:
             }
         )
     store.replace_stocks(rows)
-    assert sanity.check_gurufocus_models(store).ok is True
+    assert sanity.check_gurufocus_lynch(store).ok is True
 
     broken = dict(rows[1], lynch_fair_value=1.0)
     store.replace_stocks([rows[0], broken, rows[2]])
-    result = sanity.check_gurufocus_models(store)
+    result = sanity.check_gurufocus_lynch(store)
     assert result.ok is False
     assert "GF1" in result.detail
 
@@ -237,8 +237,15 @@ def test_run_sanity_checks_isolates_a_failing_platform(monkeypatch, tmp_path) ->
     )
     monkeypatch.setattr(
         sanity,
-        "check_gurufocus_models",
-        lambda store, sample_size=50: CheckResult("GuruFocus", "x", True, "ok"),
+        "check_gurufocus_dcf",
+        lambda store, sample_size=50: CheckResult("GuruFocus", "DCF model", True, "ok"),
+    )
+    monkeypatch.setattr(
+        sanity,
+        "check_gurufocus_lynch",
+        lambda store, sample_size=50: CheckResult(
+            "GuruFocus", "Peter Lynch model", True, "ok"
+        ),
     )
     monkeypatch.setattr(
         sanity,
@@ -247,7 +254,7 @@ def test_run_sanity_checks_isolates_a_failing_platform(monkeypatch, tmp_path) ->
     )
 
     results = sanity.run_sanity_checks(store)
-    assert len(results) == 4
+    assert len(results) == 5
     assert results[0].ok is False
     assert "boom" in results[0].detail
 
