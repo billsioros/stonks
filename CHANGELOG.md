@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.4.0 (2026-11-23)
+
+### Features
+
+- Detail pages, alerts, screener fixes, backtest contributions, and interactive charts
+  ([`2ab9220`](https://github.com/billsioros/stonks/commit/2ab92200a28c7fb4737239b1929834753ed65d7d))
+
+
 ## v2.3.0 (2026-05-06)
 
 ### Features
