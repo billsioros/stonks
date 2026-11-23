@@ -31,6 +31,7 @@ from stonks.detail_view import (
     yoy_pct,
 )
 from stonks.edgar import EdgarUnavailable, edgar_json, resolve_cik, user_agent
+from stonks.edgar_parse import filing_checks, latest_fact, maturity_ladder
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 from stonks.worker import NEWS_ALERTS_PER_SYNC, fetch_watched_news
@@ -94,3 +95,6 @@ EdgarUnavailable  # noqa: B018
 edgar_json  # noqa: B018
 resolve_cik  # noqa: B018
 user_agent  # noqa: B018
+filing_checks  # noqa: B018
+latest_fact  # noqa: B018
+maturity_ladder  # noqa: B018
