@@ -28,6 +28,8 @@ from stonks.store import SQLiteStore
 # The dossier block is part of the prompt, so a changed filing also changes the
 # cache key of `_cached_report` without a second, redundant hash argument.
 SYMBOL_MAX_TOKENS = report.SYMBOL_MAX_TOKENS
+# Peer checks need the real universe. `get_stocks(page_size=0)` clamps to one row.
+UNIVERSE_PAGE_SIZE = 100_000
 
 __all__ = [
     "SYMBOL_MAX_TOKENS",
@@ -175,7 +177,7 @@ def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Do
     # plain page render. The builder degrades failures to a reason on evidence.
     evidence = filing_evidence.build_filing_evidence(symbol, store=store)
 
-    peers, _, _ = store.get_stocks(page_size=0)
+    peers, _, _ = store.get_stocks(page_size=UNIVERSE_PAGE_SIZE)
     stamp = None
     if hasattr(store, "get_metadata"):
         raw_stamp = store.get_metadata("last_successful_sync_at")

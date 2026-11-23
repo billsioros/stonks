@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,7 @@ from stonks.dossier import (
     INFORMATIONAL_PHRASES,
     RED_FLAG_PHRASES,
     filing_gate,
+    gate_status,
 )
 from stonks.store import SQLiteStore
 
@@ -253,6 +255,42 @@ def test_unparsable_json_is_unavailable(store: SQLiteStore) -> None:
             fetch=fetch,
         )
     assert store.cache_get("edgar:test:broken") is None
+
+
+def test_cache_failures_are_translated_to_edgar_unavailable(
+    monkeypatch: pytest.MonkeyPatch, store: SQLiteStore
+) -> None:
+    def broken_get(*args: Any, **kwargs: Any) -> Any:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "cache_get", broken_get)
+    with pytest.raises(edgar.EdgarUnavailable, match="EDGAR cache unavailable"):
+        edgar.edgar_json(
+            EFTS_URL,
+            store=store,
+            cache_key="edgar:test:broken-cache-read",
+            ttl_seconds=60,
+            fetch=fetch_recorder(FakeResponse({"ok": True}))[0],
+        )
+
+
+def test_cache_write_failure_is_translated_to_edgar_unavailable(
+    monkeypatch: pytest.MonkeyPatch, store: SQLiteStore
+) -> None:
+    def broken_set(*args: Any, **kwargs: Any) -> None:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(store, "cache_set", broken_set)
+    fetch, calls = fetch_recorder(FakeResponse({"ok": True}))
+    with pytest.raises(edgar.EdgarUnavailable, match="EDGAR cache unavailable"):
+        edgar.edgar_json(
+            EFTS_URL,
+            store=store,
+            cache_key="edgar:test:broken-cache-write",
+            ttl_seconds=60,
+            fetch=fetch,
+        )
+    assert len(calls) == 1
 
 
 def test_malformed_ticker_map_is_unavailable(store: SQLiteStore) -> None:
@@ -586,6 +624,54 @@ def _efts_payload(*entries: tuple[str, str, str]) -> dict[str, Any]:
     }
 
 
+def test_companyfacts_refresh_invalidates_stale_efts_hits(store: SQLiteStore) -> None:
+    old_facts = _facts()
+    for namespace in old_facts["facts"].values():
+        for tag in namespace.values():
+            for entries in tag.get("units", {}).values():
+                for entry in entries:
+                    if entry.get("filed") == "2026-08-01":
+                        entry["filed"] = "2026-05-01"
+    old_hit = ("10-Q", "2026-05-01", "0000320193-26-000004")
+    new_hit = ("10-Q", "2026-08-01", "0000320193-26-000005")
+    phase = {"facts": old_facts, "old": True}
+    calls: list[tuple[str, dict[str, str], float]] = []
+
+    def fetch(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        calls.append((url, headers, timeout))
+        if url.startswith("https://data.sec.gov/api/xbrl/companyfacts/"):
+            return FakeResponse(phase["facts"])
+        if url.startswith(edgar.TICKER_MAP_URL):
+            return FakeResponse(COMPANY_TICKERS)
+        if "q=%22material+weakness%22" in url:
+            return FakeResponse(_efts_payload(old_hit if phase["old"] else new_hit))
+        return FakeResponse(_efts_payload())
+
+    first = filing_evidence.build_filing_evidence("AAPL", store=store, fetch=fetch)
+    assert first.latest_10q == "2026-05-01"
+    assert [
+        hit["accession"] for hit in first.hits if hit["phrase"] == "material weakness"
+    ] == [old_hit[2]]
+
+    # Companyfacts refreshes first; the EFTS cache must not survive the change.
+    store.cache_delete(f"edgar:{CIK}:companyfacts")
+    phase["facts"] = SAMPLE_FACTS
+    phase["old"] = False
+    second = filing_evidence.build_filing_evidence("AAPL", store=store, fetch=fetch)
+
+    assert second.latest_10q == "2026-08-01"
+    assert [
+        hit["accession"] for hit in second.hits if hit["phrase"] == "material weakness"
+    ] == [new_hit[2]]
+    checks = {
+        check.id: check
+        for check in filing_gate({}, {}, second, today="2026-11-23").checks
+    }
+    assert checks["filings.material_weakness"].status == "fail"
+    assert new_hit[2] in checks["filings.material_weakness"].evidence
+    assert sum("q=%22material+weakness%22" in call[0] for call in calls) == 2
+
+
 def test_efts_hit_parsing_yields_count_date_accession_link(store: SQLiteStore) -> None:
     fetch, calls = fetch_recorder(FakeResponse(EFTS_HITS))
 
@@ -657,7 +743,14 @@ def test_efts_caches_each_phrase_for_seven_days(
 
 @pytest.mark.parametrize(
     "payload",
-    [{}, {"hits": "unexpected"}, {"hits": {"hits": [{}]}}, {"hits": {"hits": "no"}}],
+    [
+        {},
+        {"hits": "unexpected"},
+        {"hits": {"hits": [{}]}},
+        {"hits": {"hits": "no"}},
+        {"hits": {"hits": []}},
+        {"hits": {"total": "many", "hits": []}},
+    ],
 )
 def test_unparsable_efts_payload_raises(payload: Any, store: SQLiteStore) -> None:
     fetch, _ = fetch_recorder(FakeResponse(payload))
@@ -689,6 +782,27 @@ def test_efts_failure_is_unverified(
     assert gate.checks[0].status == "unverified"
     assert gate.checks[0].value == evidence.reason
     assert gate.checks[0].evidence == evidence.reason
+
+
+def test_missing_efts_total_never_passes_red_flags(store: SQLiteStore) -> None:
+    def fetch(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        if url.startswith("https://data.sec.gov/api/xbrl/companyfacts/"):
+            return FakeResponse(SAMPLE_FACTS)
+        if url.startswith(edgar.TICKER_MAP_URL):
+            return FakeResponse(COMPANY_TICKERS)
+        return FakeResponse({"hits": {"hits": []}})
+
+    evidence = filing_evidence.build_filing_evidence("AAPL", store=store, fetch=fetch)
+    gate = filing_gate({}, {}, evidence, today="2026-11-23")
+
+    assert evidence.reason == "EFTS response has an unexpected shape"
+    assert gate_status(gate.checks) == "unverified"
+    assert [check.id for check in gate.checks] == ["filings.primary"]
+    assert not any(
+        check.status == "pass"
+        for check in gate.checks
+        if check.id.startswith("filings.")
+    )
 
 
 def test_evidence_build_without_user_agent_makes_no_requests(

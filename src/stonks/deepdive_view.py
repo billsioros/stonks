@@ -14,6 +14,7 @@ from typing import Any
 import streamlit as st
 
 from stonks.dossier import Dossier, gate_status
+from stonks.edgar import USER_AGENT_REASON
 
 GLYPHS = {
     "pass": "✅",
@@ -22,7 +23,6 @@ GLYPHS = {
     "not_applicable": "➖",
 }
 _SEVERITY = {"fail": 0, "unverified": 1, "not_applicable": 2, "pass": 3}
-USER_AGENT_REASON = "EDGAR_USER_AGENT not configured"
 USER_AGENT_HINT = "Set EDGAR_USER_AGENT to verify filings"
 
 __all__ = [
@@ -94,15 +94,17 @@ def render_filings(dossier: Dossier) -> None:
 
 
 def _needs_user_agent_hint(dossier: Dossier) -> bool:
-    """True only when the filings gate is unverified for a missing contact string."""
+    """True only when the filings primary check names the contact-string problem."""
     filings = next((gate for gate in dossier.gates if gate.key == "filings"), None)
+    if filings is None or gate_status(filings.checks) != "unverified":
+        return False
+    primary = next(
+        (check for check in filings.checks if check.id == "filings.primary"), None
+    )
     return (
-        filings is not None
-        and gate_status(filings.checks) == "unverified"
-        and any(
-            USER_AGENT_REASON in f"{check.value} {check.evidence}"
-            for check in filings.checks
-        )
+        primary is not None
+        and primary.status == "unverified"
+        and primary.value == USER_AGENT_REASON
     )
 
 

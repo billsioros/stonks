@@ -22,6 +22,8 @@ CIK_MAP_CACHE_KEY = "edgar:cik:map"
 CIK_MAP_TTL_SECONDS = 30 * 24 * 60 * 60  # 30 days
 REQUEST_TIMEOUT = 10.0
 REQUESTS_PER_SECOND = 8
+# One reason for every contact-string problem, so the UI needs one hint.
+USER_AGENT_REASON = "EDGAR_USER_AGENT not configured"
 
 _AGENT_SHAPE = re.compile(r"([^()\r\n]+) \(([^()\r\n]+)\)")
 _MAX_AGENT_LENGTH = 200
@@ -38,15 +40,19 @@ class EdgarUnavailable(RuntimeError):
     """SEC data could not be fetched or trusted."""
 
 
+class UserAgentUnavailable(EdgarUnavailable):
+    """The contact string is absent or malformed; no SEC request may be made."""
+
+
 def user_agent() -> str:
     """Return the verified ``EDGAR_USER_AGENT`` contact string, or fail closed."""
     value = os.environ.get("EDGAR_USER_AGENT")
     if not value:
-        raise EdgarUnavailable("EDGAR_USER_AGENT not configured")
+        raise UserAgentUnavailable(USER_AGENT_REASON)
     if "\r" in value or "\n" in value or len(value) > _MAX_AGENT_LENGTH:
-        raise EdgarUnavailable("EDGAR_USER_AGENT is invalid")
+        raise UserAgentUnavailable("EDGAR_USER_AGENT is invalid")
     if value != value.strip() or not _AGENT_SHAPE.fullmatch(value):
-        raise EdgarUnavailable("EDGAR_USER_AGENT must be 'name (address)' shaped")
+        raise UserAgentUnavailable("EDGAR_USER_AGENT must be 'name (address)' shaped")
     return value
 
 
@@ -88,7 +94,12 @@ def edgar_json(
     Raises:
         EdgarUnavailable: No valid contact string, or the SEC failed to answer.
     """
-    cached = store.cache_get(cache_key)
+    try:
+        cached = store.cache_get(cache_key)
+    except Exception as exc:
+        # A broken cache is an EDGAR outage for callers: the builder maps it to
+        # an unverified filings gate instead of letting it escape the memo path.
+        raise EdgarUnavailable("EDGAR cache unavailable") from exc
     if cached is not None:
         return cached
     agent = user_agent()
@@ -109,7 +120,10 @@ def edgar_json(
         raise
     except Exception as exc:
         raise EdgarUnavailable("SEC request failed") from exc
-    store.cache_set(cache_key, payload, ttl_seconds)
+    try:
+        store.cache_set(cache_key, payload, ttl_seconds)
+    except Exception as exc:
+        raise EdgarUnavailable("EDGAR cache unavailable") from exc
     return payload
 
 

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from typing import Any
 from unittest.mock import Mock
 
-from stonks import dossier, report, report_view
+from stonks import dossier, filing_evidence, report, report_view
 from stonks.dossier import Check, Dossier, FilingEvidence, Gate
 
 ROW: dict[str, Any] = {
@@ -281,6 +282,43 @@ def test_prompt_parts_build_one_dossier_with_unverified_filings(
     assert dossier.gate_status(filings.checks) == "unverified"
 
 
+def test_report_path_supplies_the_full_universe_as_peers(monkeypatch: Any) -> None:
+    _stub_pages(monkeypatch)
+    rows = [
+        {
+            **ROW,
+            "industry": "Semiconductors",
+            "operating_margin_pct": 30.0 + index,
+            "revenue_growth_5y_pct": 20.0 + index,
+        }
+        for index in range(6)
+    ]
+
+    class UniverseStore:
+        def get_stocks(self, **kwargs: Any) -> tuple[list[dict[str, Any]], int, int]:
+            if kwargs.get("filters", {}).get("symbol"):
+                return [rows[0]], 1, 1
+            # Match the real store's page_size clamp so page_size=0 is caught.
+            page_size = max(1, min(int(kwargs.get("page_size", 1)), 100_000))
+            return rows[:page_size], 1, len(rows)
+
+    captured: dict[str, Any] = {}
+    original = dossier.build_dossier
+
+    def capture(*args: Any, **kwargs: Any) -> Dossier:
+        captured.update(kwargs)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(report_view.dossier, "build_dossier", capture)
+
+    _, built = report_view.symbol_report_prompt_parts(UniverseStore(), "NVDA")
+
+    assert len(captured["peers"]) >= 5
+    checks = {check.id: check for gate in built.gates for check in gate.checks}
+    assert "fewer than five peers" not in checks["quality.margin_vs_industry"].value
+    assert checks["quality.growth_vs_industry"].status != "unverified"
+
+
 def test_prompt_for_hands_the_same_dossier_to_its_callback(monkeypatch: Any) -> None:
     _stub_pages(monkeypatch)
     seen: list[Dossier] = []
@@ -314,6 +352,31 @@ def test_edgar_failure_still_produces_a_memo(monkeypatch: Any) -> None:
     assert dossier.gate_status(filings.checks) == "unverified"
     assert filings.summary == "EDGAR_USER_AGENT not configured"
     # The memo prompt still reaches the model and yields an answer.
+    assert report.request_report(prompt, api_key="k", client=_Client()) == (
+        "## TL;DR\nYES."
+    )
+
+
+def test_cache_failure_still_produces_a_memo(monkeypatch: Any) -> None:
+    real_builder = filing_evidence.build_filing_evidence
+    _stub_pages(monkeypatch)
+    monkeypatch.setenv("EDGAR_USER_AGENT", "stonks/1.0 (test@example.com)")
+    # Undo the offline builder stub: exercise the real builder against a broken
+    # cache so the "never raises" promise is tested end to end.
+    monkeypatch.setattr(
+        "stonks.report_view.filing_evidence.build_filing_evidence", real_builder
+    )
+
+    class CacheFailureStore(_Store):
+        def cache_get(self, *args: Any, **kwargs: Any) -> Any:
+            raise sqlite3.OperationalError("database is locked")
+
+    prompt, built = report_view.symbol_report_prompt_parts(CacheFailureStore(), "NVDA")
+
+    assert "EDGAR cache unavailable" in prompt
+    filings = next(gate for gate in built.gates if gate.key == "filings")
+    assert dossier.gate_status(filings.checks) == "unverified"
+    assert filings.summary == "EDGAR cache unavailable"
     assert report.request_report(prompt, api_key="k", client=_Client()) == (
         "## TL;DR\nYES."
     )

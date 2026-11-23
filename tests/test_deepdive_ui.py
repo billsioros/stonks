@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from streamlit.testing.v1 import AppTest
 
 APP = """
@@ -71,6 +72,20 @@ dossier = build_dossier(
 render_deep_dive(None, "NVDA", dossier)
 """
 
+UA_BUILDER_APP = """
+from stonks import filing_evidence
+from stonks.dossier import build_dossier
+from stonks.deepdive_view import render_deep_dive
+
+class NoCacheStore:
+    def cache_get(self, *args, **kwargs):
+        raise AssertionError("cache read before user-agent validation")
+
+evidence = filing_evidence.build_filing_evidence("NVDA", store=NoCacheStore())
+dossier = build_dossier("NVDA", filing_evidence=evidence)
+render_deep_dive(None, "NVDA", dossier)
+"""
+
 
 def _run(app: str = APP) -> AppTest:
     at = AppTest.from_string(app, default_timeout=180)
@@ -136,3 +151,30 @@ def test_missing_user_agent_hint() -> None:
     assert captions.count("Set EDGAR_USER_AGENT to verify filings") == 1
     plain = [str(c.value) for c in _run().caption]
     assert not [value for value in plain if "Set EDGAR_USER_AGENT" in value]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        "stonks/1.0 (a@example.com)\r\nX-Evil: yes",
+        "x" * 201,
+        "not-an-address",
+    ],
+)
+def test_every_user_agent_problem_shows_exactly_one_hint(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    if value is None:
+        monkeypatch.delenv("EDGAR_USER_AGENT", raising=False)
+    else:
+        monkeypatch.setenv("EDGAR_USER_AGENT", value)
+
+    at = _run(UA_BUILDER_APP)
+    captions = [str(caption.value) for caption in at.caption]
+    tables = [str(block.value) for block in at.markdown]
+
+    assert captions.count("Set EDGAR_USER_AGENT to verify filings") == 1
+    assert sum("Set EDGAR_USER_AGENT" in caption for caption in captions) == 1
+    assert any("EDGAR_USER_AGENT not configured" in table for table in tables)

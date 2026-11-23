@@ -8,6 +8,8 @@ escaping into the dossier.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import date
@@ -36,17 +38,22 @@ def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _count(total: Any, fallback: int) -> int:
-    """Read EFTS' total hit count, falling back to the returned hit list."""
+def _count(total: Any) -> int:
+    """Read EFTS' total hit count, refusing to guess when the shape drifts.
+
+    The hit list can be truncated or scoped by filters, so its length is not a
+    substitute for the reported total: a missing total must never look like a
+    clean zero-hit sweep.
+    """
     if isinstance(total, Mapping):
         total = total.get("value")
     if isinstance(total, bool):
-        return fallback
-    if isinstance(total, int):
+        raise edgar.EdgarUnavailable("EFTS response has an unexpected shape")
+    if isinstance(total, int) and total >= 0:
         return total
     if isinstance(total, str) and total.isdigit():
         return int(total)
-    return fallback
+    raise edgar.EdgarUnavailable("EFTS response has an unexpected shape")
 
 
 def _filing_url(cik: str, accession: str) -> str:
@@ -69,19 +76,25 @@ def search_filings(
     store: SQLiteStore,
     fetch: Any = None,
     latest_dates: Mapping[str, str] | None = None,
+    filing_digest: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return dated, linked EFTS hits for one exact phrase and set of forms.
 
     When ``latest_dates`` maps a form to its newest filing date, only hits from
     that filing are kept; older filings must not fail a freshness-scoped sweep.
-    An unrecognised response shape is an error, not a zero-hit result: silently
-    treating a changed payload as "no matches" would pass a red-flag check.
+    ``filing_digest`` salts the cache key with those filing dates and accessions
+    so a companyfacts refresh cannot leave stale hits in scope. An unrecognised
+    response shape is an error, not a zero-hit result: silently treating a
+    changed payload as "no matches" would pass a red-flag check.
     """
     query = urlencode({"q": f'"{phrase}"', "forms": ",".join(forms), "ciks": cik})
+    cache_key = f"edgar:{cik}:efts:{phrase}"
+    if filing_digest is not None:
+        cache_key = f"{cache_key}:{filing_digest}"
     payload = edgar.edgar_json(
         f"{EFTS_URL}?{query}",
         store=store,
-        cache_key=f"edgar:{cik}:efts:{phrase}",
+        cache_key=cache_key,
         ttl_seconds=CACHE_TTL_SECONDS,
         fetch=fetch,
     )
@@ -91,7 +104,7 @@ def search_filings(
     entries = hits.get("hits")
     if not isinstance(entries, Sequence) or isinstance(entries, str | bytes):
         raise edgar.EdgarUnavailable("EFTS response has an unexpected shape")
-    count = _count(hits.get("total"), len(entries))
+    count = _count(hits.get("total"))
     allowed = set(forms)
 
     found: list[dict[str, Any]] = []
@@ -150,9 +163,16 @@ def search_filings(
     return found
 
 
-def _latest_form_dates(payload: Mapping[str, Any]) -> tuple[str | None, str | None]:
-    """Newest unamended 10-K and 10-Q filing dates across every XBRL fact."""
-    latest: dict[str, str] = {}
+def _latest_form_filings(
+    payload: Mapping[str, Any],
+) -> tuple[dict[str, str], str]:
+    """Newest unamended 10-K/10-Q dates and a digest of their dates/accessions.
+
+    The digest is stable across payload ordering and salted into EFTS cache keys:
+    once companyfacts reports a newer filing, hits cached against the old filing
+    must be re-fetched rather than silently filtered down to zero.
+    """
+    latest: dict[str, tuple[str, str]] = {}
     namespaces = payload.get("facts")
     if not isinstance(namespaces, Mapping):
         raise edgar.EdgarUnavailable("SEC companyfacts payload has an unexpected shape")
@@ -184,9 +204,14 @@ def _latest_form_dates(payload: Mapping[str, Any]) -> tuple[str | None, str | No
                     except ValueError:
                         continue
                     form = entry["form"]
-                    if form not in latest or filed > latest[form]:
-                        latest[form] = filed
-    return latest.get("10-K"), latest.get("10-Q")
+                    candidate = (filed, _text(entry.get("accn")))
+                    if form not in latest or candidate > latest[form]:
+                        latest[form] = candidate
+    dates = {form: filed for form, (filed, _) in latest.items()}
+    fingerprint = hashlib.sha256(
+        json.dumps(sorted(latest.items()), separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:16]
+    return dates, fingerprint
 
 
 def build_filing_evidence(
@@ -216,15 +241,10 @@ def build_filing_evidence(
             raise edgar.EdgarUnavailable(
                 "SEC companyfacts payload has an unexpected shape"
             )
-        latest_10k, latest_10q = _latest_form_dates(payload)
+        latest_dates, filing_digest = _latest_form_filings(payload)
         # Only the newest filing for each form is in scope for phrase checks;
-        # guidance (8-K/10-Q) is a separate, unfiltered sweep below.
-        latest_dates = {
-            form: filed
-            for form, filed in (("10-K", latest_10k), ("10-Q", latest_10q))
-            if filed is not None
-        }
-
+        # guidance (8-K/10-Q) is a separate, unfiltered sweep below. Both sweeps
+        # key their cache on the companyfacts filing fingerprint.
         hits: list[dict[str, Any]] = []
         for phrase in RED_FLAG_PHRASES + INFORMATIONAL_PHRASES:
             hits.extend(
@@ -235,22 +255,30 @@ def build_filing_evidence(
                     store=store,
                     fetch=fetch,
                     latest_dates=latest_dates,
+                    filing_digest=filing_digest,
                 )
             )
         guidance: list[dict[str, Any]] = []
         for phrase in GUIDANCE_PHRASES:
             guidance.extend(
                 search_filings(
-                    phrase, cik, forms=GUIDANCE_FORMS, store=store, fetch=fetch
+                    phrase,
+                    cik,
+                    forms=GUIDANCE_FORMS,
+                    store=store,
+                    fetch=fetch,
+                    filing_digest=filing_digest,
                 )
             )
         return FilingEvidence(
             cik=cik,
             facts=payload,
             hits=tuple(hits),
-            latest_10k=latest_10k,
-            latest_10q=latest_10q,
+            latest_10k=latest_dates.get("10-K"),
+            latest_10q=latest_dates.get("10-Q"),
             guidance_hits=tuple(guidance),
         )
+    except edgar.UserAgentUnavailable:
+        return FilingEvidence(reason=edgar.USER_AGENT_REASON)
     except edgar.EdgarUnavailable as exc:
         return FilingEvidence(reason=str(exc) or "EDGAR unavailable")
