@@ -1,6 +1,7 @@
 """SQLiteStore — persists saved screens and watchlists."""
 
 import json
+import math
 import sqlite3
 import time
 from pathlib import Path
@@ -18,6 +19,22 @@ VALUATION_COLUMNS = (
 # 1 when the symbol is in HedgeFollow's largest hedge fund buys, 0 when not, NULL
 # when the list could not be read during that sync.
 FLAG_COLUMNS = ("hedge_fund_buys",)
+
+# Normalised and composite metrics that live beside the original columns so the
+# reference-site benchmarks keep reading unmutated values.
+NEW_COLUMNS = (
+    "shares_insiders_percent",
+    "cyclical_peak_risk",
+    "valuation_triangulation",
+    "valuation_upside_capped_pct",
+)
+
+_NEW_COLUMN_TYPES = {
+    "shares_insiders_percent": "REAL",
+    "cyclical_peak_risk": "INTEGER",
+    "valuation_triangulation": "TEXT",
+    "valuation_upside_capped_pct": "REAL",
+}
 
 STOCK_FIELDS = [
     "symbol",
@@ -68,13 +85,57 @@ STOCK_FIELDS = [
     "roe_5y_avg_pct",
     "roic_5y_avg_pct",
     "shares_insiders_pct",
+    "shares_insiders_percent",
     "industry",
     "short_pct",
     "rating",
     "pt_upside_pct",
+    "cyclical_peak_risk",
+    "valuation_triangulation",
+    "valuation_upside_capped_pct",
     *VALUATION_COLUMNS,
     *FLAG_COLUMNS,
 ]
+
+
+def _finite_bound(
+    column: str, value: Any, bound: str, warnings: list[str]
+) -> float | None:
+    """Coerce one filter bound to a finite float, recording why it was dropped."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (ValueError, TypeError):
+        warnings.append(f"Ignored non-numeric {bound} bound on '{column}'")
+        return None
+    if not math.isfinite(number):
+        warnings.append(f"Ignored non-finite {bound} bound on '{column}'")
+        return None
+    return number
+
+
+class StockQueryResult(tuple[Any, ...]):
+    """3-tuple of (rows, total_pages, total_matching) with query warnings."""
+
+    rows: list[dict[str, Any]]
+    total_pages: int
+    total_matching: int
+    warnings: list[str]
+
+    def __new__(
+        cls,
+        rows: list[dict[str, Any]],
+        total_pages: int,
+        total_matching: int,
+        warnings: list[str] | None = None,
+    ) -> "StockQueryResult":
+        instance = super().__new__(cls, (rows, total_pages, total_matching))
+        instance.rows = rows
+        instance.total_pages = total_pages
+        instance.total_matching = total_matching
+        instance.warnings = warnings or []
+        return instance
 
 
 class SQLiteStore:
@@ -215,6 +276,7 @@ class SQLiteStore:
                     roe_5y_avg_pct REAL,
                     roic_5y_avg_pct REAL,
                     shares_insiders_pct REAL,
+                    shares_insiders_percent REAL,
                     industry TEXT,
                     short_pct REAL,
                     rating TEXT,
@@ -224,6 +286,9 @@ class SQLiteStore:
                     lynch_fair_value REAL,
                     lynch_upside_pct REAL,
                     hedge_fund_buys INTEGER,
+                    cyclical_peak_risk INTEGER,
+                    valuation_triangulation TEXT,
+                    valuation_upside_capped_pct REAL,
                     updated_at REAL
                 )
             """)
@@ -241,7 +306,27 @@ class SQLiteStore:
                     conn.execute(
                         f"ALTER TABLE stocks ADD COLUMN {column} INTEGER"  # nosec B608
                     )
+            self._migrate_schema(conn)
             conn.commit()
+
+    @staticmethod
+    def _migrate_schema(conn: sqlite3.Connection) -> None:
+        """Add the side-by-side metrics and backfill them on existing databases."""
+        stock_columns = {row[1] for row in conn.execute("PRAGMA table_info(stocks)")}
+        for column_name in NEW_COLUMNS:
+            if column_name not in stock_columns:
+                column_type = _NEW_COLUMN_TYPES[column_name]
+                conn.execute(
+                    f"ALTER TABLE stocks ADD COLUMN {column_name} {column_type}"  # nosec B608
+                )
+
+        # Backfill the true percentage from the fraction the benchmark checks use.
+        conn.execute("""
+            UPDATE stocks
+            SET shares_insiders_percent = shares_insiders_pct * 100.0
+            WHERE shares_insiders_percent IS NULL AND shares_insiders_pct IS NOT NULL
+        """)
+        conn.commit()
 
     # ── Saved Screens ────────────────────────────────────────────────
 
@@ -638,12 +723,14 @@ class SQLiteStore:
         sort_ascending: bool = True,
         page: int = 1,
         page_size: int = 25,
-    ) -> tuple[list[dict[str, Any]], int, int]:
+    ) -> StockQueryResult:
         """Query stocks with filters, search, sort, pagination at DB level.
 
         Returns:
-            Tuple of (rows, total_pages, total_matching).
+            A 3-tuple of (rows, total_pages, total_matching) that also exposes
+            the filter diagnostics collected while building the query.
         """
+        warnings: list[str] = []
         params: list[Any] = []
         where_clauses: list[str] = []
 
@@ -688,6 +775,9 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "shares_insiders_percent",
+            "cyclical_peak_risk",
+            "valuation_upside_capped_pct",
             "short_pct",
             "pt_upside_pct",
             *VALUATION_COLUMNS,
@@ -695,21 +785,55 @@ class SQLiteStore:
         }
         # "symbol" is not an enum column, but callers legitimately need to
         # constrain the query to an explicit list (e.g. the watchlist).
-        enum_columns = {"exchange", "type", "currency", "mic", "symbol"}
+        enum_columns = {
+            "exchange",
+            "type",
+            "currency",
+            "mic",
+            "symbol",
+            "valuation_triangulation",
+        }
 
         if filters:
             for col, spec in filters.items():
+                if not isinstance(spec, dict):
+                    warnings.append(
+                        f"Invalid filter specification for '{col}': expected dict"
+                    )
+                    continue
                 if col in numeric_columns:
-                    if "min" in spec and spec["min"] is not None:
-                        where_clauses.append(f"{col} >= ?")
-                        params.append(spec["min"])
-                    if "max" in spec and spec["max"] is not None:
-                        where_clauses.append(f"{col} <= ?")
-                        params.append(spec["max"])
-                elif col in enum_columns and "values" in spec and spec["values"]:
-                    placeholders = ",".join(["?"] * len(spec["values"]))
-                    where_clauses.append(f"{col} IN ({placeholders})")
-                    params.extend(spec["values"])
+                    parsed_min = _finite_bound(col, spec.get("min"), "min", warnings)
+                    parsed_max = _finite_bound(col, spec.get("max"), "max", warnings)
+
+                    if (
+                        parsed_min is not None
+                        and parsed_max is not None
+                        and parsed_min > parsed_max
+                    ):
+                        warnings.append(
+                            f"Filter '{col}' has min ({parsed_min}) > max "
+                            f"({parsed_max}); matches 0 rows"
+                        )
+                        where_clauses.append("1=0")
+                    else:
+                        if parsed_min is not None:
+                            where_clauses.append(f"{col} >= ?")
+                            params.append(parsed_min)
+                        if parsed_max is not None:
+                            where_clauses.append(f"{col} <= ?")
+                            params.append(parsed_max)
+                elif col in enum_columns:
+                    if "values" in spec:
+                        values = spec["values"]
+                        if not values:
+                            # An empty selection means "none of them", not "all".
+                            where_clauses.append("1=0")
+                        else:
+                            placeholders = ",".join(["?"] * len(values))
+                            where_clauses.append(f"{col} IN ({placeholders})")
+                            params.extend(values)
+                else:
+                    warnings.append(f"Ignored unknown filter column: '{col}'")
 
         if search_query:
             q = f"%{search_query.strip().upper()}%"
@@ -767,37 +891,42 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "shares_insiders_percent",
             "industry",
             "short_pct",
             "rating",
             "pt_upside_pct",
+            "cyclical_peak_risk",
+            "valuation_triangulation",
+            "valuation_upside_capped_pct",
             *VALUATION_COLUMNS,
             *FLAG_COLUMNS,
         ]
         select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"  # nosec B608
 
         count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"  # nosec B608
+        page_size = max(1, min(int(page_size), 100_000))
+
+        # COUNT(*) and the page must see the same snapshot: one connection.
         with self._connect() as conn:
             total_matching = conn.execute(count_sql, params).fetchone()[0]
 
-        total_pages = max(1, (total_matching + page_size - 1) // page_size)
-        page = max(1, min(page, total_pages))
-        offset = (page - 1) * page_size
+            total_pages = max(1, (total_matching + page_size - 1) // page_size)
+            safe_page = max(1, min(int(page), total_pages))
+            offset = (safe_page - 1) * page_size
 
-        if sort_column and sort_column in numeric_columns:
-            sort_dir = "ASC" if sort_ascending else "DESC"
-            select_sql += f" ORDER BY {sort_column} {sort_dir} NULLS LAST"
+            if sort_column and sort_column in numeric_columns:
+                sort_dir = "ASC" if sort_ascending else "DESC"
+                select_sql += f" ORDER BY {sort_column} {sort_dir} NULLS LAST"
 
-        select_sql += f" LIMIT {page_size} OFFSET {offset}"
+            select_sql += " LIMIT ? OFFSET ?"
+            query_params = [*params, page_size, offset]
 
-        rows: list[dict[str, Any]] = []
-        with self._connect() as conn:
-            cur = conn.execute(select_sql, params)
+            cur = conn.execute(select_sql, query_params)
             cols = [c[0] for c in cur.description]
-            for row in cur.fetchall():
-                rows.append(dict(zip(cols, row)))
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
 
-        return rows, total_pages, total_matching
+        return StockQueryResult(rows, total_pages, total_matching, warnings=warnings)
 
     def save_stock(self, symbol: str, data: dict[str, Any]) -> None:
         """Upsert a stock's metrics."""
@@ -847,7 +976,7 @@ class SQLiteStore:
 
     def get_unique_values(self, column: str) -> list[str]:
         """Get unique values for an enum column."""
-        allowed = {"exchange", "type", "currency", "mic"}
+        allowed = {"exchange", "type", "currency", "mic", "valuation_triangulation"}
         if column not in allowed:
             return []
 

@@ -27,7 +27,7 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "mic": "MIC",
     "currency": "Currency",
     "market_cap": "Market Cap",
-    "pe_ratio": "Pe ratio",
+    "pe_ratio": "P/E",
     "pb_ratio": "P/B",
     "ps_ratio": "P/S",
     "dividend_yield_pct": "Div Yield %",
@@ -67,7 +67,11 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "roa_5y_avg_pct": "ROA (5Y) %",
     "roe_5y_avg_pct": "ROE (5Y) %",
     "roic_5y_avg_pct": "ROIC (5Y) %",
-    "shares_insiders_pct": "Shares Insiders %",
+    "shares_insiders_pct": "Shares Insiders (Ratio)",
+    "shares_insiders_percent": "Shares Insiders %",
+    "cyclical_peak_risk": "Cyclical Peak Risk",
+    "valuation_triangulation": "Valuation Consensus",
+    "valuation_upside_capped_pct": "Upside (Capped %)",
     "industry": "Industry",
     "short_pct": "Short % Shares",
     "rating": "Rating",
@@ -76,7 +80,78 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "dcf_upside_pct": "DCF Upside %",
     "lynch_fair_value": "Lynch Fair Value",
     "lynch_upside_pct": "Lynch Upside %",
-    "hedge_fund_buys": "Largest HF Buy",
+    "hedge_fund_buys": "13F Whale",
+}
+
+# ── Column help texts ──────────────────────────────────────────────
+# One plain-language line per displayed column: what it measures and, wherever
+# a reader could misread the number, its unit. Shown in the screener's column
+# guide so no abbreviation needs outside knowledge.
+COLUMN_HELP: dict[str, str] = {
+    "symbol": "Ticker symbol used to look the stock up.",
+    "description": "Company name and short business summary.",
+    "exchange": "Exchange the stock trades on.",
+    "type": "Security type (stock, ETF, and so on).",
+    "mic": "Market identifier code of the primary listing venue.",
+    "currency": "Currency the price and statements are reported in.",
+    "market_cap": "Share price times shares outstanding.",
+    "pe_ratio": "Share price divided by trailing twelve-month earnings per share.",
+    "pb_ratio": "Share price divided by book value per share.",
+    "ps_ratio": "Share price divided by revenue per share.",
+    "dividend_yield_pct": "Annual dividend divided by price, in percent.",
+    "gross_margin_pct": "Gross profit divided by revenue, in percent.",
+    "operating_margin_pct": "Operating income divided by revenue, in percent.",
+    "net_margin_pct": "Net income divided by revenue, in percent.",
+    "roa_pct": "Net income divided by total assets, in percent.",
+    "roe_pct": "Net income divided by shareholders' equity, in percent.",
+    "roic_pct": "Operating profit after tax divided by invested capital, in percent.",
+    "current_ratio": "Current assets divided by current liabilities; below 1 is tight.",
+    "debt_to_equity": "Total debt divided by shareholders' equity.",
+    "fcf_margin_pct": "Free cash flow divided by revenue, in percent.",
+    "revenue_growth_5y_pct": "Compound annual revenue growth over five years, in percent.",
+    "eps_growth_5y_pct": "Compound annual earnings-per-share growth over five years.",
+    "beta": "Price volatility versus the market; 1.0 moves with the market.",
+    "week_52_high": "Highest traded price in the last 52 weeks.",
+    "week_52_low": "Lowest traded price in the last 52 weeks.",
+    "price": "Latest traded share price.",
+    "peg_ratio": "P/E divided by expected earnings growth; under 1 is cheap on this measure.",
+    "ev_to_ebitda": "Enterprise value divided by EBITDA; lower is cheaper.",
+    "free_cash_flow_per_share": "Free cash flow divided by shares outstanding.",
+    "revenue_per_share": "Revenue divided by shares outstanding.",
+    "book_value_per_share": "Shareholders' equity divided by shares outstanding.",
+    "tangible_book_value_per_share": "Book value less intangible assets, per share.",
+    "long_term_debt_to_equity": "Long-term debt divided by shareholders' equity.",
+    "asset_turnover": "Revenue divided by total assets; sales per unit of assets.",
+    "eps_ttm": "Earnings per share over the trailing twelve months.",
+    "eps_growth_3y_pct": "Compound annual earnings-per-share growth over three years.",
+    "revenue_growth_3y_pct": "Compound annual revenue growth over three years.",
+    "net_income": "Profit after tax for the trailing period, in reporting currency.",
+    "free_cash_flow": "Operating cash flow less capital spending, in reporting currency.",
+    "fcf_growth_5y_pct": "Compound annual free-cash-flow growth over five years.",
+    "net_income_growth_5y_pct": "Compound annual net-income growth over five years.",
+    "return_cagr_5y_pct": "Annualized total shareholder return over five years.",
+    "return_cagr_10y_pct": "Annualized total shareholder return over ten years.",
+    "return_cagr_15y_pct": "Annualized total shareholder return over fifteen years.",
+    "roa_5y_avg_pct": "Five-year average return on assets.",
+    "roe_5y_avg_pct": "Five-year average return on equity.",
+    "roic_5y_avg_pct": "Five-year average return on invested capital; the best single quality gauge.",
+    "shares_insiders_pct": "Insiders' stake as a fraction, where 0.05 means 5%.",
+    "shares_insiders_percent": "Insiders' stake as a percentage, where 5.0 means 5%.",
+    "cyclical_peak_risk": "1 when a cyclical stock screens cheap on peak earnings.",
+    "valuation_triangulation": "How far the DCF, Lynch and analyst-target upsides agree.",
+    "valuation_upside_capped_pct": "Average model upside per stock, capped at 150%.",
+    "industry": "Provider industry classification.",
+    "short_pct": "Shares sold short as a percentage of the float.",
+    "rating": "Analyst consensus rating.",
+    "pt_upside_pct": "Median analyst price target versus today's price, in percent.",
+    "dcf_fair_value": "Vendor discounted-cash-flow value per share.",
+    "dcf_upside_pct": "DCF fair value versus today's price, in percent.",
+    "lynch_fair_value": "Growth-adjusted fair value per share, in the Lynch style.",
+    "lynch_upside_pct": "Lynch fair value versus today's price, in percent.",
+    "hedge_fund_buys": (
+        "1 when the stock is in HedgeFollow's largest hedge-fund buys. 13F "
+        "filings lag up to 45 days and crowding is not a signal on its own."
+    ),
 }
 
 # ── View presets ─────────────────────────────────────────────────────
@@ -94,6 +169,14 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "dcf_upside_pct",
         "lynch_fair_value",
         "lynch_upside_pct",
+        "valuation_triangulation",
+        "valuation_upside_capped_pct",
+        "shares_insiders_pct",
+        "shares_insiders_percent",
+        "cyclical_peak_risk",
+        "fcf_margin_pct",
+        "current_ratio",
+        "short_pct",
         "hedge_fund_buys",
     ],
     "Valuation": [
@@ -155,6 +238,13 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "dcf_upside_pct",
         "lynch_fair_value",
         "lynch_upside_pct",
+        "valuation_triangulation",
+        "valuation_upside_capped_pct",
+        "shares_insiders_pct",
+        "shares_insiders_percent",
+        "cyclical_peak_risk",
+        "fcf_margin_pct",
+        "current_ratio",
         "hedge_fund_buys",
     ],
     "All Columns": COLUMN_DISPLAY_NAMES.keys(),
@@ -201,6 +291,9 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
     "roe_5y_avg_pct",
     "roic_5y_avg_pct",
     "shares_insiders_pct",
+    "shares_insiders_percent",
+    "cyclical_peak_risk",
+    "valuation_upside_capped_pct",
     "short_pct",
     "pt_upside_pct",
     "dcf_fair_value",
@@ -210,5 +303,30 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
     "hedge_fund_buys",
 ]
 
+# ── Investment logic ─────────────────────────────────────────────────
+# Industries where a low multiple on peak trailing earnings is a trap, not value.
+CYCLICAL_INDUSTRIES: frozenset[str] = frozenset(
+    {
+        "Metals & Mining",
+        "Gold",
+        "Silver",
+        "Agricultural Inputs",
+        "Chemicals",
+        "Semiconductors",
+        "Semiconductor Equipment & Materials",
+        "Engineering & Construction",
+        "Oil & Gas E&P",
+        "Oil & Gas Refining & Marketing",
+        "Steel",
+        "Building Products & Equipment",
+    }
+)
+
 # ── Enum filter columns ─────────────────────────────────────────────
-ENUM_FILTER_COLUMNS: list[str] = ["exchange", "type", "currency", "mic"]
+ENUM_FILTER_COLUMNS: list[str] = [
+    "exchange",
+    "type",
+    "currency",
+    "mic",
+    "valuation_triangulation",
+]

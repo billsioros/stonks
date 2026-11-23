@@ -239,3 +239,40 @@ def test_fetch_json_raises_after_all_attempts(monkeypatch):
         raise AssertionError("fetch_json should propagate the final error")
 
     assert len(attempts) == stockanalysis.REQUEST_ATTEMPTS
+
+
+def test_build_rows_populates_both_insider_ownership_columns():
+    rows = stockanalysis.build_rows(
+        [{"symbol": "AAPL", "description": "Apple Inc.", "industry": "Hardware"}],
+        {"AAPL": {"marketCap": 3000.0, "sharesInsiders": 3.897}},
+    )
+    aapl = rows[0]
+    # Original fraction retained for reference benchmark checks
+    assert aapl["shares_insiders_pct"] == pytest.approx(0.03897)
+    # New true percentage column next to original
+    assert aapl["shares_insiders_percent"] == pytest.approx(3.897)
+
+
+def test_build_rows_attaches_cyclical_and_triangulation_metrics():
+    rows = stockanalysis.build_rows(
+        [{"symbol": "GOLD", "description": "Gold Co", "industry": "Gold"}],
+        {
+            "GOLD": {
+                "marketCap": 3000.0,
+                "price": 100.0,
+                "eps": 5.0,
+                "epsGrowth5Y": 20.0,
+                "epsGrowth10Y": 20.0,
+                "evEbitda": 4.15,
+                "roic5y": 46.8,
+                "fcfGrowth5Y": 15.0,
+                "pegRatio": 0.5,
+                "priceTargetChange": 10.0,
+            }
+        },
+    )
+    row = rows[0]
+    assert row["cyclical_peak_risk"] == 1
+    assert row["valuation_triangulation"] == "Cyclical Distorted"
+    assert row["valuation_upside_capped_pct"] is not None
+    assert row["valuation_upside_capped_pct"] <= 150.0

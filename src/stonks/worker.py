@@ -107,9 +107,22 @@ def _maybe_run_sanity_checks(store: SQLiteStore) -> None:
         logger.info("✅ Cross-checks agree with the reference sites")
 
 
+def _record_sync_outcome(
+    store: SQLiteStore, attempted_at: str, status: str, error: str
+) -> None:
+    """Persist the health of this sync so the UI can show staleness."""
+    store.save_metadata("last_sync_status", status)
+    store.save_metadata("last_sync_time", attempted_at)
+    store.save_metadata("last_sync_error", error)
+    if status == "success":
+        store.save_metadata("last_successful_sync_at", attempted_at)
+
+
 def job() -> None:
     """Sync the full StockAnalysis screener dataset into the local store."""
     logger.info("🚀 Starting data sync...")
+    store: SQLiteStore | None = None
+    attempted_at = str(time.time())
     try:
         store = SQLiteStore()
         # Alerts are transient; nothing older than the retention window is useful.
@@ -122,6 +135,12 @@ def job() -> None:
         rows = fetch_rows(discount_rate=discount_rate)
         if not rows:
             logger.warning("⚠️ No screener data found.")
+            _record_sync_outcome(
+                store,
+                attempted_at,
+                "failed",
+                "No screener data returned from provider",
+            )
             return
 
         largest_buys = fetch_largest_buys()
@@ -137,6 +156,7 @@ def job() -> None:
 
         store.replace_stocks(rows)
         store.save_metadata("universe_size", len(rows))
+        _record_sync_outcome(store, attempted_at, "success", "")
 
         changed = _record_change_alerts(store, watched, previous, rows)
         news = fetch_watched_news(store, sorted(watched))
@@ -146,8 +166,10 @@ def job() -> None:
         _maybe_run_sanity_checks(store)
 
         logger.info("✅ Synced %s symbols", len(rows))
-    except Exception:
+    except Exception as exc:
         logger.exception("💥 Critical error")
+        if store is not None:
+            _record_sync_outcome(store, attempted_at, "failed", str(exc))
 
 
 def run_worker() -> None:

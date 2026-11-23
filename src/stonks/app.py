@@ -8,6 +8,7 @@ import logging
 import math
 import re
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +21,7 @@ from stonks import report, report_view, sanity
 from stonks.backtest_view import render_backtest_tab
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
+    COLUMN_HELP,
     DEFAULT_PAGE_SIZE,
     ENUM_FILTER_COLUMNS,
     NUMERIC_FILTER_COLUMNS,
@@ -500,21 +502,6 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     margin-top: 0.3rem;
 }
 
-/* Active filter summary */
-.active-filters {
-    background: var(--accent-soft);
-    border: 1px solid var(--accent-border);
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 1.5rem;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-}
-
-.active-filters strong {
-    color: var(--text-primary);
-}
-
 /* Pagination */
 .pagination-info {
     color: var(--text-secondary);
@@ -735,6 +722,38 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
     return f"{val:,.{decimals}f}"
 
 
+def _fmt_cyclical_risk(val: object) -> str:
+    """Render the cyclical peak flag as a warning badge."""
+    if _is_missing(val) or val is None:
+        return "—"
+    return "⚠️ Peak" if val else ""
+
+
+def _prune_filters(filters: dict[str, Any]) -> dict[str, Any]:
+    """Drop filter entries that cannot constrain anything."""
+    pruned: dict[str, Any] = {}
+    for col, spec in filters.items():
+        if not isinstance(spec, dict):
+            continue
+        cleaned = {key: value for key, value in spec.items() if value is not None}
+        if not cleaned:
+            continue
+        if "values" in cleaned and not cleaned["values"]:
+            continue
+        pruned[col] = cleaned
+    return pruned
+
+
+def apply_screen_state(screen: dict[str, Any]) -> None:
+    """Load a screen's filters, view and sorting into the session, consistently."""
+    st.session_state["active_filters"] = _prune_filters(screen.get("filters") or {})
+    st.session_state["view_preset"] = screen.get("view_preset", "Overview")
+    if screen.get("sort_column"):
+        st.session_state["sort_column"] = screen["sort_column"]
+    st.session_state["sort_ascending"] = screen.get("sort_ascending", True)
+    st.session_state["current_page"] = 1
+
+
 @lru_cache(maxsize=1)
 def _logo_data_uri() -> str:
     """Return the bundled favicon as a data URI for the masthead."""
@@ -819,16 +838,7 @@ def render_sidebar_filters() -> dict[str, Any]:
                     preset["description"],
                 )
                 if load:
-                    st.session_state["active_filters"] = preset["filters"]
-                    st.session_state["view_preset"] = preset.get(
-                        "view_preset", "Overview"
-                    )
-                    if preset.get("sort_column"):
-                        st.session_state["sort_column"] = preset["sort_column"]
-                        st.session_state["sort_ascending"] = preset.get(
-                            "sort_ascending", False
-                        )
-                    st.session_state["current_page"] = 1
+                    apply_screen_state(preset)
                     st.rerun()
 
         # ── Saved Screens ────────────────────────────────────────
@@ -842,16 +852,7 @@ def render_sidebar_filters() -> dict[str, Any]:
                     allow_delete=True,
                 )
                 if load:
-                    st.session_state["active_filters"] = screen["filters"]
-                    st.session_state["view_preset"] = screen.get(
-                        "view_preset", "Overview"
-                    )
-                    if screen.get("sort_column"):
-                        st.session_state["sort_column"] = screen["sort_column"]
-                        st.session_state["sort_ascending"] = screen.get(
-                            "sort_ascending", True
-                        )
-                    st.session_state["current_page"] = 1
+                    apply_screen_state(screen)
                     st.rerun()
                 if delete:
                     store.delete_screen(screen["name"])
@@ -868,7 +869,9 @@ def render_sidebar_filters() -> dict[str, Any]:
                 use_container_width=True,
             ):
                 if save_name:
-                    current_filters = st.session_state.get("active_filters", {})
+                    current_filters = _prune_filters(
+                        st.session_state.get("active_filters", {})
+                    )
                     view_preset = st.session_state.get("view_preset", "Overview")
                     sort_col = st.session_state.get("sort_column")
                     sort_asc = st.session_state.get("sort_ascending", True)
@@ -1029,10 +1032,31 @@ def render_top_filters() -> dict[str, Any]:
         if st.button(
             "Apply", key="apply_top", type="primary", use_container_width=True
         ):
+            st.session_state["active_filters"] = _prune_filters(filters)
             st.session_state["current_page"] = 1
             st.rerun()
 
     return filters  # type: ignore[no-any-return]
+
+
+def _column_guide_markdown(columns: Sequence[str]) -> str:
+    """A one-line-per-column glossary for the columns currently on screen."""
+    rows = [
+        f"- **{COLUMN_DISPLAY_NAMES.get(column, column)}** — {COLUMN_HELP[column]}"
+        for column in columns
+        if column in COLUMN_HELP
+    ]
+    return "\n".join(rows)
+
+
+def _sync_time_text(raw: str | None) -> str:
+    """Render a stored sync timestamp, tolerating malformed metadata."""
+    if not raw:
+        return "never"
+    try:
+        return datetime.fromtimestamp(float(raw)).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "an unknown time"
 
 
 def render_screener_table() -> None:
@@ -1100,7 +1124,7 @@ def render_screener_table() -> None:
     search_query = st.session_state.get("search_query", "")
     current_page = st.session_state.get("current_page", 1)
 
-    page_rows, total_pages, total_matching = store.get_stocks(
+    result = store.get_stocks(
         filters=active_filters,
         search_query=search_query,
         sort_column=sort_column,
@@ -1108,43 +1132,21 @@ def render_screener_table() -> None:
         page=current_page,
         page_size=page_size,
     )
+    page_rows, total_pages, total_matching = result
+
+    if result.warnings:
+        st.warning("\n".join(f"⚠️ {warning}" for warning in result.warnings))
+
+    if store.get_metadata("last_sync_status") == "failed":
+        error = store.get_metadata("last_sync_error") or "unknown error"
+        since = _sync_time_text(store.get_metadata("last_successful_sync_at"))
+        st.error(
+            f"⚠️ **Last background sync failed** ({error}). "
+            f"Showing the snapshot from {since}."
+        )
 
     if total_matching == 0 and (active_filters or search_query):
         st.warning("⚠️ **No stocks match your current filters.**")
-
-    if active_filters or search_query:
-        filter_parts = []
-
-        for col, spec in active_filters.items():
-            display = COLUMN_DISPLAY_NAMES.get(col, col)
-            parts = []
-            if "min" in spec:
-                parts.append(f"≥ {spec['min']}")
-            if "max" in spec:
-                parts.append(f"≤ {spec['max']}")
-            if "values" in spec:
-                parts.append(f"∈ {spec['values']}")
-
-            if parts:
-                filter_parts.append(f"**{display}**: {', '.join(parts)}")
-
-        if search_query:
-            filter_parts.append(f'🔍 **Search**: "{search_query}"')
-
-        if filter_parts:
-            html_parts = []
-            for p in filter_parts:
-                html_parts.append(
-                    p.replace("**", "<strong>").replace("**", "</strong>")
-                )
-
-            st.markdown(
-                f"""<div class="active-filters">
-                🎯 <strong>Active filters:</strong> {" · ".join(html_parts)}
-                &nbsp;|&nbsp; Matching: <strong>{total_matching:,}</strong> stocks
-                </div>""",
-                unsafe_allow_html=True,
-            )
 
     preset_cols = VIEW_PRESETS.get(view_preset, [])
     if not preset_cols:
@@ -1189,14 +1191,16 @@ def render_screener_table() -> None:
     display_df = page_df[visible_cols].rename(columns=rename_map)
 
     for col in display_df.columns:
-        if col == "Largest HF Buy":
+        if col == "13F Whale":
             display_df[col] = display_df[col].apply(_fmt_flag)
+        elif col == "Cyclical Peak Risk":
+            display_df[col] = display_df[col].apply(_fmt_cyclical_risk)
         elif col == "Market Cap":
             display_df[col] = display_df[col].apply(_fmt_market_cap)
         elif "%" in col or "Upside" in col or "Short" in col:
             display_df[col] = display_df[col].apply(_fmt_pct)
         elif col in (
-            "Pe ratio",
+            "P/E",
             "PE Ratio",
             "P/B",
             "P/S",
@@ -1293,6 +1297,11 @@ def render_screener_table() -> None:
         mime="text/csv",
         key="download_csv",
     )
+
+    guide = _column_guide_markdown(visible_cols)
+    if guide:
+        with st.expander("📖 What the columns mean"):
+            st.markdown(guide)
 
 
 def render_watchlist_tab() -> None:

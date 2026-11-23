@@ -352,4 +352,105 @@ def test_unread_alert_counts_groups_by_symbol(store: SQLiteStore) -> None:
     store.add_alert("AAA", "big_move", "warn", "moved", None, "a2")
     store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
     store.mark_alerts_seen([store.get_alerts(symbol="BBB")[0]["id"]])
+
     assert store.unread_alert_counts() == {"AAA": 2}
+
+
+def test_schema_migration_adds_side_by_side_columns(tmp_path) -> None:
+    db_path = tmp_path / "test_migration.db"
+    store = SQLiteStore(db_path=db_path)
+    with store._connect() as conn:
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(stocks)")}
+    assert "shares_insiders_percent" in cols
+    assert "cyclical_peak_risk" in cols
+    assert "valuation_triangulation" in cols
+    assert "valuation_upside_capped_pct" in cols
+
+
+def test_startup_backfill_populates_shares_insiders_percent(tmp_path) -> None:
+    db_path = tmp_path / "test_backfill.db"
+    store = SQLiteStore(db_path=db_path)
+    with store._connect() as conn:
+        conn.execute(
+            "INSERT INTO stocks (symbol, shares_insiders_pct) VALUES (?, ?)",
+            ("TEST", 0.05),
+        )
+        conn.commit()
+    # Re-instantiating triggers startup migration/backfill
+    store._migrate_schema(store._connect())
+    with store._connect() as conn:
+        row = conn.execute(
+            "SELECT shares_insiders_pct, shares_insiders_percent FROM stocks WHERE symbol='TEST'"
+        ).fetchone()
+    assert row[0] == 0.05
+    assert row[1] == 5.0
+
+
+def test_get_stocks_returns_stock_query_result_tuple(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"market_cap": 3000.0})
+    result = store.get_stocks()
+    # Verifies backwards compatibility as a 3-tuple
+    rows, pages, total = result
+    assert len(rows) == 1
+    assert pages == 1
+    assert total == 1
+    assert hasattr(result, "warnings")
+    assert isinstance(result.warnings, list)
+
+
+def test_get_stocks_handles_zero_and_negative_page_size(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"market_cap": 3000.0})
+    rows, pages, total = store.get_stocks(page_size=0)
+    assert len(rows) == 1
+    assert pages == 1
+    rows_neg, pages_neg, total_neg = store.get_stocks(page_size=-10)
+    assert len(rows_neg) == 1
+    assert pages_neg == 1
+
+
+def test_unknown_filter_column_records_warning_and_skips(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"market_cap": 3000.0})
+    result = store.get_stocks(filters={"non_existent_column": {"min": 10}})
+    rows, _, total = result
+    assert total == 1
+    assert any("non_existent_column" in w for w in result.warnings)
+
+
+def test_empty_enum_values_matches_zero_rows(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"exchange": "NMS"})
+    result = store.get_stocks(filters={"symbol": {"values": []}})
+    rows, _, total = result
+    assert total == 0
+    assert len(rows) == 0
+
+
+def test_inverted_bounds_records_warning_and_matches_nothing(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"pe_ratio": 25.0})
+    result = store.get_stocks(filters={"pe_ratio": {"min": 50, "max": 10}})
+    rows, _, total = result
+    assert total == 0
+    assert any("min" in w and "max" in w for w in result.warnings)
+
+
+def test_non_finite_numeric_bounds_ignored_with_warning(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"pe_ratio": 25.0})
+    result = store.get_stocks(filters={"pe_ratio": {"min": float("nan")}})
+    rows, _, total = result
+    assert total == 1
+    assert any("non-finite" in w.lower() for w in result.warnings)
+
+
+def test_all_filter_and_sort_columns_exist_in_schema(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    with store._connect() as conn:
+        schema_cols = {row[1] for row in conn.execute("PRAGMA table_info(stocks)")}
+    from stonks.config import NUMERIC_FILTER_COLUMNS, ENUM_FILTER_COLUMNS
+
+    assert set(NUMERIC_FILTER_COLUMNS) <= schema_cols
+    assert set(ENUM_FILTER_COLUMNS) <= schema_cols

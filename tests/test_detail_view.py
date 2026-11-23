@@ -109,6 +109,28 @@ def test_format_pct_carries_its_suffix() -> None:
     assert format_pct("n/a") == "—"
 
 
+TEST_SYMBOL = "ZZDET"
+
+
+def _seed_row(store: Any) -> None:
+    """Create the screener row the overview reads price and the 52-week band from."""
+    store.save_stock(
+        TEST_SYMBOL,
+        {
+            "price": 125.0,
+            "week_52_low": 90.0,
+            "week_52_high": 130.0,
+            "description": "Detail view fixture",
+        },
+    )
+
+
+def _drop_row(store: Any) -> None:
+    with store._connect() as conn:
+        conn.execute("DELETE FROM stocks WHERE symbol = ?", (TEST_SYMBOL,))
+        conn.commit()
+
+
 def test_detail_overview_renders_the_card_layout() -> None:
     from streamlit.testing.v1 import AppTest
 
@@ -116,10 +138,11 @@ def test_detail_overview_renders_the_card_layout() -> None:
     from stonks.store import SQLiteStore
 
     store = SQLiteStore()
-    key = cache_key("NVDA", "overview")
+    _seed_row(store)
+    key = cache_key(TEST_SYMBOL, "overview")
     payload = resolve_payload(json.loads((FIXTURES / "nvda_overview.json").read_text()))
     store.cache_set(key, {"data": payload, "fetched_at": 1.0}, ttl_seconds=3600)
-    history_key = "hist:NVDA:1Y"
+    history_key = f"hist:{TEST_SYMBOL}:1Y"
     store.cache_set(
         history_key,
         [
@@ -132,7 +155,7 @@ def test_detail_overview_renders_the_card_layout() -> None:
     try:
         at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
         at.session_state["page"] = "detail"
-        at.session_state["detail_symbol"] = "NVDA"
+        at.session_state["detail_symbol"] = TEST_SYMBOL
         at.run()
         assert not at.exception
         rendered = " ".join(str(el.proto.body) for el in at.get("html"))
@@ -146,6 +169,7 @@ def test_detail_overview_renders_the_card_layout() -> None:
     finally:
         store.cache_delete(key)
         store.cache_delete(history_key)
+        _drop_row(store)
 
 
 def test_forecast_without_coverage_says_so_once() -> None:

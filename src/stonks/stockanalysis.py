@@ -17,6 +17,8 @@ from stonks.valuation import (
     DCF_DISCOUNT_RATE,
     dcf_discount_rate,
     dcf_fair_value,
+    evaluate_cyclical_peak_risk,
+    evaluate_valuation_triangulation,
     lynch_fair_value,
     upside_pct,
 )
@@ -150,6 +152,7 @@ DATA_POINT_MAP: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "roe_5y_avg_pct": ("roe5y", _identity),
     "roic_5y_avg_pct": ("roic5y", _identity),
     "shares_insiders_pct": ("sharesInsiders", _fraction),
+    "shares_insiders_percent": ("sharesInsiders", _identity),
     "short_pct": ("shortFloat", _identity),
     "rating": ("analystRatings", _identity),
     "pt_upside_pct": ("priceTargetChange", _identity),
@@ -221,6 +224,7 @@ def build_rows(
             value = point.get(field)
             row[column] = convert(value) if value is not None else None
         _add_valuation(row, point, discount_rate)
+        _add_investment_signals(row)
         rows.append(row)
     return rows
 
@@ -236,6 +240,26 @@ def _add_valuation(
     row["dcf_upside_pct"] = upside_pct(dcf, price)
     row["lynch_fair_value"] = lynch
     row["lynch_upside_pct"] = upside_pct(lynch, price)
+
+
+def _add_investment_signals(row: dict[str, Any]) -> None:
+    """Attach the cyclicality flag and the valuation-consensus columns."""
+    risk = evaluate_cyclical_peak_risk(
+        row.get("industry"),
+        row.get("ev_to_ebitda"),
+        row.get("roic_5y_avg_pct"),
+        row.get("fcf_growth_5y_pct"),
+    )
+    verdict, capped = evaluate_valuation_triangulation(
+        row.get("dcf_upside_pct"),
+        row.get("lynch_upside_pct"),
+        row.get("pt_upside_pct"),
+        row.get("peg_ratio"),
+        risk,
+    )
+    row["cyclical_peak_risk"] = risk
+    row["valuation_triangulation"] = verdict
+    row["valuation_upside_capped_pct"] = capped
 
 
 def current_discount_rate() -> float:

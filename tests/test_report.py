@@ -81,11 +81,19 @@ def test_prompt_summarizes_every_row_not_just_the_visible_page() -> None:
     assert "| CCC | +30.0% |" in prompt
 
 
-def test_prompt_leaves_company_descriptions_out() -> None:
+def test_prompt_includes_every_company_description() -> None:
     prompt = report.screener_report_prompt(ROWS, 3)
-    assert "Acme Widgets Inc" not in prompt
-    assert "Beta Holdings Ltd" not in prompt
-    assert "AAA" in prompt
+    assert "Acme Widgets Inc" in prompt
+    assert "Beta Holdings Ltd" in prompt
+    assert "Gamma Corp" in prompt
+    assert "| AAA |" in prompt
+
+
+def test_prompt_truncates_a_long_company_description() -> None:
+    rows = [{"symbol": "AAA", "description": "x" * 400}]
+    prompt = report.screener_report_prompt(rows, 1)
+    assert "x" * 400 not in prompt
+    assert "x" * 200 in prompt
 
 
 def test_prompt_skips_missing_and_non_numeric_values() -> None:
@@ -97,8 +105,10 @@ def test_prompt_skips_missing_and_non_numeric_values() -> None:
     prompt = report.screener_report_prompt(rows, 3)
     assert "| Median PT upside | +15.0% |" in prompt
     assert "| CCC | +15.0% |" in prompt
-    assert "AAA" not in prompt
-    assert "BBB" not in prompt
+    # The leaderboard lists only stocks with a usable figure; the profile block
+    # still names every company in the universe.
+    assert "| AAA | +" not in prompt
+    assert "| BBB | +" not in prompt
 
 
 def test_prompt_reports_n_a_when_a_metric_has_no_values() -> None:
@@ -119,8 +129,6 @@ def test_prompt_with_no_rows_reads_zero_and_empty_tables() -> None:
 def test_prompt_carries_every_screener_column() -> None:
     prompt = report.screener_report_prompt(ROWS, len(ROWS))
     for label in COLUMN_DISPLAY_NAMES.values():
-        if label in {"Symbol", "Company"}:
-            continue
         assert label in prompt, label
 
 
