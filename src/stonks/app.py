@@ -881,7 +881,6 @@ def render_header(store: SQLiteStore) -> None:
             <h1>Stonks</h1>
         </div>
         <div class="sk-meta">
-            <p>Fundamental screener · data from StockAnalysis.com</p>
             <div class="sk-badges">{pills}</div>
         </div>
     </div>
