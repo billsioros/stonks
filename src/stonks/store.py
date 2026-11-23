@@ -97,6 +97,29 @@ STOCK_FIELDS = [
 ]
 
 
+class StockQueryResult(tuple[Any, ...]):
+    """3-tuple of (rows, total_pages, total_matching) with query warnings."""
+
+    rows: list[dict[str, Any]]
+    total_pages: int
+    total_matching: int
+    warnings: list[str]
+
+    def __new__(
+        cls,
+        rows: list[dict[str, Any]],
+        total_pages: int,
+        total_matching: int,
+        warnings: list[str] | None = None,
+    ) -> "StockQueryResult":
+        instance = super().__new__(cls, (rows, total_pages, total_matching))
+        instance.rows = rows
+        instance.total_pages = total_pages
+        instance.total_matching = total_matching
+        instance.warnings = warnings or []
+        return instance
+
+
 class SQLiteStore:
     """Lightweight persistence layer using SQLite for screens and watchlists."""
 
@@ -682,12 +705,14 @@ class SQLiteStore:
         sort_ascending: bool = True,
         page: int = 1,
         page_size: int = 25,
-    ) -> tuple[list[dict[str, Any]], int, int]:
+    ) -> StockQueryResult:
         """Query stocks with filters, search, sort, pagination at DB level.
 
         Returns:
-            Tuple of (rows, total_pages, total_matching).
+            A 3-tuple of (rows, total_pages, total_matching) that also exposes
+            the filter diagnostics collected while building the query.
         """
+        warnings: list[str] = []
         params: list[Any] = []
         where_clauses: list[str] = []
 
@@ -835,27 +860,28 @@ class SQLiteStore:
         select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"  # nosec B608
 
         count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"  # nosec B608
+        page_size = max(1, min(int(page_size), 100_000))
+
+        # COUNT(*) and the page must see the same snapshot: one connection.
         with self._connect() as conn:
             total_matching = conn.execute(count_sql, params).fetchone()[0]
 
-        total_pages = max(1, (total_matching + page_size - 1) // page_size)
-        page = max(1, min(page, total_pages))
-        offset = (page - 1) * page_size
+            total_pages = max(1, (total_matching + page_size - 1) // page_size)
+            safe_page = max(1, min(int(page), total_pages))
+            offset = (safe_page - 1) * page_size
 
-        if sort_column and sort_column in numeric_columns:
-            sort_dir = "ASC" if sort_ascending else "DESC"
-            select_sql += f" ORDER BY {sort_column} {sort_dir} NULLS LAST"
+            if sort_column and sort_column in numeric_columns:
+                sort_dir = "ASC" if sort_ascending else "DESC"
+                select_sql += f" ORDER BY {sort_column} {sort_dir} NULLS LAST"
 
-        select_sql += f" LIMIT {page_size} OFFSET {offset}"
+            select_sql += " LIMIT ? OFFSET ?"
+            query_params = [*params, page_size, offset]
 
-        rows: list[dict[str, Any]] = []
-        with self._connect() as conn:
-            cur = conn.execute(select_sql, params)
+            cur = conn.execute(select_sql, query_params)
             cols = [c[0] for c in cur.description]
-            for row in cur.fetchall():
-                rows.append(dict(zip(cols, row)))
+            rows = [dict(zip(cols, row)) for row in cur.fetchall()]
 
-        return rows, total_pages, total_matching
+        return StockQueryResult(rows, total_pages, total_matching, warnings=warnings)
 
     def save_stock(self, symbol: str, data: dict[str, Any]) -> None:
         """Upsert a stock's metrics."""

@@ -384,3 +384,27 @@ def test_startup_backfill_populates_shares_insiders_percent(tmp_path) -> None:
         ).fetchone()
     assert row[0] == 0.05
     assert row[1] == 5.0
+
+
+def test_get_stocks_returns_stock_query_result_tuple(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"market_cap": 3000.0})
+    result = store.get_stocks()
+    # Verifies backwards compatibility as a 3-tuple
+    rows, pages, total = result
+    assert len(rows) == 1
+    assert pages == 1
+    assert total == 1
+    assert hasattr(result, "warnings")
+    assert isinstance(result.warnings, list)
+
+
+def test_get_stocks_handles_zero_and_negative_page_size(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"market_cap": 3000.0})
+    rows, pages, total = store.get_stocks(page_size=0)
+    assert len(rows) == 1
+    assert pages == 1
+    rows_neg, pages_neg, total_neg = store.get_stocks(page_size=-10)
+    assert len(rows_neg) == 1
+    assert pages_neg == 1
