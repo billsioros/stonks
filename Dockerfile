@@ -12,8 +12,9 @@ COPY pyproject.toml uv.lock ./
 # Install dependencies only (cache this layer)
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Copy source code
+# Copy source code and the Streamlit theme
 COPY src ./src
+COPY .streamlit ./.streamlit
 COPY README.md ./
 
 # Install the project itself
@@ -26,7 +27,6 @@ RUN mkdir -p data/cache
 ENV PYTHONUNBUFFERED=1
 ENV STREAMLIT_SERVER_PORT=8501
 ENV STREAMLIT_SERVER_ADDRESS=0.0.0.0
-ENV FINNHUB_API_KEY=""
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Default command

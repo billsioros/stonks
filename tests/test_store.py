@@ -66,17 +66,26 @@ class TestSQLiteStore:
     # ── Sync Status ──────────────────────────────────────────────
 
     def test_sync_status(self, store: SQLiteStore) -> None:
-        store.update_sync_status("AAPL", "basic", "success")
-        store.update_sync_status("GOOGL", "basic", "failed", error="429")
+        store.update_sync_status("AAPL", "fundamentals", "success")
+        store.update_sync_status("GOOGL", "fundamentals", "failed", error="429")
 
         info = store.get_last_sync_info()
         assert info["total_symbols"] == 2
         assert info["success_count"] == 1
         assert info["failed_count"] == 1
 
+    def test_last_sync_info_counts_fundamentals(self, store: SQLiteStore) -> None:
+        store.update_sync_status("AAPL", "fundamentals", "success")
+        store.update_sync_status("GOOGL", "fundamentals", "failed", error="429")
+
+        info = store.get_last_sync_info()
+        assert info["success_count"] == 1
+        assert info["fundamentals_count"] == 1
+        assert info["failed_count"] == 1
+
     def test_last_sync_info_with_metadata(self, store: SQLiteStore) -> None:
         store.save_metadata("universe_size", 1000)
-        store.update_sync_status("AAPL", "basic", "success")
+        store.update_sync_status("AAPL", "fundamentals", "success")
 
         info = store.get_last_sync_info()
         assert info["total_symbols"] == 1000
@@ -172,3 +181,175 @@ class TestSQLiteStore:
 
         store.save_metadata("version", "1.1.0")
         assert store.get_metadata("version") == "1.1.0"
+
+
+def test_store_filters_sort_search_and_preserves_values(store: SQLiteStore) -> None:
+    store.save_stock(
+        "AAA",
+        {
+            "description": "Alpha",
+            "exchange": "NYSE",
+            "market_cap": 100.0,
+            "pe_ratio": 10.0,
+        },
+    )
+    store.save_stock(
+        "BBB",
+        {
+            "description": "Beta",
+            "exchange": "NASDAQ",
+            "market_cap": 50.0,
+            "pe_ratio": 20.0,
+        },
+    )
+    store.save_stock(
+        "CCC", {"description": "Null Cap", "exchange": "NYSE", "pe_ratio": 5.0}
+    )
+
+    rows, _, total = store.get_stocks(
+        filters={"market_cap": {"min": 60}},
+        sort_column="pe_ratio",
+        sort_ascending=False,
+    )
+    assert total == 1
+    assert [row["symbol"] for row in rows] == ["AAA"]
+
+    rows, _, total = store.get_stocks(filters={"exchange": {"values": ["NASDAQ"]}})
+    assert total == 1
+    assert [row["symbol"] for row in rows] == ["BBB"]
+
+    rows, _, total = store.get_stocks(filters={"symbol": {"values": ["CCC", "AAA"]}})
+    assert total == 2
+    assert sorted(row["symbol"] for row in rows) == ["AAA", "CCC"]
+
+    rows, _, total = store.get_stocks(search_query="Alpha")
+    assert total == 1
+    assert rows[0]["symbol"] == "AAA"
+
+    rows, total_pages, total = store.get_stocks(
+        page=2, page_size=1, sort_column="symbol"
+    )
+    assert total == 3 and total_pages == 3
+    assert rows[0]["symbol"] == "BBB"
+
+    store.save_stock("AAA", {"pe_ratio": None, "market_cap": 120.0})
+    row = store.get_stocks(search_query="Alpha")[0][0]
+    assert row["pe_ratio"] == 10.0
+    assert row["market_cap"] == 120.0
+
+
+def test_replace_stocks_discards_stale_symbols_and_values(store: SQLiteStore) -> None:
+    store.save_stock("OLD", {"roe_5y_avg_pct": 42.0})
+    store.save_stock("UI", {"roe_5y_avg_pct": 47.28})
+    store.update_sync_status("OLD", "fundamentals", "success")
+
+    store.replace_stocks(
+        [
+            {"symbol": "NEW", "roe_5y_avg_pct": 12.0},
+            {"symbol": "UI", "roe_5y_avg_pct": None},
+        ]
+    )
+
+    assert [r["symbol"] for r in store.get_stocks(page_size=10)[0]] == ["NEW", "UI"]
+    with store._connect() as conn:
+        ui = conn.execute(
+            "SELECT roe_5y_avg_pct FROM stocks WHERE symbol='UI'"
+        ).fetchone()
+        statuses = conn.execute(
+            "SELECT symbol, status FROM sync_status WHERE sync_type='fundamentals'"
+        ).fetchall()
+    assert ui[0] is None
+    assert [(r[0], r[1]) for r in statuses] == [("NEW", "success"), ("UI", "success")]
+
+
+def test_cache_roundtrip(store: SQLiteStore) -> None:
+    store.cache_set("sym:NVDA:overview:-:annual", {"a": [1, 2]}, ttl_seconds=60)
+    assert store.cache_get("sym:NVDA:overview:-:annual") == {"a": [1, 2]}
+
+
+def test_cache_missing_returns_none(store: SQLiteStore) -> None:
+    assert store.cache_get("nope") is None
+
+
+def test_cache_expired_returns_none(store: SQLiteStore) -> None:
+    store.cache_set("k", {"a": 1}, ttl_seconds=-1)
+    assert store.cache_get("k") is None
+
+
+def test_cache_delete_removes_entry(store: SQLiteStore) -> None:
+    store.cache_set("k", {"a": 1}, ttl_seconds=60)
+    store.cache_delete("k")
+    assert store.cache_get("k") is None
+
+
+def test_cache_overwrite_replaces_value(store: SQLiteStore) -> None:
+    store.cache_set("k", {"a": 1}, ttl_seconds=60)
+    store.cache_set("k", {"a": 2}, ttl_seconds=60)
+    assert store.cache_get("k") == {"a": 2}
+
+
+def test_add_alert_is_idempotent(store: SQLiteStore) -> None:
+    assert (
+        store.add_alert("NVDA", "pe_drop", "good", "P/E down 20%", None, "k1") is True
+    )
+    assert (
+        store.add_alert("NVDA", "pe_drop", "good", "P/E down 20%", None, "k1") is False
+    )
+    assert len(store.get_alerts()) == 1
+
+
+def test_get_alerts_unread_only_and_newest_first(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "big_move", "warn", "moved", None, "a1")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    alerts = store.get_alerts()
+    assert [a["symbol"] for a in alerts] == ["BBB", "AAA"]
+    store.mark_alerts_seen([alerts[0]["id"]])
+    assert [a["symbol"] for a in store.get_alerts()] == ["AAA"]
+    assert len(store.get_alerts(unread_only=False)) == 2
+
+
+def test_get_alerts_filters_by_symbol(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    assert [a["symbol"] for a in store.get_alerts(symbol="AAA")] == ["AAA"]
+
+
+def test_alert_row_exposes_all_columns(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", "100 vs 200", "a1")
+    alert = store.get_alerts()[0]
+    assert alert["detail"] == "100 vs 200"
+    assert alert["dedupe_key"] == "a1"
+    assert alert["created_at"] > 0
+    assert alert["seen_at"] is None
+
+
+def test_count_unread_and_mark_read(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    assert store.count_unread_alerts() == 2
+    store.mark_alerts_seen([a["id"] for a in store.get_alerts()])
+    assert store.count_unread_alerts() == 0
+
+
+def test_mark_alerts_seen_ignores_empty_list(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.mark_alerts_seen([])
+    assert store.count_unread_alerts() == 1
+
+
+def test_prune_alerts_drops_old_rows(store: SQLiteStore) -> None:
+    store.add_alert("OLD", "off_high", "good", "cheap", None, "o1")
+    with store._connect() as conn:
+        conn.execute("UPDATE alerts SET created_at = 0")
+        conn.commit()
+    store.add_alert("NEW", "off_high", "good", "cheap", None, "n1")
+    assert store.prune_alerts(14) == 1
+    assert [a["symbol"] for a in store.get_alerts(unread_only=False)] == ["NEW"]
+
+
+def test_unread_alert_counts_groups_by_symbol(store: SQLiteStore) -> None:
+    store.add_alert("AAA", "off_high", "good", "cheap", None, "a1")
+    store.add_alert("AAA", "big_move", "warn", "moved", None, "a2")
+    store.add_alert("BBB", "off_high", "good", "cheap", None, "b1")
+    store.mark_alerts_seen([store.get_alerts(symbol="BBB")[0]["id"]])
+    assert store.unread_alert_counts() == {"AAA": 2}

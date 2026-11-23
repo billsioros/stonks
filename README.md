@@ -1,6 +1,6 @@
 <h1 align="center">📈 Stonks Screener 💰</h1>
 
-<p align="center"><em>A powerful, modular stock screener REST API & Dashboard powered by Finnhub 🔗</em></p>
+<p align="center"><em>A local-first stock screener dashboard powered by StockAnalysis.com 🔗</em></p>
 
 <p align="center">
     <a href="https://github.com/billsioros/stonks/actions/workflows/ci.yml">
@@ -24,6 +24,10 @@
 - 🌟 **One-Click Screens** — Quality Compounders, Dividend Champions, Growth Machines, and more.
 - ⭐ **Persistent Watchlist** — Track your favorite symbols across sessions (SQLite backed).
 - 💾 **Saved Configurations** — Save your complex filter setups for later use.
+- 🔍 **Symbol Detail Pages** — Click any screener or watchlist row for an in-app page with Overview, Financials (annual and quarterly statements), Statistics, Metrics, and Forecast, fetched live from StockAnalysis and cached per symbol.
+- 🔔 **Watchlist Alerts** — The worker flags watched symbols that get cheap, drop or jump sharply, or hit the news, and the app shows them in a banner plus a badge on the Watchlist tab.
+- 🧪 **Portfolio Backtest** — Allocate a handful of tickers by percentage or fixed sums, add recurring contributions on a chosen cadence, and let holdings rebalance or drift. See CAGR, money-weighted return when contributions are active, volatility, max drawdown, best/worst year and a growth curve over up to ten years of adjusted monthly closes. Amounts are used as-is with no currency conversion. Portfolio Visualizer is linked for deeper analysis.
+- 🛡️ **Reference-Site Cross-Checks** — Every twelve hours the worker re-runs the reference implementations (the 36-symbol StockAnalysis default screen, HedgeFollow's largest buys, the GuruFocus DCF/Lynch models and a Portfolio Visualizer 60/40 backtest) and shows a banner naming any platform that diverged, with the numbers.
 - 📥 **Export Ready** — Download your results or watchlist to CSV.
 
 ## 🛠️ Getting Started
@@ -31,23 +35,17 @@
 ### Prerequisites
 
 - [Docker](https://www.docker.com/) & [Docker Compose](https://docs.docker.com/compose/)
-- [Finnhub API Key](https://finnhub.io/) (Free tier works great)
+- No API key required — data comes from StockAnalysis.com
 
 ### Running with Docker
 
-1. **Create a `.env` file** in the root directory:
-
-    ```env
-    FINNHUB_API_KEY='your_api_key_here'
-    ```
-
-2. **Build and start the services**:
+1. **Build and start the services**:
 
    ```shell
    docker compose up -d --build
    ```
 
-3. **Access the Dashboard**:
+2. **Access the Dashboard**:
    Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ## 💻 Local Development
@@ -63,7 +61,6 @@ uv sync --all-groups
 ### Running the App
 
 ```bash
-export FINNHUB_API_KEY="your_key"
 uv run poe app
 ```
 
@@ -79,12 +76,14 @@ uv run poe coverage  # Run with coverage report
 ```
 src/stonks/
 ├── app.py          # Dashboard UI (Streamlit)
-├── engine.py       # Filtering/Sorting Logic
-├── metrics.py      # Finnhub API Client & Normalizers
-├── universe.py     # Stock Universe Management
-├── cache.py        # SQLite-based KV Cache
-├── store.py        # Persistence (Screens, Watchlist)
-└── worker.py       # Background Sync Service
+├── config.py       # Settings and column definitions
+├── presets.py      # One-click screens
+├── store.py        # SQLite persistence, filtering, sorting
+├── stockanalysis.py # Bulk screener data provider
+├── backtest.py     # Portfolio backtesting over monthly closes
+├── backtest_view.py # Backtest tab UI
+├── sanity.py       # Cross-checks against the reference sites
+└── worker.py       # Background sync service
 ```
 
 ## 📄 License

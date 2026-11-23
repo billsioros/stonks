@@ -3,15 +3,21 @@
 Run with: streamlit run src/stonks/app.py
 """
 
-from stonks.presets import POPULAR_SCREENS
+import base64
 import logging
+import math
+import re
 import time
 from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
+from stonks import report, report_view, sanity
+from stonks.backtest_view import render_backtest_tab
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
     DEFAULT_PAGE_SIZE,
@@ -20,13 +26,15 @@ from stonks.config import (
     PAGE_SIZE_OPTIONS,
     VIEW_PRESETS,
 )
+from stonks.detail_view import render_detail_page
+from stonks.presets import POPULAR_SCREENS, default_screen
 from stonks.store import SQLiteStore
 
 logger = logging.getLogger(__name__)
 
 # ── Page configuration ──────────────────────────────────────────────
 st.set_page_config(
-    page_title="Stonks — Stock Screener",
+    page_title="Stonks",
     page_icon="src/stonks/assets/favicon.png",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -36,43 +44,43 @@ st.set_page_config(
 st.markdown(
     """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
-
-/* Root variables */
+/* Flat dark theme, mirroring the roomies dashboard: navy surfaces, hairline
+   borders, no gradients or glow. Indigo stays the primary accent, and these
+   selectors track Streamlit's rendered DOM, so re-check them on upgrades. */
 :root {
-    --bg-primary: #0a0e1a;
-    --bg-secondary: #111827;
-    --bg-card: #1a1f35;
-    --bg-card-hover: #222845;
+    --bg-primary: #0b0f19;
+    --bg-secondary: #0f172a;
+    --bg-card: #1e293b;
     --accent-primary: #6366f1;
-    --accent-secondary: #8b5cf6;
-    --accent-tertiary: #a78bfa;
-    --accent-glow: rgba(99, 102, 241, 0.15);
-    --text-primary: #f1f5f9;
+    --accent-soft: rgba(99, 102, 241, 0.12);
+    --accent-border: rgba(99, 102, 241, 0.5);
+    --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
     --text-muted: #64748b;
-    --border-color: #1e293b;
+    --border-color: rgba(255, 255, 255, 0.08);
     --success: #10b981;
     --danger: #ef4444;
     --warning: #f59e0b;
-    --gradient-1: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a78bfa 100%);
-    --gradient-2: linear-gradient(135deg, #0f172a 0%, #1e1b4b 50%, #1e293b 100%);
-    --gradient-3: linear-gradient(135deg, #10b981 0%, #059669 100%);
 }
 
-/* Global styles */
+html, body, [class*="css"], .stMarkdown, .stText, p, span, li, label, div {
+    color: var(--text-primary);
+}
+
 .stApp {
     background: var(--bg-primary) !important;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
-/* Main content area */
+[data-testid="stHeader"] {
+    background: transparent !important;
+}
+
 .main .block-container {
     padding-top: 1.5rem !important;
     max-width: 100% !important;
 }
 
-/* Sidebar styling */
+/* Sidebar */
 section[data-testid="stSidebar"] {
     background: var(--bg-secondary) !important;
     border-right: 1px solid var(--border-color) !important;
@@ -82,87 +90,127 @@ section[data-testid="stSidebar"] .block-container {
     padding-top: 1rem !important;
 }
 
-/* Header styling */
-.hero-header {
-    background: var(--gradient-2);
-    border: 1px solid var(--border-color);
-    border-radius: 16px;
-    padding: 1.5rem 2rem;
-    margin-bottom: 1.5rem;
-    position: relative;
+/* Headings */
+h1, h2, h3 { color: var(--text-primary) !important; font-weight: 600 !important; }
+h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+
+/* Masthead */
+.sk-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    padding: 0 0 1.5rem;
+    margin-bottom: 1.8rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sk-brand {
+    display: flex;
+    align-items: center;
+    gap: 1.1rem;
+}
+
+.sk-mark {
+    width: 56px;
+    height: 56px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 14px;
     overflow: hidden;
 }
 
-.hero-header::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: var(--gradient-1);
+.sk-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    image-rendering: -webkit-optimize-contrast;
 }
 
-.hero-header h1 {
-    font-size: 2rem !important;
-    font-weight: 800 !important;
-    background: var(--gradient-1);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+.sk-brand h1 {
+    font-weight: 700;
+    font-size: clamp(2.2rem, 4vw, 3rem);
+    letter-spacing: -0.03em;
+    line-height: 1;
     margin: 0 !important;
     padding: 0 !important;
-    letter-spacing: -0.02em;
+    color: var(--text-primary);
 }
 
-.hero-subtitle {
+.sk-meta {
+    text-align: right;
+}
+
+.sk-meta p {
+    margin: 0;
     color: var(--text-secondary);
-    font-size: 0.95rem;
-    margin-top: 0.25rem;
-    font-weight: 400;
+    font-size: 0.85rem;
 }
 
-/* Card styling */
-.metric-card {
+/* Sidebar section label, matching the masthead's quieter register */
+.sk-side-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    padding: 0 0 0.9rem;
+}
+
+/* Screens and watchlist entries: roomies' card surface, sized for a sidebar */
+[class*="st-key-screen-"] {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 12px;
-    padding: 1.25rem;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
+    padding: 0.85rem 0.9rem;
+    margin-bottom: 0.6rem;
+    transition: border-color 0.15s ease;
 }
 
-.metric-card:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--accent-primary);
-    box-shadow: 0 0 20px var(--accent-glow);
-    transform: translateY(-2px);
+[class*="st-key-screen-"]:hover {
+    border-color: var(--accent-border);
 }
 
-.metric-card .label {
-    color: var(--text-secondary);
-    font-size: 0.8rem;
+[class*="st-key-screen-"] .stButton > button {
+    background: transparent;
+    min-height: 2rem;
+    padding: 0 0.5rem;
+}
+
+/* Metric cards: flat surfaces with high-contrast values, no glow */
+[data-testid="stMetric"] {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 16px;
+    transition: border-color 0.2s ease;
+}
+
+[data-testid="stMetric"]:hover {
+    border-color: var(--accent-border);
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--text-primary) !important;
     font-weight: 500;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 0.5rem;
+    font-size: 2rem;
+    letter-spacing: -0.01em;
+    font-variant-numeric: lining-nums tabular-nums;
 }
 
-.metric-card .value {
-    font-size: 1.8rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    letter-spacing: -0.02em;
-}
-
-.metric-card .delta {
+[data-testid="stMetricLabel"] {
+    color: var(--text-secondary) !important;
     font-size: 0.85rem;
     font-weight: 500;
-    margin-top: 0.3rem;
 }
 
-.delta-positive { color: var(--success); }
-.delta-negative { color: var(--danger); }
+[data-testid="stMetricDelta"] {
+    background: rgba(248, 250, 252, 0.06) !important;
+    border-radius: 999px;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
 
 /* Section headers */
 .section-header {
@@ -177,92 +225,294 @@ section[data-testid="stSidebar"] .block-container {
     gap: 0.5rem;
 }
 
-/* Screen preset cards */
-.preset-card {
+/* Alerts banner: a card above the screener, hidden entirely when empty */
+[class*="st-key-alerts-banner"] {
+    background: var(--bg-card);
+    border: 1px solid var(--accent-border);
+    border-radius: 12px;
+    padding: 0.9rem 1rem 0.4rem;
+    margin-bottom: 1.2rem;
+}
+
+/* Symbol detail page: roomies surfaces — flat cards, hairline borders, tabular
+   numbers, indigo only where it marks something. */
+.sk-page-head {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.35rem;
+}
+
+.sk-page-ticker {
+    color: var(--text-primary);
+    font-size: 1.6rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.sk-page-name {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    font-weight: 500;
+}
+.sk-symbol {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1.3rem 1.4rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-symbol-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.sk-quote-label {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+}
+
+.sk-price {
+    color: var(--text-primary);
+    font-size: 2.1rem;
+    font-weight: 600;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+}
+
+.sk-quote-meta {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    text-align: right;
+    line-height: 1.7;
+}
+
+.sk-range {
+    margin-top: 1.2rem;
+}
+
+.sk-range-track {
+    position: relative;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(248, 250, 252, 0.07);
+}
+
+.sk-range-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    border-radius: 999px;
+    background: var(--accent-primary);
+    opacity: 0.85;
+}
+
+.sk-range-dot {
+    position: absolute;
+    top: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    border: 2px solid var(--accent-primary);
+    transform: translate(-50%, -50%);
+}
+
+.sk-range-labels {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.sk-pills {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+    gap: 0.6rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-pill {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: 10px;
-    padding: 1rem 1.25rem;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    margin-bottom: 0.5rem;
+    padding: 0.7rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
 }
 
-.preset-card:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--accent-primary);
-    box-shadow: 0 4px 12px var(--accent-glow);
-    transform: translateY(-1px);
+.sk-pill-label {
+    color: var(--text-muted);
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
 }
 
-.preset-card .preset-name {
-    font-weight: 600;
+.sk-pill-value {
     color: var(--text-primary);
-    font-size: 0.95rem;
-    margin-bottom: 0.25rem;
+    font-size: 1rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
 }
 
-.preset-card .preset-desc {
+.sk-pill-value.up { color: var(--success); }
+.sk-pill-value.down { color: var(--danger); }
+
+.sk-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.3rem;
+}
+
+.sk-cell {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid rgba(248, 250, 252, 0.05);
+}
+
+.sk-cell-label {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.sk-cell-value {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.88rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.sk-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 0.95rem 1.15rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-card p {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    line-height: 1.65;
+}
+
+.sk-card-title {
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 0.6rem;
+}
+
+.sk-card-text {
+    margin: 0 0 0.5rem !important;
+    color: var(--text-muted) !important;
+    font-size: 0.78rem !important;
+}
+
+.sk-chart-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 1.2rem;
+}
+
+.sk-chart {
+    height: 140px;
+    margin-top: 0.5rem;
+}
+
+.sk-chart svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.sk-chart-change {
+    font-size: 0.95rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+}
+
+.sk-chart-change.up { color: var(--success); }
+.sk-chart-change.down { color: var(--danger); }
+
+.sk-kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.42rem 0;
+    font-size: 0.85rem;
+    border-bottom: 1px solid rgba(248, 250, 252, 0.05);
+}
+
+.sk-kv:last-child { border-bottom: none; }
+.sk-kv-label { color: var(--text-muted); }
+.sk-kv-value { color: var(--text-primary); font-weight: 500; text-align: right; }
+
+.sk-news {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1.3rem;
+}
+
+.sk-news-item {
+    display: block;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 0.75rem 0.95rem;
+    text-decoration: none !important;
+    transition: border-color 0.15s ease;
+}
+
+.sk-news-item:hover { border-color: var(--accent-border); }
+
+.sk-news-title {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.sk-news-meta {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 0.3rem;
+}
+
+/* Active filter summary */
+.active-filters {
+    background: var(--accent-soft);
+    border: 1px solid var(--accent-border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 1.5rem;
     color: var(--text-secondary);
     font-size: 0.8rem;
 }
 
-/* Filter section */
-.filter-group {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 1rem;
-    margin-bottom: 0.75rem;
-}
-
-.filter-controls {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    padding: 0.5rem 0;
-}
-
-.filter-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 1rem;
-    margin-top: 1rem;
-}
-
-.filter-item {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 0.75rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
-
-.filter-label-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.filter-label {
-    font-size: 0.85rem;
-    font-weight: 600;
+.active-filters strong {
     color: var(--text-primary);
-}
-
-.filter-inputs {
-    display: flex;
-    gap: 0.5rem;
-    align-items: center;
-}
-
-/* Streamlit element overrides */
-div[data-testid="stMetricValue"] {
-    font-family: 'Inter', sans-serif !important;
-    font-weight: 700 !important;
 }
 
 /* Pagination */
@@ -273,115 +523,110 @@ div[data-testid="stMetricValue"] {
     padding: 0.5rem;
 }
 
-/* Badge */
-.badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 2px 10px;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 600;
-}
-
-.badge-primary {
-    background: var(--accent-glow);
-    color: var(--accent-tertiary);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-}
-
-.badge-success {
-    background: rgba(16, 185, 129, 0.1);
-    color: var(--success);
-    border: 1px solid rgba(16, 185, 129, 0.3);
-}
-
-.badge-warning {
-    background: rgba(245, 158, 11, 0.1);
-    color: var(--warning);
-    border: 1px solid rgba(245, 158, 11, 0.3);
-}
-
-/* Watchlist indicator */
-.watchlist-star {
-    cursor: pointer;
-    font-size: 1.2rem;
-    transition: transform 0.2s;
-}
-
-.watchlist-star:hover {
-    transform: scale(1.2);
-}
-
-/* Active filters badge */
-.active-filters {
-    background: var(--accent-glow);
-    border: 1px solid rgba(99, 102, 241, 0.3);
-    border-radius: 8px;
-    padding: 0.5rem 0.75rem;
-    margin-bottom: 1.5rem;
-    color: var(--text-secondary);
-    font-size: 0.8rem;
-}
-
-.active-filters strong {
-    color: var(--accent-tertiary);
-}
-
-/* Tabs */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 2px;
-    background: var(--bg-secondary);
-    border-radius: 10px;
-    padding: 4px;
-}
-
-.stTabs [data-baseweb="tab"] {
-    border-radius: 8px;
-    padding: 8px 16px;
-    font-weight: 500;
-}
-
-/* Button styling */
+/* Buttons: card surface, border only */
 .stButton > button {
-    border-radius: 8px !important;
-    font-weight: 500 !important;
-    font-family: 'Inter', sans-serif !important;
-    transition: all 0.2s ease !important;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-weight: 500;
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
 }
 
 .stButton > button:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
+    border-color: var(--accent-primary);
+    background: var(--accent-soft);
+    color: var(--accent-primary);
 }
 
-/* Download button */
 .stDownloadButton > button {
     border-radius: 8px !important;
     font-weight: 500 !important;
 }
 
-/* Expander styling */
-.streamlit-expanderHeader {
+:focus-visible {
+    outline: 2px solid var(--accent-primary) !important;
+    outline-offset: 2px;
+}
+
+/* Data editor/table: roomies' card surface around the grid */
+[data-testid="stDataFrame"] {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--bg-card);
+}
+
+/* Tabs: text only, underline marks active */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 1.6rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.stTabs [data-baseweb="tab"] {
+    background: none;
+    padding: 0.6rem 0;
+    height: auto;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.stTabs [aria-selected="true"] {
+    color: var(--text-primary);
+}
+
+[data-baseweb="tab-highlight"] {
+    background: var(--accent-primary);
+    height: 2px;
+}
+
+[data-baseweb="tab-border"] {
+    display: none;
+}
+
+/* Alerts */
+[data-testid="stAlert"] {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+}
+
+/* Inputs */
+.stTextInput > div > div,
+.stTextInput div[data-baseweb="input"],
+.stDateInput > div > div,
+.stSelectbox div[data-baseweb="select"] > div,
+.stMultiSelect div[data-baseweb="select"] > div {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.stTextInput > div > div:focus-within,
+.stTextInput div[data-baseweb="input"]:focus-within {
+    border-color: var(--accent-primary);
+    box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* Sliders */
+.stSlider [data-baseweb="slider"] {
+    color: var(--accent-primary);
+}
+
+/* Expander: a card like every other surface, not a tinted strip */
+[data-testid="stExpander"] details {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+}
+
+.streamlit-expanderHeader,
+[data-testid="stExpander"] summary {
     font-weight: 600 !important;
-    font-size: 0.9rem !important;
-    background: var(--bg-secondary) !important;
-    border-radius: 8px !important;
-}
-
-/* Number input styling */
-div[data-testid="stNumberInput"] input {
-    border-radius: 8px !important;
-}
-
-/* Selectbox styling */
-div[data-testid="stSelectbox"] > div > div {
-    border-radius: 8px !important;
-}
-
-/* Text input */
-div[data-testid="stTextInput"] input {
-    border-radius: 8px !important;
+    font-size: 0.95rem !important;
+    background: transparent !important;
+    border-radius: 12px !important;
 }
 
 /* Footer */
@@ -396,44 +641,31 @@ div[data-testid="stTextInput"] input {
 
 /* Scrollbar */
 ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    width: 8px;
+    height: 8px;
 }
+
 ::-webkit-scrollbar-track {
     background: var(--bg-primary);
 }
+
 ::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
+    background: #334155;
+    border-radius: 4px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
 
-/* Toast notification */
-.toast {
-    position: fixed;
-    bottom: 20px;
-    right: 20px;
-    background: var(--bg-card);
-    border: 1px solid var(--accent-primary);
-    border-radius: 10px;
-    padding: 0.75rem 1.25rem;
-    color: var(--text-primary);
-    font-size: 0.85rem;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
-    z-index: 9999;
-    animation: slideIn 0.3s ease;
+/* Plotly chart containers */
+.js-plotly-plot .plotly .main-svg {
+    background: transparent !important;
 }
 
-@keyframes slideIn {
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-}
-
-/* Loading spinner override */
-.stSpinner > div {
-    border-top-color: var(--accent-primary) !important;
+/* Hide default Streamlit footer */
+footer {
+    display: none;
 }
 </style>
 """,
@@ -447,39 +679,81 @@ def get_store() -> SQLiteStore:
     return SQLiteStore()
 
 
+def open_symbol(symbol: str) -> None:
+    """Switch the app to the detail page for `symbol`."""
+    st.session_state["detail_symbol"] = symbol
+    st.session_state["page"] = "detail"
+
+
+def close_detail() -> None:
+    """Return to the screener, leaving its filters and paging untouched."""
+    st.session_state["page"] = "screener"
+    # Streamlit keeps a dataframe's selection under its widget key, which cannot
+    # be cleared directly; a new epoch gives both tables fresh keys instead.
+    st.session_state["selection_epoch"] = st.session_state.get("selection_epoch", 0) + 1
+
+
+def _table_key(name: str) -> str:
+    """Widget key for a selectable table, versioned so Back clears selection."""
+    return f"{name}_{st.session_state.get('selection_epoch', 0)}"
+
+
+def _is_missing(val: object) -> bool:
+    """True for None or NaN (pandas turns NULLs into NaN in the display frame)."""
+    return val is None or (isinstance(val, float) and math.isnan(val))
+
+
+def _fmt_flag(val: object) -> str:
+    """Render a stored 1/0 flag: ✓ in the list, ✗ not, — unknown."""
+    if _is_missing(val):
+        return "—"
+    return "✓" if val else "✗"
+
+
 def _fmt_market_cap(val: float | None) -> str:
     """Format market cap in human-readable form."""
-    if val is None:
+    if _is_missing(val) or val is None:
         return "—"
     if val >= 1_000_000:
-        return f"${val / 1_000_000:.1f}T"
+        return f"{val / 1_000_000:.2f}T"
     if val >= 1_000:
-        return f"${val / 1_000:.1f}B"
-    return f"${val:.0f}M"
+        return f"{val / 1_000:.2f}B"
+    return f"{val:.2f}M"
 
 
 def _fmt_pct(val: float | None) -> str:
     """Format a percentage value."""
-    if val is None:
+    if _is_missing(val):
         return "—"
-    return f"{val:.1f}%"
+    return f"{val:.2f}%"
 
 
 def _fmt_number(val: float | None, decimals: int = 2) -> str:
     """Format a generic number."""
-    if val is None:
+    if _is_missing(val):
         return "—"
     return f"{val:,.{decimals}f}"
 
 
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    """Return the bundled favicon as a data URI for the masthead."""
+    path = Path(__file__).parent / "assets" / "favicon.png"
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 def render_header() -> None:
-    """Render the hero header."""
+    """Render the masthead: brand on the left, data source on the right."""
     st.markdown(
-        """
-    <div class="hero-header">
-        <h1>📈 Stonks Screener</h1>
-        <div class="hero-subtitle">
-            Screen stocks using fundamental metrics from Finnhub · Filter · Sort · Analyze
+        f"""
+    <div class="sk-head">
+        <div class="sk-brand">
+            <div class="sk-mark"><img src="{_logo_data_uri()}" alt="Stonks"></div>
+            <h1>Stonks</h1>
+        </div>
+        <div class="sk-meta">
+            <p>Fundamental screener · data from StockAnalysis.com</p>
         </div>
     </div>
     """,
@@ -487,89 +761,101 @@ def render_header() -> None:
     )
 
 
+def _slug(text: str) -> str:
+    """Turn a screen name into a CSS-safe key fragment."""
+    return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+
+
+def _describe_screen(screen: dict[str, Any]) -> str:
+    """One-line summary of a saved screen's shape."""
+    parts = [f"{screen.get('view_preset') or 'Overview'} view"]
+    filters = screen.get("filters") or {}
+    parts.append(f"{len(filters)} filters" if filters else "no filters")
+    if screen.get("sort_column"):
+        display = COLUMN_DISPLAY_NAMES.get(screen["sort_column"], screen["sort_column"])
+        direction = "desc" if not screen.get("sort_ascending", True) else "asc"
+        parts.append(f"sorted by {display} ({direction})")
+    return " · ".join(parts)
+
+
+def _screen_card(
+    key: str,
+    title: str,
+    description: str | None,
+    *,
+    allow_delete: bool = False,
+) -> tuple[bool, bool]:
+    """Render one screen as a card and return (load_clicked, delete_clicked)."""
+    with st.container(key=f"screen-{key}"):
+        ratios = [5, 1, 1] if allow_delete else [6, 1]
+        cols = st.columns(ratios)
+        with cols[0]:
+            st.markdown(f"**{title}**")
+            if description:
+                st.caption(description)
+        with cols[1]:
+            load = st.button("▶", key=f"load_screen_{key}", help="Load this screen")
+        delete = False
+        if allow_delete:
+            with cols[2]:
+                delete = st.button("🗑", key=f"del_screen_{key}", help="Delete")
+    return load, delete
+
+
 def render_sidebar_filters() -> dict[str, Any]:
     """Render the sidebar filter builder without requiring df."""
     with st.sidebar:
-        # ── Logo / branding ──────────────────────────────────────
+        # ── Section label ────────────────────────────────────────
         st.markdown(
-            """
-        <div style="text-align: center; padding: 0.5rem 0 1rem 0;">
-            <div style="font-size: 1.5rem; font-weight: 800;
-                        background: linear-gradient(135deg, #6366f1, #a78bfa);
-                        -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-                🎯 Filters
-            </div>
-        </div>
-        """,
-            unsafe_allow_html=True,
+            '<div class="sk-side-title">🧭 Screens</div>', unsafe_allow_html=True
         )
-
-        # ── Search ───────────────────────────────────────────────
-        search_query = st.text_input(
-            "🔍 Search",
-            value=st.session_state.get("search_query", ""),
-            placeholder="Symbol or company name...",
-            key="search_input",
-        )
-        st.session_state["search_query"] = search_query
-
-        st.divider()
 
         # ── Popular Screens ──────────────────────────────────────
         with st.expander("🌟 Popular Screens", expanded=False):
             for preset in POPULAR_SCREENS:
-                col_a, col_b = st.columns([5, 1])
-                with col_a:
-                    st.markdown(f"**{preset['name']}**")
-                    st.caption(preset["description"])
-                with col_b:
-                    if st.button(
-                        "▶", key=f"preset_{preset['name']}", help="Apply this screen"
-                    ):
-                        st.session_state["active_filters"] = preset["filters"]
-                        st.session_state["view_preset"] = preset.get(
-                            "view_preset", "Overview"
+                load, _ = _screen_card(
+                    f"popular-{_slug(preset['name'])}",
+                    preset["name"],
+                    preset["description"],
+                )
+                if load:
+                    st.session_state["active_filters"] = preset["filters"]
+                    st.session_state["view_preset"] = preset.get(
+                        "view_preset", "Overview"
+                    )
+                    if preset.get("sort_column"):
+                        st.session_state["sort_column"] = preset["sort_column"]
+                        st.session_state["sort_ascending"] = preset.get(
+                            "sort_ascending", False
                         )
-                        if preset.get("sort_column"):
-                            st.session_state["sort_column"] = preset["sort_column"]
-                            st.session_state["sort_ascending"] = preset.get(
-                                "sort_ascending", False
-                            )
-                        st.session_state["current_page"] = 1
-                        st.rerun()
+                    st.session_state["current_page"] = 1
+                    st.rerun()
 
         # ── Saved Screens ────────────────────────────────────────
         store = get_store()
         with st.expander("💾 Saved Screens", expanded=False):
-            saved = store.list_screens()
-            if saved:
-                for screen in saved:
-                    col_a, col_b, col_c = st.columns([4, 1, 1])
-                    with col_a:
-                        st.markdown(f"**{screen['name']}**")
-                    with col_b:
-                        if st.button(
-                            "▶", key=f"load_screen_{screen['name']}", help="Load"
-                        ):
-                            st.session_state["active_filters"] = screen["filters"]
-                            st.session_state["view_preset"] = screen.get(
-                                "view_preset", "Overview"
-                            )
-                            if screen.get("sort_column"):
-                                st.session_state["sort_column"] = screen["sort_column"]
-                                st.session_state["sort_ascending"] = screen.get(
-                                    "sort_ascending", True
-                                )
-                            st.session_state["current_page"] = 1
-                            st.rerun()
-                    with col_c:
-                        if st.button(
-                            "🗑", key=f"del_screen_{screen['name']}", help="Delete"
-                        ):
-                            store.delete_screen(screen["name"])
-                            st.rerun()
-            else:
-                st.caption("No saved screens yet.")
+            for screen in store.list_screens():
+                load, delete = _screen_card(
+                    f"saved-{_slug(screen['name'])}",
+                    screen["name"],
+                    _describe_screen(screen),
+                    allow_delete=True,
+                )
+                if load:
+                    st.session_state["active_filters"] = screen["filters"]
+                    st.session_state["view_preset"] = screen.get(
+                        "view_preset", "Overview"
+                    )
+                    if screen.get("sort_column"):
+                        st.session_state["sort_column"] = screen["sort_column"]
+                        st.session_state["sort_ascending"] = screen.get(
+                            "sort_ascending", True
+                        )
+                    st.session_state["current_page"] = 1
+                    st.rerun()
+                if delete:
+                    store.delete_screen(screen["name"])
+                    st.rerun()
 
             # Save current filters
             st.divider()
@@ -592,11 +878,6 @@ def render_sidebar_filters() -> dict[str, Any]:
                     st.toast(f"✅ Screen '{save_name}' saved!", icon="💾")
                 else:
                     st.warning("Please enter a name.")
-
-        # ── Data management ──────────────────────────────────────
-        st.divider()
-        with st.expander("⚙️ Settings", expanded=False):
-            st.info("Cache is managed by the worker.")
 
     return st.session_state.get("active_filters", {})  # type: ignore[no-any-return]
 
@@ -677,7 +958,7 @@ def render_top_filters() -> dict[str, Any]:
         st.markdown('<div class="filter-grid">', unsafe_allow_html=True)
 
         # We'll use columns to simulate a grid because Streamlit doesn't support raw grid well
-        active_cols = sorted([c for c in filters.keys() if c in NUMERIC_FILTER_COLUMNS])
+        active_cols = sorted([c for c in filters if c in NUMERIC_FILTER_COLUMNS])
 
         if active_cols:
             rows = (len(active_cols) + 2) // 3  # 3 columns
@@ -773,9 +1054,9 @@ def render_screener_table() -> None:
 
     with ctrl_col2:
         sort_options = ["None"] + [
-            COLUMN_DISPLAY_NAMES.get(c, c) for c in NUMERIC_FILTER_COLUMNS[:15]
+            COLUMN_DISPLAY_NAMES.get(c, c) for c in NUMERIC_FILTER_COLUMNS
         ]
-        sort_keys = ["None"] + NUMERIC_FILTER_COLUMNS[:15]
+        sort_keys = ["None"] + NUMERIC_FILTER_COLUMNS
 
         current_sort = st.session_state.get("sort_column")
         sort_idx = 0
@@ -886,6 +1167,15 @@ def render_screener_table() -> None:
 
     page_df = pd.DataFrame(page_rows)
 
+    # Rows in HedgeFollow's largest buys get the accent tint; the rest zebra-stripe
+    # so a wide sheet of numbers still reads row by row.
+    if "hedge_fund_buys" in page_df.columns:
+        hf_mask = page_df["hedge_fund_buys"].fillna(0).astype(int).eq(1)
+    else:
+        hf_mask = pd.Series(False, index=page_df.index)
+
+    raw_symbols = [row.get("symbol") for row in page_rows]
+
     watchlist_symbols = set(store.get_watchlist_symbols())
     if "symbol" in page_df.columns:
         page_df["symbol"] = page_df["symbol"].apply(
@@ -899,7 +1189,9 @@ def render_screener_table() -> None:
     display_df = page_df[visible_cols].rename(columns=rename_map)
 
     for col in display_df.columns:
-        if col == "Market Cap":
+        if col == "Largest HF Buy":
+            display_df[col] = display_df[col].apply(_fmt_flag)
+        elif col == "Market Cap":
             display_df[col] = display_df[col].apply(_fmt_market_cap)
         elif "%" in col or "Upside" in col or "Short" in col:
             display_df[col] = display_df[col].apply(_fmt_pct)
@@ -912,15 +1204,51 @@ def render_screener_table() -> None:
             "EV/EBITDA",
             "EV/EBITDA^",
             "Beta",
+            "DCF Fair Value",
+            "Lynch Fair Value",
         ):
             display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
 
-    st.dataframe(
-        display_df,
+    def _row_style(row: pd.Series) -> list[str]:
+        if bool(hf_mask.loc[row.name]):
+            return ["background-color: rgba(99, 102, 241, 0.16)"] * len(row)
+        if row.name % 2:
+            return ["background-color: rgba(248, 250, 252, 0.03)"] * len(row)
+        return [""] * len(row)
+
+    # The report speaks for the whole filtered universe, not just this page.
+    report_rows, _, _ = store.get_stocks(
+        filters=active_filters,
+        search_query=search_query,
+        sort_column=sort_column,
+        sort_ascending=st.session_state.get("sort_ascending", True),
+        page=1,
+        page_size=max(total_matching, 1),
+    )
+    prompt = report.screener_report_prompt(
+        report_rows, total_matching, active_filters, search_query, view_preset
+    )
+    report_view.render_llm_report(
+        scope_key="screener-llm-report",
+        heading="🤖 AI report",
+        prompt=prompt,
+    )
+    selection = st.dataframe(
+        display_df.style.apply(_row_style, axis=1),
         width="stretch",
         hide_index=True,
-        height=min(35 * len(display_df) + 38, 800),
+        row_height=44,
+        height=min(44 * len(display_df) + 44, 900),
+        on_select="rerun",
+        selection_mode="single-row",
+        key=_table_key("screener_table"),
     )
+    selected_rows = getattr(getattr(selection, "selection", None), "rows", None) or []
+    if selected_rows:
+        index = selected_rows[0]
+        if 0 <= index < len(raw_symbols) and raw_symbols[index]:
+            open_symbol(str(raw_symbols[index]))
+            st.rerun()
 
     if total_pages > 1:
         pag_col1, pag_col2, pag_col3, pag_col4, pag_col5 = st.columns([1, 1, 3, 1, 1])
@@ -974,77 +1302,123 @@ def render_watchlist_tab() -> None:
         '<div class="section-header">⭐ Watchlist</div>', unsafe_allow_html=True
     )
 
-    all_symbols = store.get_unique_values("symbol")
-    if not all_symbols:
-        all_symbols = []
+    query = st.text_input(
+        "Search symbol or company",
+        key="watchlist_search",
+        placeholder="Type a symbol or company name, e.g. AAPL or Apple...",
+    )
 
-    col_add, col_btn = st.columns([3, 1])
-    with col_add:
-        add_symbol = st.selectbox(
-            "Add to watchlist",
-            options=[""] + sorted(all_symbols),
-            key="watchlist_add_symbol",
-            label_visibility="collapsed",
-            placeholder="Select a symbol to add...",
+    # The universe is too large for a plain selectbox, so the typed query is
+    # resolved against the database and the best matches are offered instead.
+    matches: list[dict[str, Any]] = []
+    picked: str | None = None
+    if query.strip():
+        matches, _, _ = store.get_stocks(search_query=query, page_size=8)
+        if matches:
+            labels = [
+                f"{row['symbol']} · {row.get('description') or ''}".rstrip(" ·")
+                for row in matches
+            ]
+            choice = st.selectbox(
+                "Matches",
+                options=labels,
+                key="watchlist_match",
+                label_visibility="collapsed",
+            )
+            picked = matches[labels.index(choice)]["symbol"]
+        else:
+            st.caption("No symbol or company matches that search.")
+
+    add_clicked = st.button(
+        "⭐ Add to watchlist",
+        key="watchlist_add_btn",
+        type="primary",
+        disabled=picked is None,
+    )
+    if add_clicked and picked:
+        store.add_to_watchlist(picked)
+        st.toast(f"⭐ Added {picked} to watchlist!", icon="✅")
+        time.sleep(0.5)
+        st.rerun()
+
+    st.divider()
+
+    watchlist = store.get_watchlist()
+    if not watchlist:
+        st.info(
+            "Your watchlist is empty. Add stocks using the selector above or from the screener."
         )
-    with col_btn:
-        if st.button(
-            "⭐ Add", key="watchlist_add_btn", use_container_width=True, type="primary"
-        ):
-            if add_symbol:
-                store.add_to_watchlist(add_symbol)
-                st.toast(f"⭐ Added {add_symbol} to watchlist!", icon="✅")
-                time.sleep(0.5)
+        return
+
+    watchlist_symbols = [item["symbol"] for item in watchlist]
+
+    if watchlist_symbols:
+        page_rows, _, _ = store.get_stocks(
+            filters={"symbol": {"values": watchlist_symbols}},
+            page=1,
+            page_size=len(watchlist_symbols),
+        )
+        watchlist_df = pd.DataFrame(page_rows)
+    else:
+        watchlist_df = pd.DataFrame()
+
+    if not watchlist_df.empty:
+        # A symbol with unread alerts is marked here, so the badge's count has
+        # somewhere to point once the banner is dismissed.
+        alert_counts = store.unread_alert_counts()
+        view_cols = [
+            "symbol",
+            "description",
+            "market_cap",
+            "pe_ratio",
+            "roe_pct",
+            "dividend_yield_pct",
+            "price",
+            "beta",
+            "dcf_fair_value",
+            "dcf_upside_pct",
+            "lynch_fair_value",
+            "lynch_upside_pct",
+        ]
+        view_cols = [c for c in view_cols if c in watchlist_df.columns]
+        display_wl = watchlist_df[view_cols].copy()
+
+        rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
+        display_wl = display_wl.rename(columns=rename_map)
+
+        if "Symbol" in display_wl.columns:
+            marker = [
+                str(alert_counts[symbol]) if alert_counts.get(symbol) else "—"
+                for symbol in watchlist_df["symbol"]
+            ]
+            display_wl.insert(1, "Alerts", marker)
+
+        if "Market Cap" in display_wl.columns:
+            display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
+        for col in display_wl.columns:
+            if "%" in col:
+                display_wl[col] = display_wl[col].apply(_fmt_pct)
+            elif col in ("P/E", "Beta", "DCF Fair Value", "Lynch Fair Value"):
+                display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
+
+        watchlist_selection = st.dataframe(
+            display_wl,
+            width="stretch",
+            hide_index=True,
+            row_height=44,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=_table_key("watchlist_table"),
+        )
+        picked_rows = (
+            getattr(getattr(watchlist_selection, "selection", None), "rows", None) or []
+        )
+        if picked_rows:
+            index = picked_rows[0]
+            if 0 <= index < len(watchlist_df):
+                open_symbol(str(watchlist_df.iloc[index]["symbol"]))
                 st.rerun()
 
-    st.divider()
-
-    watchlist = store.get_watchlist()
-    if not watchlist:
-        st.info(
-            "Your watchlist is empty. Add stocks using the selector above or from the screener."
-        )
-        return
-
-    watchlist_symbols = [item["symbol"] for item in watchlist]
-
-    if watchlist_symbols:
-        page_rows, _, _ = store.get_stocks(
-            filters={"symbol": {"values": watchlist_symbols}},
-            page=1,
-            page_size=len(watchlist_symbols),
-        )
-        watchlist_df = pd.DataFrame(page_rows)
-    else:
-        watchlist_df = pd.DataFrame()
-
-    if not watchlist_df.empty:
-        view_cols = [
-            "symbol",
-            "description",
-            "market_cap",
-            "pe_ratio",
-            "roe_pct",
-            "dividend_yield_pct",
-            "price",
-            "beta",
-        ]
-        view_cols = [c for c in view_cols if c in watchlist_df.columns]
-        display_wl = watchlist_df[view_cols].copy()
-
-        rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
-        display_wl = display_wl.rename(columns=rename_map)
-
-        if "Market Cap" in display_wl.columns:
-            display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
-        for col in display_wl.columns:
-            if "%" in col:
-                display_wl[col] = display_wl[col].apply(_fmt_pct)
-            elif col in ("P/E", "Beta"):
-                display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
-
-        st.dataframe(display_wl, width="stretch", hide_index=True)
-
         csv = watchlist_df.to_csv(index=False).encode("utf-8")
         st.download_button(
             label=f"📥 Download Watchlist CSV ({len(watchlist_df)} stocks)",
@@ -1054,76 +1428,6 @@ def render_watchlist_tab() -> None:
             key="download_watchlist",
         )
 
-    st.divider()
-    st.markdown("**Remove from watchlist:**")
-    cols_per_row = 6
-    for i in range(0, len(watchlist_symbols), cols_per_row):
-        row_syms = watchlist_symbols[i : i + cols_per_row]
-        cols = st.columns(cols_per_row)
-        for j, sym in enumerate(row_syms):
-            with cols[j]:
-                if st.button(f"❌ {sym}", key=f"remove_wl_{sym}"):
-                    store.remove_from_watchlist(sym)
-                    st.rerun()
-
-    st.divider()
-
-    watchlist = store.get_watchlist()
-    if not watchlist:
-        st.info(
-            "Your watchlist is empty. Add stocks using the selector above or from the screener."
-        )
-        return
-
-    watchlist_symbols = [item["symbol"] for item in watchlist]
-
-    if watchlist_symbols:
-        page_rows, _, _ = store.get_stocks(
-            filters={"symbol": {"values": watchlist_symbols}},
-            page=1,
-            page_size=len(watchlist_symbols),
-        )
-        watchlist_df = pd.DataFrame(page_rows)
-    else:
-        watchlist_df = pd.DataFrame()
-
-    if not watchlist_df.empty:
-        view_cols = [
-            "symbol",
-            "description",
-            "market_cap",
-            "pe_ratio",
-            "roe_pct",
-            "dividend_yield_pct",
-            "price",
-            "beta",
-        ]
-        view_cols = [c for c in view_cols if c in watchlist_df.columns]
-        display_wl = watchlist_df[view_cols].copy()
-
-        rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
-        display_wl = display_wl.rename(columns=rename_map)
-
-        if "Market Cap" in display_wl.columns:
-            display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
-        for col in display_wl.columns:
-            if "%" in col:
-                display_wl[col] = display_wl[col].apply(_fmt_pct)
-            elif col in ("P/E", "Beta"):
-                display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
-
-        st.dataframe(display_wl, width="stretch", hide_index=True)
-
-        csv = watchlist_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            label=f"📥 Download Watchlist CSV ({len(watchlist_df)} stocks)",
-            data=csv,
-            file_name=f"stonks_watchlist_{time.strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv",
-            key="download_watchlist",
-        )
-
-    # Remove from watchlist
     st.divider()
     st.markdown("**Remove from watchlist:**")
     cols_per_row = 6
@@ -1147,22 +1451,21 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
 
     last_dt = datetime.fromtimestamp(sync_info["last_run"]).strftime("%H:%M:%S")
     success = sync_info["success_count"]
-    candles = sync_info["candles_count"]
+    fundamentals = sync_info["fundamentals_count"]
     failed = sync_info["failed_count"]
     total = sync_info["total_symbols"]
     completion = (success / max(1, total)) * 100
-    candle_completion = (candles / max(1, total)) * 100
+    fundamentals_completion = (fundamentals / max(1, total)) * 100
 
     st.markdown(
         """
         <style>
         .hud-card {
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.8) 100%);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
+            background: #1e293b;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
             padding: 1.5rem;
             margin-bottom: 2rem;
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
         .hud-header {
             display: flex;
@@ -1179,11 +1482,11 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
         }
         .hud-status {
             font-size: 0.8rem;
-            padding: 2px 8px;
-            border-radius: 9999px;
-            background: rgba(34, 197, 94, 0.2);
-            color: #4ade80;
-            border: 1px solid rgba(34, 197, 94, 0.3);
+            padding: 2px 10px;
+            border-radius: 999px;
+            background: rgba(99, 102, 241, 0.12);
+            color: #f8fafc;
+            border: 1px solid rgba(99, 102, 241, 0.5);
         }
         .hud-metrics {
             display: flex;
@@ -1215,7 +1518,7 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
         }
         .progress-bar {
             height: 100%;
-            background: linear-gradient(90deg, #3b82f6 0%, #2dd4bf 100%);
+            background: #6366f1;
             border-radius: 3px;
             transition: width 0.5s ease-in-out;
         }
@@ -1238,8 +1541,8 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
                         <div class="metric-label">Universe Coverage</div>
                     </div>
                     <div class="metric-group">
-                        <div class="metric-value">{candle_completion:.1f}%</div>
-                        <div class="metric-label">Historical Data</div>
+                        <div class="metric-value">{fundamentals_completion:.1f}%</div>
+                        <div class="metric-label">Fundamental Data</div>
                     </div>
                     <div class="metric-group">
                         <div class="metric-value">{success:,}</div>
@@ -1267,42 +1570,145 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
         )
 
 
+def _default_screen() -> dict[str, Any]:
+    """Return the screen the app opens with (the sanity check's reference)."""
+    return default_screen()
+
+
+def _init_session_state() -> None:
+    """Seed session state with the default screen and paging settings."""
+    screen = _default_screen()
+    defaults: dict[str, Any] = {
+        "active_filters": screen["filters"],
+        "view_preset": screen["view_preset"],
+        "sort_column": screen["sort_column"],
+        "sort_ascending": screen["sort_ascending"],
+        "current_page": 1,
+        "page_size": DEFAULT_PAGE_SIZE,
+        "page": "screener",
+        "detail_symbol": None,
+        "selection_epoch": 0,
+    }
+    for key, value in defaults.items():
+        st.session_state.setdefault(key, value)
+
+
+def _ago(epoch: float | None) -> str:
+    """Relative age of an alert, e.g. "12m ago" or "3d ago"."""
+    if not epoch:
+        return ""
+    delta = max(0.0, time.time() - epoch)
+    if delta < 3600:
+        return f"{int(delta // 60)}m ago"
+    if delta < 86400:
+        return f"{int(delta // 3600)}h ago"
+    return f"{int(delta // 86400)}d ago"
+
+
+def render_sanity_banner(store: SQLiteStore) -> None:
+    """Report the reference-site checks that diverged, if any did."""
+    report = sanity.load_report(store)
+    if not report:
+        return
+    failures = [result for result in report["results"] if result.get("ok") is False]
+    if not failures:
+        return
+
+    with st.container(key="sanity-banner"):
+        st.error(
+            f"Cross-check failed on {len(failures)} platform"
+            f"{'s' if len(failures) != 1 else ''} — a provider or model may have "
+            "diverged from what the app expects.",
+            icon="⚠️",
+        )
+        for failure in failures:
+            st.markdown(
+                f"**{failure.get('platform', '?')}** · {failure.get('check', '')} — "
+                f"{failure.get('detail', '')}"
+            )
+        st.caption(
+            "Checked "
+            f"{_ago(report.get('checked_at'))} by the worker; "
+            "nothing here changes the data on screen."
+        )
+
+
+def render_alerts_banner() -> None:
+    """Show the unread watchlist alerts; renders nothing when there are none."""
+    store = get_store()
+    alerts = store.get_alerts()
+    if not alerts:
+        return
+
+    severity_icons = {"good": "🟢", "warn": "🟠", "info": "🔵"}
+    with st.container(key="alerts-banner"):
+        count = len(alerts)
+        st.info(
+            f"{count} unread alert{'s' if count != 1 else ''} for your watchlist",
+            icon="🔔",
+        )
+        for alert in alerts:
+            symbol_col, text_col = st.columns([1, 7])
+            with symbol_col:
+                if st.button(
+                    f"{alert['symbol']} ▸",
+                    key=f"alert_open_{alert['id']}",
+                    help=f"Open {alert['symbol']}",
+                ):
+                    open_symbol(alert["symbol"])
+                    st.rerun()
+            with text_col:
+                icon = severity_icons.get(alert["severity"], "•")
+                st.markdown(f"{icon} **{alert['title']}**")
+                meta = [alert.get("detail") or "", _ago(alert.get("created_at"))]
+                st.caption(" · ".join(part for part in meta if part))
+        if st.button("Mark all read", key="alerts_mark_read"):
+            store.mark_alerts_seen([alert["id"] for alert in alerts])
+            st.rerun()
+
+
 def main() -> None:
     """Main Streamlit app entry point."""
+    store = get_store()
+    _init_session_state()
+
+    # The default screener is always offered as a saved screen.
+    if not store.list_screens():
+        screen = _default_screen()
+        store.save_screen(
+            "Default Screener",
+            screen["filters"],
+            screen["view_preset"],
+            screen["sort_column"],
+            screen["sort_ascending"],
+        )
+
     render_header()
     render_sidebar_filters()
 
-    store = get_store()
     sync_info = store.get_last_sync_info()
     render_pipeline_hud(sync_info)
+    render_sanity_banner(store)
 
-    # Initialize session state
-    if "active_filters" not in st.session_state:
-        quality_screen = next(
-            (s for s in POPULAR_SCREENS if "Quality Screen" in s["name"]),
-            POPULAR_SCREENS[0],
-        )
-        st.session_state["active_filters"] = quality_screen["filters"].copy()
-        st.session_state["view_preset"] = quality_screen["view_preset"]
-        st.session_state["sort_column"] = quality_screen["sort_column"]
-        st.session_state["sort_ascending"] = quality_screen["sort_ascending"]
-        st.session_state["current_page"] = 1
+    if st.session_state.get("page") == "detail" and st.session_state.get(
+        "detail_symbol"
+    ):
+        if st.button("← Back to screener", key="detail_back"):
+            close_detail()
+            st.rerun()
+        render_detail_page(store, st.session_state["detail_symbol"])
+        return
 
-    if "current_page" not in st.session_state:
-        st.session_state["current_page"] = 1
-    if "view_preset" not in st.session_state:
-        st.session_state["view_preset"] = "Overview"
-    if "sort_column" not in st.session_state:
-        st.session_state["sort_column"] = None
-    if "sort_ascending" not in st.session_state:
-        st.session_state["sort_ascending"] = True
-    if "page_size" not in st.session_state:
-        st.session_state["page_size"] = DEFAULT_PAGE_SIZE
-
-    # Main content tabs
-    tab_screener, tab_watchlist = st.tabs(["📊 Screener", "⭐ Watchlist"])
+    # Main content tabs; unread alerts are visible from anywhere in the app.
+    unread = store.count_unread_alerts()
+    watchlist_label = f"⭐ Watchlist ({unread})" if unread else "⭐ Watchlist"
+    tab_screener, tab_watchlist, tab_backtest = st.tabs(
+        ["📊 Screener", watchlist_label, "🧪 Backtest"]
+    )
 
     with tab_screener:
+        render_alerts_banner()
+
         # Render the new top-level filters grid
         render_top_filters()
 
@@ -1313,11 +1719,15 @@ def main() -> None:
     with tab_watchlist:
         render_watchlist_tab()
 
+    with tab_backtest:
+        render_backtest_tab(store)
+
     # Footer
     st.markdown(
         """
     <div class="app-footer">
-        Stonks Screener v0.1.0 · Data from <a href="https://finnhub.io" style="color: #6366f1;">Finnhub</a> ·
+        Stonks Screener v0.1.0 · Data from <a href="https://stockanalysis.com" style="color: #6366f1;">StockAnalysis.com</a> ·
+        Hedge fund list from <a href="https://hedgefollow.com/Largest-Hedge-Fund-Buys.php" style="color: #6366f1;">HedgeFollow</a> ·
         Built with <a href="https://streamlit.io" style="color: #6366f1;">Streamlit</a>
     </div>
     """,

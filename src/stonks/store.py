@@ -8,6 +8,74 @@ from typing import Any
 
 from stonks.config import DB_PATH
 
+VALUATION_COLUMNS = (
+    "dcf_fair_value",
+    "dcf_upside_pct",
+    "lynch_fair_value",
+    "lynch_upside_pct",
+)
+
+# 1 when the symbol is in HedgeFollow's largest hedge fund buys, 0 when not, NULL
+# when the list could not be read during that sync.
+FLAG_COLUMNS = ("hedge_fund_buys",)
+
+STOCK_FIELDS = [
+    "symbol",
+    "description",
+    "exchange",
+    "type",
+    "mic",
+    "currency",
+    "market_cap",
+    "pe_ratio",
+    "pb_ratio",
+    "ps_ratio",
+    "peg_ratio",
+    "ev_to_ebitda",
+    "dividend_yield_pct",
+    "gross_margin_pct",
+    "operating_margin_pct",
+    "net_margin_pct",
+    "roa_pct",
+    "roe_pct",
+    "roic_pct",
+    "current_ratio",
+    "debt_to_equity",
+    "fcf_margin_pct",
+    "revenue_growth_5y_pct",
+    "eps_growth_5y_pct",
+    "beta",
+    "price",
+    "week_52_high",
+    "week_52_low",
+    "revenue_growth_3y_pct",
+    "eps_growth_3y_pct",
+    "free_cash_flow_per_share",
+    "revenue_per_share",
+    "book_value_per_share",
+    "tangible_book_value_per_share",
+    "long_term_debt_to_equity",
+    "asset_turnover",
+    "eps_ttm",
+    "net_income",
+    "free_cash_flow",
+    "fcf_growth_5y_pct",
+    "net_income_growth_5y_pct",
+    "return_cagr_5y_pct",
+    "return_cagr_10y_pct",
+    "return_cagr_15y_pct",
+    "roa_5y_avg_pct",
+    "roe_5y_avg_pct",
+    "roic_5y_avg_pct",
+    "shares_insiders_pct",
+    "industry",
+    "short_pct",
+    "rating",
+    "pt_upside_pct",
+    *VALUATION_COLUMNS,
+    *FLAG_COLUMNS,
+]
+
 
 class SQLiteStore:
     """Lightweight persistence layer using SQLite for screens and watchlists."""
@@ -35,6 +103,14 @@ class SQLiteStore:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS saved_backtests (
+                    name TEXT PRIMARY KEY,
+                    settings TEXT NOT NULL,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS watchlist (
                     symbol TEXT PRIMARY KEY,
                     added_at REAL NOT NULL,
@@ -48,9 +124,20 @@ class SQLiteStore:
                     status TEXT,
                     error TEXT,
                     last_attempt REAL,
+                    attempts INTEGER DEFAULT 0,
+                    next_retry_at REAL,
                     PRIMARY KEY (symbol, sync_type)
                 )
             """)
+            # Existing databases predate the retry-tracking columns.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(sync_status)")}
+            if "attempts" not in columns:
+                conn.execute(
+                    "ALTER TABLE sync_status ADD COLUMN attempts INTEGER DEFAULT 0"
+                )
+            if "next_retry_at" not in columns:
+                conn.execute("ALTER TABLE sync_status ADD COLUMN next_retry_at REAL")
+
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
@@ -63,6 +150,19 @@ class SQLiteStore:
                     key TEXT PRIMARY KEY,
                     value TEXT,
                     expires_at REAL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS alerts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    detail TEXT,
+                    dedupe_key TEXT NOT NULL UNIQUE,
+                    created_at REAL NOT NULL,
+                    seen_at REAL
                 )
             """)
             conn.execute("""
@@ -119,9 +219,28 @@ class SQLiteStore:
                     short_pct REAL,
                     rating TEXT,
                     pt_upside_pct REAL,
+                    dcf_fair_value REAL,
+                    dcf_upside_pct REAL,
+                    lynch_fair_value REAL,
+                    lynch_upside_pct REAL,
+                    hedge_fund_buys INTEGER,
                     updated_at REAL
                 )
             """)
+            # Existing databases predate the valuation columns.
+            stock_columns = {
+                row[1] for row in conn.execute("PRAGMA table_info(stocks)")
+            }
+            for column in VALUATION_COLUMNS:
+                if column not in stock_columns:
+                    conn.execute(
+                        f"ALTER TABLE stocks ADD COLUMN {column} REAL"  # nosec B608
+                    )
+            for column in FLAG_COLUMNS:
+                if column not in stock_columns:
+                    conn.execute(
+                        f"ALTER TABLE stocks ADD COLUMN {column} INTEGER"  # nosec B608
+                    )
             conn.commit()
 
     # ── Saved Screens ────────────────────────────────────────────────
@@ -186,6 +305,45 @@ class SQLiteStore:
             conn.execute("DELETE FROM saved_screens WHERE name=?", (name,))
             conn.commit()
 
+    # ── Saved Backtests ──────────────────────────────────────────────
+
+    def save_backtest(self, name: str, settings: dict[str, Any]) -> None:
+        """Save or update a backtest configuration (symbols, weights, dates)."""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO saved_backtests (name, settings, created_at, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(name) DO UPDATE SET
+                     settings=excluded.settings,
+                     updated_at=excluded.updated_at
+                """,
+                (name, json.dumps(settings), now, now),
+            )
+            conn.commit()
+
+    def list_backtests(self) -> list[dict[str, Any]]:
+        """Return saved backtest settings, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT name, settings, created_at, updated_at FROM saved_backtests ORDER BY updated_at DESC"
+            ).fetchall()
+        return [
+            {
+                "name": row[0],
+                "settings": json.loads(row[1]),
+                "created_at": row[2],
+                "updated_at": row[3],
+            }
+            for row in rows
+        ]
+
+    def delete_backtest(self, name: str) -> None:
+        """Delete a saved backtest."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM saved_backtests WHERE name=?", (name,))
+            conn.commit()
+
     # ── Watchlist ────────────────────────────────────────────────────
 
     def add_to_watchlist(self, symbol: str, notes: str = "") -> None:
@@ -221,23 +379,41 @@ class SQLiteStore:
             rows = conn.execute("SELECT symbol FROM watchlist").fetchall()
         return [r[0] for r in rows]
 
+    def get_hedge_buy_symbols(self) -> list[str]:
+        """Return the symbols currently flagged as a largest hedge fund buy."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT symbol FROM stocks WHERE hedge_fund_buys = 1"
+            ).fetchall()
+        return [r[0] for r in rows]
+
     # ── Sync Status ──────────────────────────────────────────────────
 
     def update_sync_status(
-        self, symbol: str, sync_type: str, status: str, error: str | None = None
+        self,
+        symbol: str,
+        sync_type: str,
+        status: str,
+        error: str | None = None,
+        attempts: int = 0,
+        backoff_seconds: float = 0.0,
     ) -> None:
-        """Update the sync status for a symbol."""
+        """Update the sync status for a symbol, including retry bookkeeping."""
         now = time.time()
+        next_retry_at = now + backoff_seconds if backoff_seconds > 0 else None
         with self._connect() as conn:
             conn.execute(
-                """INSERT INTO sync_status (symbol, sync_type, status, error, last_attempt)
-                   VALUES (?, ?, ?, ?, ?)
+                """INSERT INTO sync_status
+                   (symbol, sync_type, status, error, last_attempt, attempts, next_retry_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(symbol, sync_type) DO UPDATE SET
                      status=excluded.status,
                      error=excluded.error,
-                     last_attempt=excluded.last_attempt
+                     last_attempt=excluded.last_attempt,
+                     attempts=excluded.attempts,
+                     next_retry_at=excluded.next_retry_at
                 """,
-                (symbol, sync_type, status, error, now),
+                (symbol, sync_type, status, error, now, attempts, next_retry_at),
             )
             conn.commit()
 
@@ -273,11 +449,8 @@ class SQLiteStore:
                     "SELECT COUNT(DISTINCT symbol) FROM sync_status"
                 ).fetchone()[0]
 
-            success_basic = conn.execute(
-                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='basic'"
-            ).fetchone()[0]
-            success_candles = conn.execute(
-                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='candles'"
+            success_fundamentals = conn.execute(
+                "SELECT COUNT(*) FROM sync_status WHERE status='success' AND sync_type='fundamentals'"
             ).fetchone()[0]
             failed = conn.execute(
                 "SELECT COUNT(*) FROM sync_status WHERE status='failed'"
@@ -288,8 +461,8 @@ class SQLiteStore:
 
         return {
             "total_symbols": total_universe,
-            "success_count": success_basic,
-            "candles_count": success_candles,
+            "success_count": success_fundamentals,
+            "fundamentals_count": success_fundamentals,
             "failed_count": failed,
             "last_run": last_run,
         }
@@ -318,6 +491,142 @@ class SQLiteStore:
                 "SELECT value FROM metadata WHERE key=?", (key,)
             ).fetchone()
         return row[0] if row else None
+
+    # ── Cache ─────────────────────────────────────────────────────────
+
+    def cache_set(self, key: str, value: Any, ttl_seconds: float) -> None:
+        """Store a JSON-serialisable value under `key` with a time to live."""
+        expires_at = time.time() + ttl_seconds
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO kv_cache (key, value, expires_at) VALUES (?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                     value=excluded.value, expires_at=excluded.expires_at
+                """,
+                (key, json.dumps(value), expires_at),
+            )
+            conn.commit()
+
+    def cache_get(self, key: str, *, allow_expired: bool = False) -> Any:
+        """Return a cached value, or None when missing, expired or unreadable.
+
+        ``allow_expired`` returns a stale entry too, which callers use as a
+        fallback when the provider cannot be reached.
+        """
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value, expires_at FROM kv_cache WHERE key=?", (key,)
+            ).fetchone()
+        if row is None or row[1] is None:
+            return None
+        if not allow_expired and row[1] < time.time():
+            return None
+        try:
+            return json.loads(row[0])
+        except (TypeError, json.JSONDecodeError):
+            return None
+
+    def cache_delete(self, key: str) -> None:
+        """Drop a cached value."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM kv_cache WHERE key=?", (key,))
+            conn.commit()
+
+    # ── Alerts ───────────────────────────────────────────────────────
+
+    def add_alert(
+        self,
+        symbol: str,
+        kind: str,
+        severity: str,
+        title: str,
+        detail: str | None,
+        dedupe_key: str,
+    ) -> bool:
+        """Insert an alert unless its dedupe key was already recorded."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """INSERT OR IGNORE INTO alerts
+                   (symbol, kind, severity, title, detail, dedupe_key, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (symbol, kind, severity, title, detail, dedupe_key, time.time()),
+            )
+            conn.commit()
+        return cursor.rowcount > 0
+
+    def get_alerts(
+        self,
+        *,
+        unread_only: bool = True,
+        symbol: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return alerts newest first, unread only unless told otherwise."""
+        where = []
+        params: list[Any] = []
+        if unread_only:
+            where.append("seen_at IS NULL")
+        if symbol is not None:
+            where.append("symbol = ?")
+            params.append(symbol)
+        where_sql = " AND ".join(where) if where else "1=1"
+        query = (
+            "SELECT id, symbol, kind, severity, title, detail, "
+            "dedupe_key, created_at, seen_at "
+            f"FROM alerts WHERE {where_sql} "  # nosec B608
+            "ORDER BY created_at DESC, id DESC LIMIT ?"
+        )
+        with self._connect() as conn:
+            rows = conn.execute(query, [*params, limit]).fetchall()
+        return [
+            {
+                "id": r[0],
+                "symbol": r[1],
+                "kind": r[2],
+                "severity": r[3],
+                "title": r[4],
+                "detail": r[5],
+                "dedupe_key": r[6],
+                "created_at": r[7],
+                "seen_at": r[8],
+            }
+            for r in rows
+        ]
+
+    def mark_alerts_seen(self, ids: list[int]) -> None:
+        """Mark the given alerts as read."""
+        if not ids:
+            return
+        placeholders = ",".join(["?"] * len(ids))
+        query = f"UPDATE alerts SET seen_at = ? WHERE id IN ({placeholders})"  # nosec B608
+        with self._connect() as conn:
+            conn.execute(query, [time.time(), *ids])
+            conn.commit()
+
+    def unread_alert_counts(self) -> dict[str, int]:
+        """Unread alert count per symbol, for the watchlist marker column."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT symbol, COUNT(*) FROM alerts
+                   WHERE seen_at IS NULL GROUP BY symbol"""
+            ).fetchall()
+        return {r[0]: int(r[1]) for r in rows}
+
+    def count_unread_alerts(self) -> int:
+        """How many alerts have not been read yet."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM alerts WHERE seen_at IS NULL"
+            ).fetchone()
+        return int(row[0])
+
+    def prune_alerts(self, older_than_days: int = 14) -> int:
+        """Drop alerts older than the retention window."""
+        cutoff = time.time() - older_than_days * 86400
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM alerts WHERE created_at < ?", (cutoff,))
+            conn.commit()
+        return cursor.rowcount
 
     # ── Stocks ────────────────────────────────────────────────────────
 
@@ -379,8 +688,14 @@ class SQLiteStore:
             "roe_5y_avg_pct",
             "roic_5y_avg_pct",
             "shares_insiders_pct",
+            "short_pct",
+            "pt_upside_pct",
+            *VALUATION_COLUMNS,
+            *FLAG_COLUMNS,
         }
-        enum_columns = {"exchange", "type", "currency", "mic"}
+        # "symbol" is not an enum column, but callers legitimately need to
+        # constrain the query to an explicit list (e.g. the watchlist).
+        enum_columns = {"exchange", "type", "currency", "mic", "symbol"}
 
         if filters:
             for col, spec in filters.items():
@@ -456,10 +771,12 @@ class SQLiteStore:
             "short_pct",
             "rating",
             "pt_upside_pct",
+            *VALUATION_COLUMNS,
+            *FLAG_COLUMNS,
         ]
-        select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"
+        select_sql = f"SELECT {', '.join(base_columns)} FROM stocks WHERE {where_sql}"  # nosec B608
 
-        count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"
+        count_sql = f"SELECT COUNT(*) FROM stocks WHERE {where_sql}"  # nosec B608
         with self._connect() as conn:
             total_matching = conn.execute(count_sql, params).fetchone()[0]
 
@@ -484,68 +801,34 @@ class SQLiteStore:
 
     def save_stock(self, symbol: str, data: dict[str, Any]) -> None:
         """Upsert a stock's metrics."""
+        with self._connect() as conn:
+            self._upsert_stock(conn, {**data, "symbol": symbol})
+            conn.commit()
+
+    def replace_stocks(self, rows: list[dict[str, Any]]) -> None:
+        """Atomically replace the screener universe with a fresh snapshot."""
         now = time.time()
+        with self._connect() as conn:
+            conn.execute("DELETE FROM stocks")
+            conn.execute("DELETE FROM sync_status WHERE sync_type='fundamentals'")
+            for row in rows:
+                self._upsert_stock(conn, row)
+                conn.execute(
+                    """INSERT INTO sync_status
+                       (symbol, sync_type, status, error, last_attempt, attempts, next_retry_at)
+                       VALUES (?, 'fundamentals', 'success', NULL, ?, 0, NULL)""",
+                    (row["symbol"], now),
+                )
+            conn.commit()
 
-        all_fields = [
-            "symbol",
-            "description",
-            "exchange",
-            "type",
-            "mic",
-            "currency",
-            "market_cap",
-            "pe_ratio",
-            "pb_ratio",
-            "ps_ratio",
-            "peg_ratio",
-            "ev_to_ebitda",
-            "dividend_yield_pct",
-            "gross_margin_pct",
-            "operating_margin_pct",
-            "net_margin_pct",
-            "roa_pct",
-            "roe_pct",
-            "roic_pct",
-            "current_ratio",
-            "debt_to_equity",
-            "fcf_margin_pct",
-            "revenue_growth_5y_pct",
-            "eps_growth_5y_pct",
-            "beta",
-            "price",
-            "week_52_high",
-            "week_52_low",
-            "revenue_growth_3y_pct",
-            "eps_growth_3y_pct",
-            "free_cash_flow_per_share",
-            "revenue_per_share",
-            "book_value_per_share",
-            "tangible_book_value_per_share",
-            "long_term_debt_to_equity",
-            "asset_turnover",
-            "eps_ttm",
-            "net_income",
-            "free_cash_flow",
-            "fcf_growth_5y_pct",
-            "net_income_growth_5y_pct",
-            "return_cagr_5y_pct",
-            "return_cagr_10y_pct",
-            "return_cagr_15y_pct",
-            "roa_5y_avg_pct",
-            "roe_5y_avg_pct",
-            "roic_5y_avg_pct",
-            "shares_insiders_pct",
-            "industry",
-            "short_pct",
-            "rating",
-            "pt_upside_pct",
-        ]
-
+    @staticmethod
+    def _upsert_stock(conn: sqlite3.Connection, data: dict[str, Any]) -> None:
+        now = time.time()
         fields = []
         values = []
         fields_set = []
 
-        for f in all_fields:
+        for f in STOCK_FIELDS:
             if f in data and data.get(f) is not None:
                 fields.append(f)
                 values.append(data[f])
@@ -555,13 +838,12 @@ class SQLiteStore:
         values.append(now)
         fields_set.append("updated_at=excluded.updated_at")
 
-        sql = f"""INSERT INTO stocks ({", ".join(fields)})
-                  VALUES ({", ".join(["?"] * len(values))})
-                  ON CONFLICT(symbol) DO UPDATE SET {", ".join(fields_set)}"""
-
-        with self._connect() as conn:
-            conn.execute(sql, values)
-            conn.commit()
+        sql = (
+            f"INSERT INTO stocks ({', '.join(fields)}) "  # nosec B608
+            f"VALUES ({', '.join(['?'] * len(values))}) "  # nosec B608
+            f"ON CONFLICT(symbol) DO UPDATE SET {', '.join(fields_set)}"  # nosec B608
+        )
+        conn.execute(sql, values)
 
     def get_unique_values(self, column: str) -> list[str]:
         """Get unique values for an enum column."""
@@ -570,7 +852,9 @@ class SQLiteStore:
             return []
 
         with self._connect() as conn:
-            rows = conn.execute(
-                f"SELECT DISTINCT {column} FROM stocks WHERE {column} IS NOT NULL ORDER BY {column}"
-            ).fetchall()
+            query = (
+                f"SELECT DISTINCT {column} FROM stocks "  # nosec B608
+                f"WHERE {column} IS NOT NULL ORDER BY {column}"  # nosec B608
+            )
+            rows = conn.execute(query).fetchall()
         return [r[0] for r in rows]
