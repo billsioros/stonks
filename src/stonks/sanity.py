@@ -92,6 +92,15 @@ class CheckResult:
     detail: str
 
 
+@dataclass(frozen=True)
+class Badge:
+    """A compact status pill for the masthead."""
+
+    level: str  # "ok" | "fail" | "unknown"
+    label: str
+    detail: str  # shown as the pill's title tooltip
+
+
 def _portfolio_visualizer_request(url: str, data: bytes | None = None) -> str:
     """POST the backtest form and return the result page as text."""
     headers = dict(_HEADERS)
@@ -459,3 +468,35 @@ def report_is_fresh(report: dict | None, *, now: float | None = None) -> bool:
     if not isinstance(checked_at, (int, float)):
         return False
     return (now if now is not None else time.time()) - checked_at < SANITY_TTL_SECONDS
+
+
+def compatibility(report: dict | None, *, now: float | None = None) -> Badge:
+    """Summarize a sanity report as a one-line, evidence-backed badge."""
+    moment = now if now is not None else time.time()
+    if not report_is_fresh(report, now=moment):
+        return Badge("unknown", "Checks pending", "No fresh reference-site checks.")
+
+    results = report.get("results") or []
+    checked_at = report["checked_at"]
+    checked_text = f"Last checked {int(max(0.0, moment - checked_at) // 60)}m ago."
+
+    failures = [result for result in results if result.get("ok") is False]
+    if failures:
+        names = ", ".join(sorted({str(r.get("platform") or "?") for r in failures}))
+        details = "; ".join(
+            f"{r.get('platform') or '?'}: {r.get('detail') or 'diverged'}"
+            for r in failures
+        )
+        return Badge("fail", f"Diverged: {names}", f"{checked_text} {details}")
+
+    if results and all(result.get("ok") is True for result in results):
+        return Badge("ok", "Platforms in sync", checked_text)
+
+    unknown = [
+        str(r.get("platform") or "?") for r in results if r.get("ok") is not True
+    ]
+    return Badge(
+        "unknown",
+        "Checks incomplete",
+        f"{checked_text} Unverifiable: {', '.join(sorted(set(unknown)))}.",
+    )

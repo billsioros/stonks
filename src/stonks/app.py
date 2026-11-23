@@ -11,13 +11,14 @@ import time
 from collections.abc import Sequence
 from datetime import datetime
 from functools import lru_cache
+from html import escape as _escape
 from pathlib import Path
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
-from stonks import report, report_view, sanity
+from stonks import config, report, report_view, sanity
 from stonks.backtest_view import render_backtest_tab
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
@@ -150,6 +151,27 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     color: var(--text-secondary);
     font-size: 0.85rem;
 }
+
+.sk-badges {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.sk-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+}
+
+.sk-badge-ok { color: #22c55e; }
+.sk-badge-fail { color: #ef4444; }
+.sk-badge-unknown { color: #94a3b8; }
 
 /* Sidebar section label, matching the masthead's quieter register */
 .sk-side-title {
@@ -808,8 +830,46 @@ def _logo_data_uri() -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def render_header() -> None:
-    """Render the masthead: brand on the left, data source on the right."""
+def live_sync_state(
+    sync_info: dict[str, Any], *, now: float | None = None
+) -> sanity.Badge:
+    """Judge the worker from its last recorded attempt, not from a constant."""
+    moment = now if now is not None else time.time()
+    success_at = sync_info.get("last_successful_sync_at")
+    if not success_at:
+        return sanity.Badge("unknown", "Live Sync", "No successful sync recorded.")
+
+    age = max(0.0, moment - float(success_at))
+    if age < 3600:
+        age_text = f"{int(age // 60)}m ago"
+    else:
+        age_text = f"{int(age // 3600)}h {int((age % 3600) // 60)}m ago"
+    detail = f"Last successful sync {age_text}."
+
+    if sync_info.get("last_sync_status") == "failed":
+        return sanity.Badge("fail", "Live Sync", f"{detail} Last attempt failed.")
+    if age > config.SYNC_ACTIVE_WINDOW_MINUTES * 60:
+        return sanity.Badge(
+            "fail", "Live Sync", f"{detail} Outside the active sync window."
+        )
+    return sanity.Badge("ok", "Live Sync", detail)
+
+
+def render_header(store: SQLiteStore) -> None:
+    """Render the masthead: brand on the left, evidence-backed badges on the right."""
+    sync_info = store.get_last_sync_info()
+    sync_info["last_sync_status"] = store.get_metadata("last_sync_status")
+    sync_info["last_successful_sync_at"] = store.get_metadata("last_successful_sync_at")
+    sync_info["last_sync_error"] = store.get_metadata("last_sync_error")
+    badges = (
+        live_sync_state(sync_info),
+        sanity.compatibility(sanity.load_report(store)),
+    )
+    pills = "".join(
+        f'<span class="sk-badge sk-badge-{badge.level}" title="{_escape(badge.detail)}">'
+        f"{_escape(badge.label)}</span>"
+        for badge in badges
+    )
     st.markdown(
         f"""
     <div class="sk-head">
@@ -819,6 +879,7 @@ def render_header() -> None:
         </div>
         <div class="sk-meta">
             <p>Fundamental screener · data from StockAnalysis.com</p>
+            <div class="sk-badges">{pills}</div>
         </div>
     </div>
     """,
@@ -1514,14 +1575,6 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-        .hud-status {
-            font-size: 0.8rem;
-            padding: 2px 10px;
-            border-radius: 999px;
-            background: rgba(99, 102, 241, 0.12);
-            color: #f8fafc;
-            border: 1px solid rgba(99, 102, 241, 0.5);
-        }
         .hud-metrics {
             display: flex;
             gap: 2rem;
@@ -1567,7 +1620,6 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
             <div class="hud-card">
                 <div class="hud-header">
                     <div class="hud-title">📡 Data Pipeline HUD</div>
-                    <div class="hud-status">● Live Sync Active</div>
                 </div>
                 <div class="hud-metrics">
                     <div class="metric-group">
@@ -1717,7 +1769,7 @@ def main() -> None:
             screen["sort_ascending"],
         )
 
-    render_header()
+    render_header(store)
     render_sidebar_filters()
 
     sync_info = store.get_last_sync_info()

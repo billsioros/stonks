@@ -548,8 +548,10 @@ def dossier_block(dossier: Dossier) -> str:
     """
     lines = [
         "## Verdict",
-        f"Symbol: {dossier.symbol} | as of {dossier.as_of} | "
-        f"coverage {dossier.coverage:.0%}",
+        (
+            f"Symbol: {dossier.symbol} | as of {dossier.as_of} | "
+            f"coverage {dossier.coverage:.0%}"
+        ),
         "",
         _md_table(
             ["Gate", "Status", "Summary"],

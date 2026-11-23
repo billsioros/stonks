@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import time
+from typing import Any
 
 from stonks import sanity
 from stonks.sanity import CheckResult
@@ -269,3 +271,43 @@ def test_report_round_trip_and_freshness(tmp_path) -> None:
     assert sanity.load_report(store) is None
     store.save_metadata(sanity.REPORT_KEY, json.dumps({"results": "nope"}))
     assert sanity.load_report(store) is None
+
+
+def _report(results: list[dict[str, Any]], checked_at: float) -> dict[str, Any]:
+    return {"checked_at": checked_at, "results": results}
+
+
+def test_compatibility_uses_fresh_sanity_report() -> None:
+    report = _report(
+        [{"platform": "StockAnalysis", "ok": True, "detail": "ok"}], time.time()
+    )
+    badge = sanity.compatibility(report)
+    assert badge.level == "ok"
+    assert badge.label == "Platforms in sync"
+
+
+def test_compatibility_names_a_diverged_platform() -> None:
+    report = _report(
+        [{"platform": "StockAnalysis", "ok": False, "detail": "field renamed"}],
+        time.time(),
+    )
+    badge = sanity.compatibility(report)
+    assert badge.level == "fail"
+    assert "StockAnalysis" in badge.label
+    assert "field renamed" in badge.detail
+
+
+def test_compatibility_ignores_unverifiable_checks() -> None:
+    report = _report(
+        [{"platform": "GuruFocus", "ok": None, "detail": "blocked"}], time.time()
+    )
+    assert sanity.compatibility(report).level == "unknown"
+
+
+def test_compatibility_is_unknown_for_a_stale_or_missing_report() -> None:
+    stale = _report(
+        [{"platform": "StockAnalysis", "ok": True, "detail": "ok"}],
+        time.time() - sanity.SANITY_TTL_SECONDS - 1,
+    )
+    assert sanity.compatibility(stale).label == "Checks pending"
+    assert sanity.compatibility(None).level == "unknown"

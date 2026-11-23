@@ -13,6 +13,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # ── Worker ───────────────────────────────────────────────────────────
 # The worker refreshes the full screener dataset on this interval.
 WORKER_INTERVAL_MINUTES = 60
+# A sync counts as live for two worker intervals: one missed run is tolerated,
+# two consecutive misses mean the worker is no longer keeping up.
+SYNC_ACTIVE_WINDOW_MINUTES = 2 * WORKER_INTERVAL_MINUTES
 
 # ── Screener defaults ───────────────────────────────────────────────
 DEFAULT_PAGE_SIZE: int = 50
