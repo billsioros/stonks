@@ -239,3 +239,15 @@ def test_fetch_json_raises_after_all_attempts(monkeypatch):
         raise AssertionError("fetch_json should propagate the final error")
 
     assert len(attempts) == stockanalysis.REQUEST_ATTEMPTS
+
+
+def test_build_rows_populates_both_insider_ownership_columns():
+    rows = stockanalysis.build_rows(
+        [{"symbol": "AAPL", "description": "Apple Inc.", "industry": "Hardware"}],
+        {"AAPL": {"marketCap": 3000.0, "sharesInsiders": 3.897}},
+    )
+    aapl = rows[0]
+    # Original fraction retained for reference benchmark checks
+    assert aapl["shares_insiders_pct"] == pytest.approx(0.03897)
+    # New true percentage column next to original
+    assert aapl["shares_insiders_percent"] == pytest.approx(3.897)

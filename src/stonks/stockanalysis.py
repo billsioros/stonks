@@ -150,6 +150,7 @@ DATA_POINT_MAP: dict[str, tuple[str, Callable[[Any], Any]]] = {
     "roe_5y_avg_pct": ("roe5y", _identity),
     "roic_5y_avg_pct": ("roic5y", _identity),
     "shares_insiders_pct": ("sharesInsiders", _fraction),
+    "shares_insiders_percent": ("sharesInsiders", _identity),
     "short_pct": ("shortFloat", _identity),
     "rating": ("analystRatings", _identity),
     "pt_upside_pct": ("priceTargetChange", _identity),
