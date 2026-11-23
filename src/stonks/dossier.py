@@ -16,6 +16,7 @@ import math
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal
 
 Status = Literal["pass", "fail", "unverified", "not_applicable"]
@@ -438,3 +439,207 @@ def _gate_summary(name: str, checks: Sequence[Check]) -> str:
     if unverified:
         return f"{summary}; {unverified} unverified"
     return summary
+
+
+# ── Forward evidence ─────────────────────────────────────────────────
+REVISION_WINDOW_DAYS = 90
+EVENT_RISK_DAYS = 7
+TRAILING_ONLY = "Trailing evidence only"
+
+
+def _as_date(value: object) -> date | None:
+    """Parse an ISO date or datetime string, ignoring anything unparsable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
+
+
+def _isdigit_sign(value: float) -> int:
+    """Direction of a change, so analyst actions can be netted."""
+    if value > 0:
+        return 1
+    if value < 0:
+        return -1
+    return 0
+
+
+def forward_gate(
+    row: Mapping[str, Any],
+    *,
+    forecast: Mapping[str, Any] | None = None,
+    statements: object = None,
+    overview: Mapping[str, Any] | None = None,
+    guidance_hits: Sequence[object] = (),
+    today: object = None,
+) -> Gate:
+    """Gate 2: is there evidence about where the business is going.
+
+    Trailing growth says where a company has been. This gate only passes checks
+    on evidence that points forward: consensus estimates, analyst revisions in
+    the last quarter, the quarterly margin slope, guidance in a filing and the
+    distance to the next earnings date. If none of the three leading indicators
+    is available the gate is an explicit failure labelled "Trailing evidence
+    only", so a memo cannot quietly extrapolate history into a thesis.
+    """
+    today_date = _as_date(today) or date.today()
+    checks: list[Check] = []
+
+    annual = (forecast or {}).get("estimates") or {}
+    annual = annual.get("annual") if isinstance(annual, Mapping) else None
+    growths: dict[str, float] = {}
+    if isinstance(annual, Mapping):
+        for key, label in (("revenueNext", "revenue"), ("epsNext", "EPS")):
+            entry = annual.get(key)
+            growth = _num(entry.get("growth")) if isinstance(entry, Mapping) else None
+            if growth is not None:
+                growths[label] = growth
+    estimate_ok: bool | None = None
+    if growths:
+        estimate_ok = any(growth > 0 for growth in growths.values())
+    estimate_value = (
+        ", ".join(f"{label} {growth:+.1f}%" for label, growth in growths.items())
+        if growths
+        else "no consensus estimate"
+    )
+    checks.append(
+        Check(
+            "forward.estimate_growth",
+            "Analysts expect growth",
+            _status_from(estimate_ok),
+            estimate_value,
+            "next-year consensus growth > 0%",
+            "forecast.estimates.annual",
+        )
+    )
+
+    ratings = (forecast or {}).get("ratings") or []
+    net = 0
+    counted = 0
+    for rating in ratings:
+        if not isinstance(rating, Mapping):
+            continue
+        when = _as_date(rating.get("date"))
+        now_target = _num(rating.get("target_now"))
+        old_target = _num(rating.get("target_old"))
+        if when is None or now_target is None or old_target is None:
+            continue
+        if (today_date - when).days > REVISION_WINDOW_DAYS:
+            continue
+        counted += 1
+        net += _isdigit_sign(now_target - old_target)
+    revision_ok: bool | None = net >= 0 if counted else None
+    checks.append(
+        Check(
+            "forward.revision_direction",
+            "Estimates are not being cut",
+            _status_from(revision_ok),
+            f"net {net:+d} over {counted} actions"
+            if counted
+            else "no recent analyst actions",
+            "net revisions >= 0 in 90 days",
+            "forecast.ratings",
+        )
+    )
+
+    quarterly = _statement(statements, "income_quarterly")
+    operating = _annual_series(quarterly, "opinc")
+    revenue_q = _annual_series(quarterly, "revenue")
+    quarterly_margins = [
+        income / sales * 100.0
+        for sales, income in zip(revenue_q, operating, strict=False)
+        if sales and income is not None and sales > 0
+    ][:4]
+    margin_ok: bool | None = None
+    if len(quarterly_margins) < 4:
+        margin_value = "fewer than four quarters"
+    else:
+        slope = (quarterly_margins[0] - quarterly_margins[3]) / 3.0
+        margin_ok = slope > 0
+        margin_value = f"{slope:+.2f}pp per quarter"
+    checks.append(
+        Check(
+            "forward.margin_trajectory",
+            "Margins are expanding",
+            _status_from(margin_ok),
+            margin_value,
+            "four-quarter slope > 0",
+            "income_quarterly.opinc / income_quarterly.revenue",
+        )
+    )
+
+    income_annual = _statement(statements, "income_annual")
+    revenue_a = [value for value in _annual_series(income_annual, "revenue") if value]
+    growth_5y = _num(row.get("revenue_growth_5y_pct"))
+    trajectory_ok: bool | None = None
+    if len(revenue_a) < 2 or growth_5y is None:
+        trajectory_value = "no year-over-year history"
+    else:
+        latest = (revenue_a[0] / revenue_a[1] - 1) * 100.0
+        trajectory_ok = latest >= growth_5y
+        trajectory_value = f"{latest:.1f}% vs {growth_5y:.1f}% 5y average"
+    checks.append(
+        Check(
+            "forward.revenue_trajectory",
+            "Top line is not decelerating",
+            _status_from(trajectory_ok),
+            trajectory_value,
+            "latest YoY >= 5y average",
+            "income_annual.revenue, screener.revenue_growth_5y_pct",
+        )
+    )
+
+    checks.append(
+        Check(
+            "forward.guidance_present",
+            "Management has guided",
+            _status_from(True if guidance_hits else None),
+            f"{len(guidance_hits)} filing(s) mention guidance"
+            if guidance_hits
+            else "no filing evidence",
+            "guidance/outlook found in the latest filing",
+            "filings.guidance",
+        )
+    )
+
+    earnings = _as_date((overview or {}).get("earnings_date"))
+    event_ok: bool | None = None
+    if earnings is None:
+        event_value = "no earnings date"
+    else:
+        days_ahead = (earnings - today_date).days
+        event_ok = days_ahead > EVENT_RISK_DAYS
+        event_value = f"earnings in {days_ahead} days"
+    checks.append(
+        Check(
+            "forward.event_risk",
+            "No imminent binary event",
+            _status_from(event_ok),
+            event_value,
+            f"earnings > {EVENT_RISK_DAYS} days away",
+            "overview.earnings_date",
+        )
+    )
+
+    leading = (checks[0].status, checks[1].status, checks[4].status)
+    if all(status in {"unverified", "fail"} for status in leading):
+        checks[0] = Check(
+            checks[0].id,
+            checks[0].label,
+            "fail",
+            "no forward estimate, revision or guidance",
+            checks[0].threshold,
+            checks[0].evidence,
+        )
+        summary = TRAILING_ONLY
+    else:
+        summary = _gate_summary("forward", checks)
+
+    return Gate(
+        key="forward",
+        label="Forward evidence",
+        checks=tuple(checks),
+        summary=summary,
+    )

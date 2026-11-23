@@ -13,6 +13,7 @@ from stonks.dossier import (
     Dossier,
     Gate,
     coverage,
+    forward_gate,
     gate_status,
     industry_medians,
     quality_gate,
@@ -314,3 +315,153 @@ def test_industry_medians_group_by_industry_and_count_peers() -> None:
     assert medians["Semiconductors"]["operating_margin_pct"] == 25.0
     assert medians["Banks"]["n"] == 1
     assert None not in medians
+
+
+# ── Task 3: forward gate ─────────────────────────────────────────────
+
+
+def _forecast(
+    revenue_next: float | None = 5.0,
+    eps_next: float | None = None,
+    actions: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    annual: dict[str, object] = {}
+    if revenue_next is not None:
+        annual["revenueNext"] = {"growth": revenue_next}
+    if eps_next is not None:
+        annual["epsNext"] = {"growth": eps_next}
+    return {"estimates": {"annual": annual}, "ratings": actions or []}
+
+
+def _quarterly_margins(operating: list[float]) -> dict[str, object]:
+    revenue = [100.0] * len(operating)
+    periods = [
+        {"key": f"Q{index}", "label": f"Q{index}", "is_ttm": False}
+        for index in range(len(operating))
+    ]
+    return {
+        "periods": periods,
+        "rows": [
+            {"id": "revenue", "label": "Revenue", "values": revenue},
+            {"id": "opinc", "label": "Operating income", "values": operating},
+        ],
+    }
+
+
+def _forward(
+    forecast: dict[str, object] | None = None,
+    statements: object = None,
+    overview: dict[str, object] | None = None,
+    hits: tuple[object, ...] = (),
+    today: str = "2026-11-23",
+) -> Gate:
+    return forward_gate(  # type: ignore[arg-type]
+        _row(),
+        forecast=forecast if forecast is not None else _forecast(),
+        statements=statements,
+        overview=overview,
+        guidance_hits=hits,
+        today=today,
+    )
+
+
+def test_forward_gate_has_the_six_spec_checks() -> None:
+    gate = _forward()
+    assert [check.id for check in gate.checks] == [
+        "forward.estimate_growth",
+        "forward.revision_direction",
+        "forward.margin_trajectory",
+        "forward.revenue_trajectory",
+        "forward.guidance_present",
+        "forward.event_risk",
+    ]
+
+
+def test_forward_estimate_growth_accepts_either_revenue_or_eps() -> None:
+    assert _forward(_forecast(revenue_next=5.0)).checks[0].status == "pass"
+    assert _forward(_forecast(revenue_next=-5.0)).checks[0].status == "fail"
+
+    up = [{"date": "2026-11-01", "target_now": 120.0, "target_old": 100.0}]
+    missing = _forward(
+        _forecast(revenue_next=None, actions=up), hits=({"phrase": "outlook"},)
+    )
+    assert missing.checks[0].status == "unverified"
+    assert (
+        _forward(_forecast(revenue_next=None, eps_next=3.0)).checks[0].status == "pass"
+    )
+
+
+def test_forward_revision_direction_nets_the_last_ninety_days() -> None:
+    up = [{"date": "2026-11-01", "target_now": 120.0, "target_old": 100.0}]
+    down = [{"date": "2026-11-01", "target_now": 90.0, "target_old": 100.0}]
+    assert _forward(_forecast(actions=up)).checks[1].status == "pass"
+    assert _forward(_forecast(actions=down)).checks[1].status == "fail"
+
+    stale = [{"date": "2025-01-01", "target_now": 90.0, "target_old": 100.0}]
+    assert _forward(_forecast(actions=stale)).checks[1].status == "unverified"
+
+
+def test_forward_margin_trajectory_reads_four_quarters() -> None:
+    rising = {"income_quarterly": _quarterly_margins([30.0, 28.0, 26.0, 24.0])}
+    falling = {"income_quarterly": _quarterly_margins([24.0, 26.0, 28.0, 30.0])}
+    assert _forward(statements=rising).checks[2].status == "pass"
+    assert _forward(statements=falling).checks[2].status == "fail"
+    assert _forward().checks[2].status == "unverified"
+
+
+def test_forward_revenue_trajectory_compares_with_the_five_year_average() -> None:
+    income = _annual_statement(
+        {
+            "revenue": [140.0, 130.0, 100.0, 90.0, 80.0, 70.0],
+        }
+    )
+    faster = {"income_annual": income}
+    assert _forward(statements=faster).checks[3].status == "pass"
+
+    slower_income = _annual_statement(
+        {
+            "revenue": [110.0, 102.0, 100.0, 90.0, 80.0, 70.0],
+        }
+    )
+    assert (
+        _forward(statements={"income_annual": slower_income}).checks[3].status == "fail"
+    )
+
+
+def test_forward_guidance_needs_filing_evidence() -> None:
+    assert _forward(hits=({"phrase": "outlook"},)).checks[4].status == "pass"
+    assert _forward().checks[4].status == "unverified"
+
+
+def test_forward_event_risk_uses_the_earnings_date() -> None:
+    soon = {"earnings_date": "2026-11-26"}
+    later = {"earnings_date": "2026-12-23"}
+    assert _forward(overview=soon).checks[5].status == "fail"
+    assert _forward(overview=later).checks[5].status == "pass"
+    assert _forward().checks[5].status == "unverified"
+
+
+def test_forward_gate_is_unverified_when_only_some_evidence_is_missing() -> None:
+    up = [{"date": "2026-11-01", "target_now": 120.0, "target_old": 100.0}]
+    gate = _forward(
+        _forecast(revenue_next=None, actions=up), hits=({"phrase": "outlook"},)
+    )
+    assert gate.checks[0].status == "unverified"
+    assert gate.summary != "Trailing evidence only"
+    assert gate_status(gate.checks) == "unverified"
+
+
+def test_backward_only_evidence_fails_the_gate_and_says_so() -> None:
+    gate = _forward(_forecast(revenue_next=None))
+    trailing = Gate(
+        "forward",
+        "Forward evidence",
+        (gate.checks[0], gate.checks[1], gate.checks[4]),
+        gate.summary,
+    )
+    all_missing = forward_gate(  # type: ignore[arg-type]
+        _row(), forecast=None, overview=None, guidance_hits=(), today="2026-11-23"
+    )
+    assert all_missing.summary == "Trailing evidence only"
+    assert gate_status(all_missing.checks) == "fail"
+    assert gate_status(trailing.checks) != "pass"

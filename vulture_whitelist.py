@@ -9,6 +9,7 @@ from stonks.dossier import (
     Dossier,
     Gate,
     coverage,
+    forward_gate,
     gate_status,
     industry_medians,
     quality_gate,
@@ -49,6 +50,7 @@ gate_status  # noqa: B018
 coverage  # noqa: B018
 industry_medians  # noqa: B018
 quality_gate  # noqa: B018
+forward_gate  # noqa: B018
 
 LocalCache.delete  # noqa: B018
 SQLiteStore.get_screen  # noqa: B018
