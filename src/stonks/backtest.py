@@ -129,9 +129,12 @@ def _annualized_irr(flows: list[tuple[int, float]]) -> float | None:
     """Annualize the monthly IRR of dated cash flows, or ``None`` if unsolvable."""
 
     def npv(rate: float) -> float:
-        return sum(amount / (1 + rate) ** month for month, amount in flows)
+        log_discount = math.log1p(rate)
+        return sum(amount * math.exp(-month * log_discount) for month, amount in flows)
 
-    low, high = -0.9999, 1.0
+    # -0.5 per month already annualizes to about -99.98%, and keeping the
+    # bracket away from -1 avoids overflowing the discount over long windows.
+    low, high = -0.5, 1.0
     at_low = npv(low)
     while npv(high) * at_low > 0 and high < 1e6:
         high *= 2

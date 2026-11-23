@@ -325,6 +325,19 @@ def test_money_weighted_return_reflects_contribution_timing() -> None:
     assert simulate(prices, {"A": 1.0})["money_weighted_cagr_pct"] is None
 
 
+@pytest.mark.parametrize("count", [78, 82, 120])
+def test_money_weighted_return_is_stable_for_long_flat_windows(count: int) -> None:
+    prices = {"A": dict.fromkeys(_months(2020, count), 100.0)}
+    result = simulate(
+        prices,
+        {"A": 1.0},
+        initial=0.0,
+        contributions={"A": 100.0},
+        frequency="monthly",
+    )
+    assert result["money_weighted_cagr_pct"] == pytest.approx(0.0)
+
+
 def test_simulate_rejects_bad_contribution_inputs() -> None:
     prices = {"A": dict.fromkeys(_months(2020, 3), 100.0)}
     assert "error" in simulate(prices, {"A": 1.0}, frequency="weekly")
