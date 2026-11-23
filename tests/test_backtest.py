@@ -331,3 +331,30 @@ def test_simulate_rejects_bad_contribution_inputs() -> None:
     assert "error" in simulate(
         prices, {"A": 1.0}, initial=0.0, contributions={"A": 1.0}, frequency="none"
     )
+
+
+def test_run_backtest_gives_benchmark_the_same_contributions(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    months = _months(2020, 13)
+    prices = {month: 100.0 for month in months}
+    store.cache_set("hist:AAA:10Y:Monthly", prices, 3600)
+    store.cache_set("hist:BMB:10Y:Monthly", prices, 3600)
+
+    result = run_backtest(
+        store,
+        ["AAA"],
+        contributions=[100.0],
+        frequency="monthly",
+        initial=0.0,
+        benchmark="BMB",
+    )
+    assert "benchmark_error" not in result
+    assert result["benchmark"]["final"] == pytest.approx(result["final"])
+    assert result["benchmark"]["cagr_pct"] == pytest.approx(result["cagr_pct"])
+    assert result["invested"] == 1300.0
+
+
+def test_run_backtest_rejects_mismatched_contributions(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.cache_set("hist:AAA:10Y:Monthly", {"2020-01": 1.0, "2020-02": 2.0}, 3600)
+    assert "error" in run_backtest(store, ["AAA"], contributions=[1.0, 2.0])

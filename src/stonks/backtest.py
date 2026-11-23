@@ -276,6 +276,8 @@ def _benchmark_result(
     benchmark: str,
     result: dict[str, Any],
     initial: float,
+    contributions: dict[str, float] | None,
+    frequency: str,
 ) -> dict[str, Any]:
     """Grow the benchmark over the portfolio's months, for side-by-side stats."""
     from stonks.backtest import SYMBOL_MAP
@@ -298,6 +300,8 @@ def _benchmark_result(
         {ticker: 1.0},
         rebalance="none",
         initial=initial,
+        contributions={ticker: sum(contributions.values())} if contributions else None,
+        frequency=frequency,
     )
     if "error" in stats:
         return {"benchmark_error": f"Could not grow {ticker}: {stats['error']}"}
@@ -307,6 +311,11 @@ def _benchmark_result(
             "start": stats["start"],
             "end": stats["end"],
             "final": stats["final"],
+            "invested": stats["invested"],
+            "gain": stats["gain"],
+            "contribution": stats["contribution"],
+            "frequency": stats["frequency"],
+            "money_weighted_cagr_pct": stats["money_weighted_cagr_pct"],
             "total_return_pct": stats["total_return_pct"],
             "cagr_pct": stats["cagr_pct"],
             "stdev_pct": stats["stdev_pct"],
@@ -327,6 +336,8 @@ def run_backtest(
     end: str | None = None,
     initial: float = 10_000.0,
     benchmark: str | None = None,
+    contributions: list[float] | None = None,
+    frequency: str = "none",
     fetch: Callable[[str], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Load each symbol's history and simulate the portfolio.
@@ -340,6 +351,8 @@ def run_backtest(
         start: Optional first month, inclusive, as ``YYYY-MM`` or ``YYYY-MM-DD``.
         end: Optional last month, inclusive, same format.
         initial: Starting portfolio value.
+        contributions: Amount added per contribution, one per symbol.
+        frequency: One of :data:`CONTRIBUTION_MONTHS`; ``none`` disables deposits.
         fetch: Optional JSON fetcher, for tests.
 
     Returns:
@@ -354,6 +367,8 @@ def run_backtest(
         return {"error": "Pick at least one symbol."}
     if weights is not None and len(weights) != len(unique):
         return {"error": "Give one weight per symbol, or none for equal weight."}
+    if contributions is not None and len(contributions) != len(unique):
+        return {"error": "Give one contribution per symbol, or none."}
 
     prices: dict[str, dict[str, float]] = {}
     missing: list[str] = []
@@ -381,12 +396,27 @@ def run_backtest(
         if weights is not None
         else dict.fromkeys(unique, 1.0)
     )
-    result = simulate(prices, chosen, rebalance=rebalance, initial=initial)
+    contribution_map = (
+        dict(zip(unique, contributions, strict=True)) if contributions else None
+    )
+    result = simulate(
+        prices,
+        chosen,
+        rebalance=rebalance,
+        initial=initial,
+        contributions=contribution_map,
+        frequency=frequency,
+    )
     result["symbols"] = unique
+    result["contributions"] = contribution_map
     result["weights"] = {
         ticker: weight / sum(chosen.values()) * 100 for ticker, weight in chosen.items()
     }
     result["rebalance"] = rebalance
     if benchmark:
-        result.update(_benchmark_result(store, benchmark, result, initial))
+        result.update(
+            _benchmark_result(
+                store, benchmark, result, initial, contribution_map, frequency
+            )
+        )
     return result
