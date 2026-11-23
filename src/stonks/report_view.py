@@ -14,7 +14,7 @@ from typing import Any
 
 import streamlit as st
 
-from stonks import detail, detail_parse, dossier, report
+from stonks import deepdive_view, detail, detail_parse, dossier, report
 from stonks.dossier import Dossier
 from stonks.store import SQLiteStore
 
@@ -60,6 +60,7 @@ def render_llm_report(
     caption: _DefaultCaption | None = None,
     system_instruction: str = report.SYSTEM_INSTRUCTION,
     max_tokens: int = 1024,
+    before_report: Callable[[], None] | None = None,
 ) -> None:
     """One collapsible, opt-in report; every widget is namespaced by `scope_key`.
 
@@ -105,6 +106,8 @@ def render_llm_report(
                 st.session_state[prompt_key] = prompt
             else:
                 prompt = prompt or str(st.session_state.get(prompt_key, ""))
+            if before_report is not None:
+                before_report()
             with st.spinner("Asking OpenRouter…"):
                 try:
                     reply = _cached_report(
@@ -219,6 +222,11 @@ def render_symbol_report(store: SQLiteStore, symbol: str) -> None:
     def capture(built: Dossier) -> None:
         st.session_state[dossier_key] = built
 
+    def show_dossier() -> None:
+        built = st.session_state.get(dossier_key)
+        if built is not None:
+            deepdive_view.render_deep_dive(store, symbol, built)
+
     render_llm_report(
         scope_key=f"symbol-{symbol}-llm-report",
         heading="🤖 AI report",
@@ -230,4 +238,5 @@ def render_symbol_report(store: SQLiteStore, symbol: str) -> None:
         ),
         system_instruction=report.SYMBOL_SYSTEM_INSTRUCTION,
         max_tokens=SYMBOL_MAX_TOKENS,
+        before_report=show_dossier,
     )

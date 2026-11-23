@@ -162,8 +162,10 @@ COLUMN_HELP: dict[str, str] = {
     "lynch_fair_value": "Growth-adjusted fair value per share, in the Lynch style.",
     "lynch_upside_pct": "Lynch fair value versus today's price, in percent.",
     "hedge_fund_buys": (
-        "1 when the stock is in HedgeFollow's largest hedge-fund buys. 13F "
-        "filings lag up to 45 days and crowding is not a signal on its own."
+        "🐋 when the stock is in HedgeFollow's largest hedge-fund buys, ✗ when "
+        "it is in the feed but not on that list, and — when HedgeFollow has no "
+        "data. 13F filings lag up to 45 days and crowding is not a signal on "
+        "its own."
     ),
 }
 

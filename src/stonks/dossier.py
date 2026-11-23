@@ -237,7 +237,7 @@ def quality_gate(
         for sales, gross in zip(revenue, gross_profit, strict=False)
         if sales and gross is not None and sales > 0
     ]
-    if len(margins) >= 3:
+    if len(margins) >= 5:
         stdev = statistics.pstdev(margins)
         stability_ok: bool | None = stdev <= GROSS_MARGIN_STDEV_MAX_PP
         stability_value = f"stdev {stdev:.1f}pp over {len(margins)}y"
@@ -329,8 +329,8 @@ def quality_gate(
     if not shares:
         shares = [value for value in _annual_series(income, "sharesDiluted") if value]
     dilution_ok: bool | None = None
-    if len(shares) < 2:
-        dilution_value = "no share-count history"
+    if len(shares) < 5:
+        dilution_value = "no five-year share history"
     else:
         years = len(shares) - 1
         cagr = ((shares[0] / shares[-1]) ** (1 / years) - 1) * 100.0

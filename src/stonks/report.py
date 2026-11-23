@@ -20,7 +20,7 @@ from openrouter import OpenRouter, errors
 from openrouter.components import ChatSystemMessageTypedDict, ChatUserMessageTypedDict
 
 from stonks.config import COLUMN_DISPLAY_NAMES
-from stonks.dossier import Dossier, gate_status
+from stonks.dossier import Check, Dossier, gate_status
 
 __all__ = [
     "REPORT_MODEL",
@@ -88,9 +88,10 @@ SYMBOL_SYSTEM_INSTRUCTION: str = (
     "against it. Cite the check id behind every dossier claim. Never assert a "
     "moat, catalyst or filing fact that is absent from the dossier. Treat an "
     "unverified check as unknown, never as favourable evidence, and keep trailing "
-    "results separate from forward estimates. If the filings gate fails, lead "
-    "the memo with that failure rather than the valuation case. This is research "
-    "support, not financial advice."
+    "results separate from forward estimates. Name the dossier's check coverage "
+    "and the single most important unknown in the TL;DR. If the filings gate "
+    "fails, lead the memo with that failure rather than the valuation case. "
+    "This is research support, not financial advice."
 )
 
 # A decision memo, not a screener summary: the verdict is about buying at the
@@ -126,8 +127,9 @@ SYMBOL_REPORT_SECTIONS: str = (
     "\n"
     "## TL;DR\n"
     "Start with a single word, YES or NO, meaning whether to buy at today's "
-    "price. Follow with two to four short sentences naming the deciding figures "
-    "and the main risk. No hedging, and no recap of the headings above.\n"
+    "price. Follow with two to four short sentences naming the deciding figures, "
+    "the main risk, the dossier's check coverage and the single most important "
+    "unknown. No hedging, and no recap of the headings above.\n"
     "\n"
     "Data:\n"
 )
@@ -608,12 +610,23 @@ def _unverified_section(dossier: Dossier) -> str:
         for check in gate.checks
         if check.status == "unverified"
     ]
+
+    def reason(check: Check) -> str:
+        value = str(check.value).strip()
+        if value and value.lower() not in {"n/a", "—", "unknown"}:
+            return value
+        return str(check.evidence or "no reason recorded")
+
     body = (
-        "\n".join(f"- {check.id}: {check.evidence}" for check in missing)
+        "\n".join(f"- {check.id}: {reason(check)}" for check in missing)
         if missing
         else "None: every applicable check was verified."
     )
-    return f"{UNVERIFIED_HEADING}\n{body}"
+    return (
+        f"{UNVERIFIED_HEADING}\n{body}\n\n"
+        "In the TL;DR, name the check coverage and the single most important "
+        "unknown; do not treat any item above as a fact."
+    )
 
 
 def symbol_report_prompt(

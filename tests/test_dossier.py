@@ -248,9 +248,30 @@ def test_quality_gross_margin_stability_needs_statement_history() -> None:
     assert _quality(_row()).checks[2].status == "unverified"
 
 
+def test_quality_gross_margin_stability_needs_five_years_not_three() -> None:
+    three_years = _statements(
+        income_annual=_annual_statement(
+            {
+                "revenue": [100.0, 100.0, 100.0, 100.0],
+                "gp": [50.0, 50.0, 50.0, 50.0],
+            }
+        )
+    )
+    assert _quality(_row(), three_years).checks[2].status == "unverified"
+
+
 def test_quality_dilution_is_unverified_without_share_history() -> None:
     gate = _quality(_row(), {"income_annual": _annual_statement({"revenue": [1.0]})})
     assert gate.checks[6].status == "unverified"
+
+
+def test_quality_dilution_needs_five_years_not_two() -> None:
+    three_years = _statements(
+        balance_annual=_annual_statement(
+            {"sharesOutTotalCommon": [100.0, 100.0, 100.0]}
+        )
+    )
+    assert _quality(_row(), three_years).checks[6].status == "unverified"
 
 
 def test_quality_dilution_fails_when_share_count_grows_over_two_percent() -> None:

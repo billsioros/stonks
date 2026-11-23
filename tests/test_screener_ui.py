@@ -3,6 +3,7 @@
 import pandas as pd
 
 from stonks import app
+from stonks.config import COLUMN_HELP
 
 
 def test_prune_filters_removes_empty_bounds_and_values() -> None:
@@ -107,10 +108,18 @@ def test_upside_cells_carry_their_direction() -> None:
     assert app._fmt_upside(float("nan")) == "—"
 
 
-def test_whale_flag_renders_a_whale_only_when_flagged() -> None:
+def test_13f_flag_distinguishes_unflagged_from_unknown() -> None:
     assert app._fmt_flag(1) == "🐋"
-    assert app._fmt_flag(0) == "—"
+    assert app._fmt_flag(0) == "✗"
     assert app._fmt_flag(None) == "—"
+    assert app._fmt_flag(float("nan")) == "—"
+
+
+def test_13f_flag_help_documents_every_glyph() -> None:
+    help_text = COLUMN_HELP["hedge_fund_buys"]
+    assert "🐋" in help_text
+    assert "✗" in help_text
+    assert "—" in help_text
 
 
 def test_current_ratio_marks_tight_liquidity() -> None:

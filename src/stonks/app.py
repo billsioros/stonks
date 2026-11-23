@@ -713,10 +713,10 @@ def _is_missing(val: object) -> bool:
 
 
 def _fmt_flag(val: object) -> str:
-    """Render the 13F flag: a whale when the stock is a top hedge-fund buy."""
+    """Render the 13F flag, keeping explicit zero distinct from missing data."""
     if _is_missing(val):
         return "—"
-    return "🐋" if val else "—"
+    return "🐋" if val else "✗"
 
 
 def _fmt_upside(val: float | None) -> str:

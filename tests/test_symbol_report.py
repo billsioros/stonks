@@ -351,9 +351,9 @@ def _dossier(value: str = "1.0 vs 1.2") -> Dossier:
                         "quality.cash_conversion",
                         "Cash conversion",
                         "unverified",
-                        "n/a",
-                        ">= 0.8",
                         "net income missing",
+                        ">= 0.8",
+                        "screener.net_income",
                     ),
                 ),
                 "One check needs input",
@@ -401,7 +401,20 @@ def test_unverified_checks_are_listed_under_the_required_heading() -> None:
     section = prompt.split(heading, 1)[1].split("## ", 1)[0]
     assert "quality.cash_conversion" in section
     assert "net income missing" in section
+    assert "screener.net_income" not in section
     assert "quality.roic_5y" not in section
+
+
+def test_unverified_section_asks_for_coverage_in_the_tldr() -> None:
+    prompt = report.symbol_report_prompt("NVDA", dossier=_dossier())
+    heading = "## What this dossier could not verify"
+    section = prompt.split(heading, 1)[1]
+    assert "coverage" in section.lower()
+    assert "TL;DR" in section
+
+    instruction = report.SYMBOL_SYSTEM_INSTRUCTION
+    assert "coverage" in instruction.lower()
+    assert "TL;DR" in instruction
 
 
 def test_symbol_system_instruction_forbids_unsupported_claims() -> None:

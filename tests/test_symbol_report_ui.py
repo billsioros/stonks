@@ -198,7 +198,6 @@ def test_generated_page_shows_the_gate_strip_before_the_ai_report(
     try:
         at = _open_detail()
         _generate_button(at).click().run()
-        at.run()
         assert not at.exception
         values = [str(md.value) for md in at.markdown]
         strip = next(i for i, value in enumerate(values) if "Deep dive — NVDA" in value)
