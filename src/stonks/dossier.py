@@ -37,12 +37,17 @@ class Check:
 
 @dataclass(frozen=True)
 class Gate:
-    """A group of checks that share a question, plus a one-line verdict."""
+    """A group of checks that share a question, plus a one-line verdict.
+
+    ``conflicts`` carries structured cross-check disagreements that do not fit
+    inside a single ``Check``, for the dossier to merge into its conflict list.
+    """
 
     key: str
     label: str
     checks: tuple[Check, ...]
     summary: str
+    conflicts: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -776,12 +781,14 @@ def _freshness_check(evidence: FilingEvidence, today: date) -> Check:
         age = (today - filed).days
         outcomes.append(age <= limit)
         parts.append(f"{form} filed {filed.isoformat()} ({age}d old)")
-    if any(outcome is None for outcome in outcomes):
-        status: Status = "unverified"
-    elif all(outcome for outcome in outcomes):
-        status = "pass"
+    # A known failure outranks an unknown date: a stale filing is stale even
+    # when the other form's date is missing.
+    if any(outcome is False for outcome in outcomes):
+        status: Status = "fail"
+    elif any(outcome is None for outcome in outcomes):
+        status = "unverified"
     else:
-        status = "fail"
+        status = "pass"
     value = "; ".join(parts)
     if status == "fail":
         value += "; stale filings"
@@ -820,7 +827,7 @@ def filing_gate(
     from stonks.edgar_parse import filing_checks
 
     facts = evidence.facts if isinstance(evidence.facts, Mapping) else {}
-    checks, _conflicts = filing_checks(row, statements, facts)
+    checks, conflicts = filing_checks(row, statements, facts)
     checks.extend(_phrase_check(phrase, evidence.hits) for phrase in RED_FLAG_PHRASES)
     checks.append(_freshness_check(evidence, _as_date(today) or date.today()))
     checks.extend(
@@ -832,6 +839,7 @@ def filing_gate(
         "Filings & guidance",
         tuple(checks),
         _gate_summary("filings", checks),
+        tuple(conflicts),
     )
 
 

@@ -68,9 +68,12 @@ def search_filings(
     forms: Sequence[str],
     store: SQLiteStore,
     fetch: Any = None,
+    latest_dates: Mapping[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Return dated, linked EFTS hits for one exact phrase and set of forms.
 
+    When ``latest_dates`` maps a form to its newest filing date, only hits from
+    that filing are kept; older filings must not fail a freshness-scoped sweep.
     An unrecognised response shape is an error, not a zero-hit result: silently
     treating a changed payload as "no matches" would pass a red-flag check.
     """
@@ -128,6 +131,8 @@ def search_filings(
             raise edgar.EdgarUnavailable(
                 "EFTS response has an unexpected shape"
             ) from exc
+        if latest_dates is not None and filed != latest_dates.get(form):
+            continue
         found.append(
             {
                 "phrase": phrase,
@@ -138,6 +143,10 @@ def search_filings(
                 "url": _filing_url(cik, accession),
             }
         )
+    if latest_dates is not None:
+        # The EFTS total counts historical filings too; report only what we kept.
+        for hit in found:
+            hit["count"] = len(found)
     return found
 
 
@@ -208,12 +217,24 @@ def build_filing_evidence(
                 "SEC companyfacts payload has an unexpected shape"
             )
         latest_10k, latest_10q = _latest_form_dates(payload)
+        # Only the newest filing for each form is in scope for phrase checks;
+        # guidance (8-K/10-Q) is a separate, unfiltered sweep below.
+        latest_dates = {
+            form: filed
+            for form, filed in (("10-K", latest_10k), ("10-Q", latest_10q))
+            if filed is not None
+        }
 
         hits: list[dict[str, Any]] = []
         for phrase in RED_FLAG_PHRASES + INFORMATIONAL_PHRASES:
             hits.extend(
                 search_filings(
-                    phrase, cik, forms=PHRASE_FORMS, store=store, fetch=fetch
+                    phrase,
+                    cik,
+                    forms=PHRASE_FORMS,
+                    store=store,
+                    fetch=fetch,
+                    latest_dates=latest_dates,
                 )
             )
         guidance: list[dict[str, Any]] = []

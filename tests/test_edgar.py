@@ -564,6 +564,26 @@ def test_maturity_ladder_sums_five_buckets() -> None:
 
 # ── Task 3: EFTS sweep and filing evidence (I/O side) ────────────────
 CIK = "0000320193"
+OLD_10K = ("10-K", "2025-10-30", "0000320193-25-000012")
+LATEST_10K = ("10-K", "2026-02-15", "0000320193-26-000004")
+OLD_10Q = ("10-Q", "2025-05-01", "0000320193-25-000013")
+LATEST_10Q = ("10-Q", "2026-08-01", "0000320193-26-000005")
+
+
+def _efts_payload(*entries: tuple[str, str, str]) -> dict[str, Any]:
+    """Build an EFTS response from (form, file_date, accession) triples."""
+    return {
+        "hits": {
+            "total": {"value": len(entries)},
+            "hits": [
+                {
+                    "_id": accession,
+                    "_source": {"form": form, "file_date": filed, "adsh": accession},
+                }
+                for form, filed, accession in entries
+            ],
+        }
+    }
 
 
 def test_efts_hit_parsing_yields_count_date_accession_link(store: SQLiteStore) -> None:
@@ -591,6 +611,28 @@ def test_efts_hit_parsing_yields_count_date_accession_link(store: SQLiteStore) -
     assert calls[0][1] == {"User-Agent": USER_AGENT}
     # The same cache contract as every other EDGAR entry, for seven days.
     assert store.cache_get(f"edgar:{CIK}:efts:material weakness") == EFTS_HITS
+
+
+def test_efts_hits_are_limited_to_the_latest_10k_and_10q(
+    store: SQLiteStore,
+) -> None:
+    fetch, _ = fetch_recorder(
+        FakeResponse(_efts_payload(OLD_10K, LATEST_10K, OLD_10Q, LATEST_10Q))
+    )
+
+    hits = filing_evidence.search_filings(
+        "material weakness",
+        CIK,
+        forms=("10-K", "10-Q"),
+        store=store,
+        fetch=fetch,
+        latest_dates={"10-K": LATEST_10K[1], "10-Q": LATEST_10Q[1]},
+    )
+
+    assert [(hit["form"], hit["filing_date"], hit["accession"]) for hit in hits] == [
+        ("10-K", LATEST_10K[1], LATEST_10K[2]),
+        ("10-Q", LATEST_10Q[1], LATEST_10Q[2]),
+    ]
 
 
 def test_efts_caches_each_phrase_for_seven_days(
@@ -682,7 +724,7 @@ def test_build_evidence_sweeps_facts_hits_and_guidance(store: SQLiteStore) -> No
             return FakeResponse(SAMPLE_FACTS)
         if url.startswith(edgar.TICKER_MAP_URL):
             return FakeResponse(COMPANY_TICKERS)
-        return FakeResponse(EFTS_HITS)
+        return FakeResponse(_efts_payload(LATEST_10K, LATEST_10Q))
 
     evidence = filing_evidence.build_filing_evidence("AAPL", store=store, fetch=fetch)
 
@@ -699,3 +741,39 @@ def test_build_evidence_sweeps_facts_hits_and_guidance(store: SQLiteStore) -> No
     assert store.cache_get(f"edgar:{CIK}:companyfacts") == SAMPLE_FACTS
     assert all(call[1] == {"User-Agent": USER_AGENT} for call in calls)
     assert any("forms=8-K%2C10-Q" in call[0] for call in calls)
+
+
+def test_build_evidence_ignores_old_hits_and_keeps_latest_filing_hits(
+    store: SQLiteStore,
+) -> None:
+    payloads = {
+        "material+weakness": _efts_payload(OLD_10K),
+        "going+concern": _efts_payload(OLD_10Q, LATEST_10Q),
+    }
+
+    def fetch(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        if url.startswith("https://data.sec.gov/api/xbrl/companyfacts/"):
+            return FakeResponse(SAMPLE_FACTS)
+        if url.startswith(edgar.TICKER_MAP_URL):
+            return FakeResponse(COMPANY_TICKERS)
+        for phrase, payload in payloads.items():
+            if phrase in url:
+                return FakeResponse(payload)
+        return FakeResponse(_efts_payload())
+
+    evidence = filing_evidence.build_filing_evidence("AAPL", store=store, fetch=fetch)
+    checks = {
+        check.id: check
+        for check in filing_gate({}, {}, evidence, today="2026-11-23").checks
+    }
+
+    assert [hit for hit in evidence.hits if hit["phrase"] == "material weakness"] == []
+    assert [
+        (hit["form"], hit["filing_date"])
+        for hit in evidence.hits
+        if hit["phrase"] == "going concern"
+    ] == [("10-Q", LATEST_10Q[1])]
+    assert checks["filings.material_weakness"].status == "pass"
+    assert checks["filings.going_concern"].status == "fail"
+    assert LATEST_10Q[2] in checks["filings.going_concern"].evidence
+    assert OLD_10Q[2] not in checks["filings.going_concern"].evidence

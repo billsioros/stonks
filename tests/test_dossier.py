@@ -621,6 +621,21 @@ def test_stale_filing_fails() -> None:
     assert _by_id(_fgate(missing))["filings.freshness"].status == "unverified"
 
 
+def test_stale_filing_fails_when_the_other_date_is_missing() -> None:
+    """A known stale filing must not be downgraded to unverified."""
+    today = date.fromisoformat(TODAY)
+    evidence = _evidence(
+        latest_10k=(today - timedelta(days=500)).isoformat(), latest_10q=None
+    )
+
+    freshness = _by_id(_fgate(evidence))["filings.freshness"]
+
+    assert freshness.status == "fail"
+    assert "no filing date" in freshness.value
+    assert "stale" in freshness.value
+    assert gate_status((freshness,)) == "fail"
+
+
 def test_phrase_checks_are_unverified_with_links() -> None:
     phrases = {
         "filings.customer_concentration": "customer concentration",
@@ -656,3 +671,20 @@ def test_filing_gate_runs_xbrl_checks_on_supplied_facts() -> None:
     ):
         assert check_id in checks
         assert checks[check_id].status == "unverified"  # no vendor figures supplied
+
+
+def test_filing_gate_carries_xbrl_conflicts_on_the_gate() -> None:
+    """Conflicts need a home on the Gate so Task 4 can build Dossier.conflicts."""
+    gate = filing_gate(
+        {"revenue": 110.0}, {}, _evidence(facts=FILING_FACTS), today=TODAY
+    )
+
+    assert gate.conflicts
+    assert any(
+        "filings.revenue" in line
+        and "1,000,000,000" in line
+        and "110" in line
+        and "000-2025-01" in line
+        for line in gate.conflicts
+    )
+    assert gate_status(gate.checks) == "fail"
