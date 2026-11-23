@@ -79,8 +79,8 @@ def render_llm_report(
 
             def caption(value: str) -> str:
                 return (
-                    f"Model: {value} — only aggregate figures "
-                    "and ticker symbols are sent."
+                    f"Model: {value} — every screener field, including "
+                    "company names and descriptions, is sent."
                 )
 
         st.caption(caption(model))

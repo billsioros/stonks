@@ -131,9 +131,12 @@ _LEADERBOARDS: tuple[tuple[str, str, str], ...] = (
 )
 _LEADER_LIMIT = 5
 
-# Every screener field goes into the prompt. Company prose stays local; tickers
-# appear in the leaderboards instead of a row dump.
-_OMITTED_COLUMNS = frozenset({"symbol", "description"})
+# Every screener field goes into the prompt. The ticker is the key of every
+# table instead of a metric of its own; every other column is summarised, and
+# the provider's description is carried in the company profile block.
+_OMITTED_COLUMNS = frozenset({"symbol"})
+_DESCRIPTION_LIMIT = 240
+_PROFILE_LIMIT = 60
 _CATEGORICAL_COLUMNS = frozenset(
     {"exchange", "type", "mic", "currency", "industry", "rating"}
 )
@@ -196,6 +199,29 @@ def _filter_text(filters: Mapping[str, Any] | None) -> str:
         if bounds:
             parts.append(f"{column} " + " ".join(bounds))
     return "; ".join(parts) if parts else "- (none)"
+
+
+def _profile_block(rows: Sequence[Mapping[str, Any]]) -> str:
+    """One line per stock: ticker, company name and description.
+
+    Descriptions are vendor prose, so they are truncated rather than trusted to
+    fit a token budget; the remainder of a long universe is named, not dropped
+    silently.
+    """
+    shown = rows[:_PROFILE_LIMIT]
+    table = _md_table(
+        ["Symbol", "Company"],
+        [
+            (
+                str(row.get("symbol") or "-"),
+                str(row.get("description") or "-")[:_DESCRIPTION_LIMIT] or "- (none)",
+            )
+            for row in shown
+        ],
+    )
+    if len(rows) > len(shown):
+        return f"{table}\n(First {len(shown)} of {len(rows)} companies.)"
+    return table
 
 
 def _leaderboard(rows: Sequence[Mapping[str, Any]], key: str, label: str) -> str:
@@ -262,8 +288,10 @@ def screener_report_prompt(
 
     `rows` holds every stock matching the current filters and search, so the
     report cannot drift from the universe behind the table. Empty and
-    non-numeric cells are skipped rather than dividing or crashing. Only ticker
-    symbols and aggregate figures are sent; company descriptions stay local.
+    non-numeric cells are skipped rather than dividing or crashing. Every
+    screener field supplied on the rows reaches the prompt: aggregates for the
+    numeric columns, value counts for the categorical ones, and one profile
+    line per company.
     """
     hedge_fund_buys = sum(1 for row in rows if _number(row.get("hedge_fund_buys")) == 1)
     overview = _md_table(
@@ -292,6 +320,7 @@ def screener_report_prompt(
 
     sections: list[str] = [
         overview,
+        "Company profiles:\n" + _profile_block(rows),
         "All screener fields (median / min / max / stocks with data):",
         _md_table(["Metric", "Median", "Min", "Max", "With data"], numeric_rows),
         *category_sections,

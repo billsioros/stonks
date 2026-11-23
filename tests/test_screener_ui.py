@@ -60,6 +60,18 @@ def test_cyclical_risk_flag_renders_a_badge() -> None:
     assert app._fmt_cyclical_risk(1) == "⚠️ Peak"
 
 
+def test_column_guide_explains_the_visible_columns() -> None:
+    guide = app._column_guide_markdown(["pe_ratio", "hedge_fund_buys"])
+    assert "**P/E**" in guide
+    assert "divided by trailing twelve-month earnings per share" in guide
+    assert "**13F Whale**" in guide
+    assert "45 days" in guide
+
+
+def test_column_guide_skips_unknown_columns() -> None:
+    assert app._column_guide_markdown(["not_a_column"]) == ""
+
+
 def test_sync_time_text_tolerates_malformed_metadata() -> None:
     assert app._sync_time_text(None) == "never"
     assert app._sync_time_text("") == "never"

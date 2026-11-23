@@ -18,6 +18,14 @@ def test_config_columns_are_backed_by_store_schema(tmp_path):
     assert set(NUMERIC_FILTER_COLUMNS) <= columns
 
 
+def test_every_displayed_column_has_a_help_text():
+    from stonks.config import COLUMN_HELP, COLUMN_DISPLAY_NAMES
+
+    missing = sorted(set(COLUMN_DISPLAY_NAMES) - set(COLUMN_HELP))
+    assert missing == []
+    assert all(text.strip() for text in COLUMN_HELP.values())
+
+
 @pytest.mark.parametrize("column", NUMERIC_FILTER_COLUMNS)
 def test_all_numeric_filter_columns_are_filterable(tmp_path, column):
     store = SQLiteStore(tmp_path / "config.db")

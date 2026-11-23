@@ -19,8 +19,11 @@ import streamlit as st
 
 from stonks import report, report_view, sanity
 from stonks.backtest_view import render_backtest_tab
+from collections.abc import Sequence
+
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
+    COLUMN_HELP,
     DEFAULT_PAGE_SIZE,
     ENUM_FILTER_COLUMNS,
     NUMERIC_FILTER_COLUMNS,
@@ -1062,6 +1065,16 @@ def render_top_filters() -> dict[str, Any]:
     return filters  # type: ignore[no-any-return]
 
 
+def _column_guide_markdown(columns: Sequence[str]) -> str:
+    """A one-line-per-column glossary for the columns currently on screen."""
+    rows = [
+        f"- **{COLUMN_DISPLAY_NAMES.get(column, column)}** — {COLUMN_HELP[column]}"
+        for column in columns
+        if column in COLUMN_HELP
+    ]
+    return "\n".join(rows)
+
+
 def _sync_time_text(raw: str | None) -> str:
     """Render a stored sync timestamp, tolerating malformed metadata."""
     if not raw:
@@ -1241,7 +1254,7 @@ def render_screener_table() -> None:
         elif "%" in col or "Upside" in col or "Short" in col:
             display_df[col] = display_df[col].apply(_fmt_pct)
         elif col in (
-            "Pe ratio",
+            "P/E",
             "PE Ratio",
             "P/B",
             "P/S",
@@ -1284,6 +1297,11 @@ def render_screener_table() -> None:
             "buys. 13F filings lag up to 45 days and crowding is not a signal "
             "on its own."
         )
+
+    guide = _column_guide_markdown(visible_cols)
+    if guide:
+        with st.expander("📖 What the columns mean"):
+            st.markdown(guide)
 
     selection = st.dataframe(
         display_df.style.apply(_row_style, axis=1),
