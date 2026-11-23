@@ -721,14 +721,14 @@ def _fmt_flag(val: object) -> str:
 
 def _fmt_upside(val: float | None) -> str:
     """Render an upside with its direction: green for gains, red for losses."""
-    if _is_missing(val):
+    if _is_missing(val) or val is None:
         return "—"
     return f"{'🟢' if val >= 0 else '🔴'} {val:+.1f}%"
 
 
 def _fmt_current_ratio(val: float | None) -> str:
     """Render the current ratio, marking liquidity below 1."""
-    if _is_missing(val):
+    if _is_missing(val) or val is None:
         return "—"
     return f"🔴 {val:.2f}" if val < 1.0 else f"{val:.2f}"
 
@@ -835,19 +835,22 @@ def live_sync_state(
 ) -> sanity.Badge:
     """Judge the worker from its last recorded attempt, not from a constant."""
     moment = now if now is not None else time.time()
+    if sync_info.get("last_sync_status") == "failed":
+        return sanity.Badge("fail", "Live Sync", "Last sync attempt failed.")
+
     success_at = sync_info.get("last_successful_sync_at")
     if not success_at:
         return sanity.Badge("unknown", "Live Sync", "No successful sync recorded.")
+    try:
+        age = max(0.0, moment - float(success_at))
+    except (TypeError, ValueError):
+        return sanity.Badge("unknown", "Live Sync", "Unreadable sync timestamp.")
 
-    age = max(0.0, moment - float(success_at))
     if age < 3600:
         age_text = f"{int(age // 60)}m ago"
     else:
         age_text = f"{int(age // 3600)}h {int((age % 3600) // 60)}m ago"
     detail = f"Last successful sync {age_text}."
-
-    if sync_info.get("last_sync_status") == "failed":
-        return sanity.Badge("fail", "Live Sync", f"{detail} Last attempt failed.")
     if age > config.SYNC_ACTIVE_WINDOW_MINUTES * 60:
         return sanity.Badge(
             "fail", "Live Sync", f"{detail} Outside the active sync window."

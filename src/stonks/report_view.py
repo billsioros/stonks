@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import streamlit as st
@@ -139,6 +140,13 @@ def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Do
     forecast_data, _ = detail.load_page(store, symbol, "forecast", force=True)
 
     statements: dict[str, dict[str, Any]] = {}
+    # The gates read underscore names; provider pages use display names.
+    statement_keys = {
+        "income-statement": "income",
+        "balance-sheet": "balance",
+        "cash-flow-statement": "cash",
+        "ratios": "ratios",
+    }
     for statement in detail.STATEMENTS:
         for period in ("annual", "quarterly"):
             data, _ = detail.load_page(
@@ -149,9 +157,19 @@ def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Do
                 period=period,
                 force=True,
             )
-            statements[f"{statement} {period}"] = (
+            statements[f"{statement_keys[statement]}_{period}"] = (
                 detail_parse.parse_statement(data) or {} if data else {}
             )
+
+    peers, _, _ = store.get_stocks(page_size=0)
+    stamp = None
+    if hasattr(store, "get_metadata"):
+        raw_stamp = store.get_metadata("last_successful_sync_at")
+        if raw_stamp:
+            try:
+                stamp = datetime.fromtimestamp(float(raw_stamp), UTC).isoformat()
+            except (TypeError, ValueError):
+                stamp = None
 
     overview = detail_parse.parse_overview(overview_data) if overview_data else None
     statistics = (
@@ -164,6 +182,9 @@ def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Do
         overview=overview,
         forecast=forecast,
         statements=statements,
+        peers=peers,
+        as_of=stamp,
+        today=datetime.fromisoformat(stamp).date() if stamp else None,
     )
     prompt = report.symbol_report_prompt(
         symbol,

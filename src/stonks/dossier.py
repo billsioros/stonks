@@ -16,7 +16,7 @@ import math
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Literal
 
 Status = Literal["pass", "fail", "unverified", "not_applicable"]
@@ -358,26 +358,35 @@ def quality_gate(
             payout_value = "no share count for the payout"
         else:
             dividends = abs(dividends_per_share[0]) * shares_out
-            buybacks = 0.0
-            if (
+            has_buyback_history = (
                 len(treasury) >= 2
                 and treasury[0] is not None
                 and treasury[1] is not None
-            ):
-                buybacks = max(treasury[0] - treasury[1], 0.0)
-            cash = (
-                statement_fcf[0]
-                if statement_fcf and statement_fcf[0] is not None
-                else None
             )
-            if cash is None:
-                cash = free_cash_flow
-            if cash is None:
-                payout_value = "no free-cash-flow history"
+            if not has_buyback_history:
+                # Without treasury history a dividend-only "pass" could hide a
+                # large buyback; missing input must stay unverified.
+                payout_value = "no buyback history"
             else:
-                payout = dividends + buybacks
-                payout_ok = abs(payout) <= cash
-                payout_value = f"{payout:,.0f} paid vs {cash:,.0f} free cash flow"
+                latest, previous = treasury[0], treasury[1]
+                buybacks = (
+                    max(latest - previous, 0.0)
+                    if latest is not None and previous is not None
+                    else 0.0
+                )
+                cash = (
+                    statement_fcf[0]
+                    if statement_fcf and statement_fcf[0] is not None
+                    else None
+                )
+                if cash is None:
+                    cash = free_cash_flow
+                if cash is None:
+                    payout_value = "no free-cash-flow history"
+                else:
+                    payout = dividends + buybacks
+                    payout_ok = abs(payout) <= cash
+                    payout_value = f"{payout:,.0f} paid vs {cash:,.0f} free cash flow"
     else:
         payout_value = "no dividend history"
     checks.append(
@@ -448,13 +457,20 @@ TRAILING_ONLY = "Trailing evidence only"
 
 
 def _as_date(value: object) -> date | None:
-    """Parse an ISO date or datetime string, ignoring anything unparsable."""
+    """Parse an ISO or provider-style date, ignoring anything unparsable."""
     if not isinstance(value, str):
         return None
+    text = value.strip()
     try:
-        return date.fromisoformat(value.strip()[:10])
+        return date.fromisoformat(text[:10])
     except ValueError:
-        return None
+        pass
+    for pattern in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _isdigit_sign(value: float) -> int:
@@ -652,7 +668,9 @@ def build_dossier(
     forecast: Mapping[str, Any] | None = None,
     statements: Mapping[str, Any] | None = None,
     overview: Mapping[str, Any] | None = None,
+    peers: Iterable[Mapping[str, Any]] | None = None,
     as_of: str | None = None,
+    today: object = None,
 ) -> Dossier:
     """Assemble the gates available today into one deterministic dossier.
 
@@ -661,13 +679,15 @@ def build_dossier(
     performs I/O; the caller supplies already-fetched data.
     """
     snapshot = row or {}
+    medians = industry_medians(peers) if peers is not None else None
     gates = [
-        quality_gate(snapshot, statements=statements),
+        quality_gate(snapshot, medians=medians, statements=statements),
         forward_gate(
             snapshot,
             forecast=forecast,
             statements=statements,
             overview=overview,
+            today=today,
         ),
         Gate(
             key="filings",

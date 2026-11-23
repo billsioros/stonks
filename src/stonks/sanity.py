@@ -470,14 +470,16 @@ def report_is_fresh(report: dict | None, *, now: float | None = None) -> bool:
     return (now if now is not None else time.time()) - checked_at < SANITY_TTL_SECONDS
 
 
-def compatibility(report: dict | None, *, now: float | None = None) -> Badge:
+def compatibility(report: dict[str, Any] | None, *, now: float | None = None) -> Badge:
     """Summarize a sanity report as a one-line, evidence-backed badge."""
     moment = now if now is not None else time.time()
-    if not report_is_fresh(report, now=moment):
+    if not report_is_fresh(report, now=moment) or report is None:
         return Badge("unknown", "Checks pending", "No fresh reference-site checks.")
 
     results = report.get("results") or []
-    checked_at = report["checked_at"]
+    checked_at = report.get("checked_at")
+    if not isinstance(checked_at, (int, float)):
+        return Badge("unknown", "Checks pending", "No check timestamp recorded.")
     checked_text = f"Last checked {int(max(0.0, moment - checked_at) // 60)}m ago."
 
     failures = [result for result in results if result.get("ok") is False]
