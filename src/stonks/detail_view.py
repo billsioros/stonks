@@ -16,6 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from stonks import report_view
+from stonks.charts import price_history_figure
 from stonks.detail import RANGES, STATEMENTS, cache_key, load_history, load_page
 from stonks.detail_parse import (
     parse_forecast,
@@ -72,29 +73,6 @@ def format_pct(value: Any, *, signed: bool = True) -> str:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return "—"
     return f"{value:+.2f}%" if signed else f"{value:.2f}%"
-
-
-def sparkline_svg(values: list[float], *, width: int = 720, height: int = 140) -> str:
-    """Inline SVG price line: flat indigo stroke over a soft area fill."""
-    if len(values) < 2:
-        return ""
-    low, high = min(values), max(values)
-    span = high - low or 1.0
-    pad = 4.0
-    step = (width - 2 * pad) / (len(values) - 1)
-    points = [
-        (pad + index * step, height - pad - (value - low) / span * (height - 2 * pad))
-        for index, value in enumerate(values)
-    ]
-    line = " ".join(f"{x:.1f},{y:.1f}" for x, y in points)
-    area = f"{pad:.1f},{height - pad:.1f} {line} {width - pad:.1f},{height - pad:.1f}"
-    return (
-        f'<svg class="sk-spark" viewBox="0 0 {width} {height}" '
-        'preserveAspectRatio="none" role="img" aria-label="Price history">'
-        f'<polygon points="{area}" fill="rgba(99, 102, 241, 0.12)" />'
-        f'<polyline points="{line}" fill="none" stroke="#6366f1" stroke-width="2" '
-        'stroke-linejoin="round" stroke-linecap="round" /></svg>'
-    )
 
 
 def range_position(
@@ -294,15 +272,8 @@ def _render_price_history(store: SQLiteStore, symbol: str) -> None:
             return
 
         change = (closes[-1] / closes[0] - 1) * 100
-        trend = "up" if change > 0 else "down" if change < 0 else ""
-        _html(
-            f'<div class="sk-chart">{sparkline_svg(closes)}</div>'
-            f'<div class="sk-range-labels">'
-            f"<span>{_esc(history[0]['date'])}</span>"
-            f'<span class="sk-chart-change {trend}">{change:+.1f}%</span>'
-            f"<span>{_esc(history[-1]['date'])}</span>"
-            f"</div>"
-        )
+        st.caption(f"{history[0]['date']} → {history[-1]['date']} · {change:+.1f}%")
+        st.plotly_chart(price_history_figure(history), width="stretch")
 
 
 def _render_pills(items: list[tuple[str, str, Any]]) -> None:

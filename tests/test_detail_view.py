@@ -14,7 +14,6 @@ from stonks.detail_view import (
     format_pct,
     metrics_sections,
     range_position,
-    sparkline_svg,
     statement_frame,
     yoy_pct,
 )
@@ -142,24 +141,11 @@ def test_detail_overview_renders_the_card_layout() -> None:
         assert 'class="sk-range-track"' in rendered
         assert 'class="sk-pills"' in rendered
         assert 'class="sk-grid"' in rendered
-        assert 'class="sk-chart"' in rendered
-        assert "sk-spark" in rendered
+        assert len(at.get("plotly_chart")) >= 1
         assert 'class="sk-news-item"' in rendered
     finally:
         store.cache_delete(key)
         store.cache_delete(history_key)
-
-
-def test_sparkline_svg_draws_a_line_and_area() -> None:
-    svg = sparkline_svg([100.0, 90.0, 110.0])
-    assert svg.startswith("<svg")
-    assert svg.count("polyline") == 1
-    assert "<polygon" in svg
-
-
-def test_sparkline_svg_needs_two_points() -> None:
-    assert sparkline_svg([]) == ""
-    assert sparkline_svg([5.0]) == ""
 
 
 def test_forecast_without_coverage_says_so_once() -> None:
@@ -226,11 +212,12 @@ def test_chart_range_switch_reads_the_selected_span() -> None:
         at.session_state["detail_chart_span_NVDA"] = "1M"
         at.run()
         assert not at.exception
-        rendered = " ".join(str(el.proto.body) for el in at.get("html"))
+        spec = json.loads(at.get("plotly_chart")[0].proto.spec)
+        dates = spec["data"][0]["x"]
         # 1M is the last 21 sessions of the year, so January's first days drop out.
-        assert "2026-01-30" in rendered
-        assert "2026-01-10" in rendered
-        assert "2026-01-01" not in rendered
+        assert "2026-01-30" in dates
+        assert "2026-01-10" in dates
+        assert "2026-01-01" not in dates
     finally:
         for key in keys:
             store.cache_delete(key)

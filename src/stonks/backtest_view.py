@@ -17,7 +17,7 @@ import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
 from stonks.backtest import CONTRIBUTION_MONTHS, REBALANCE_LABELS, run_backtest
-from stonks.detail_view import sparkline_svg
+from stonks.charts import growth_figure
 from stonks.store import SQLiteStore
 
 PORTFOLIO_VISUALIZER_URL = "https://www.portfoliovisualizer.com/backtest-portfolio"
@@ -249,63 +249,6 @@ def _describe_settings(settings: dict[str, Any]) -> str:
     return f"{allocation}{benchmark}"
 
 
-def _growth_svg(
-    portfolio: list[dict[str, Any]], benchmark: list[dict[str, Any]] | None
-) -> str:
-    """Inline SVG growth curve, with the benchmark as a dashed grey line."""
-    if len(portfolio) < 2:
-        return ""
-    width, height, pad = 720, 160, 4.0
-    months = [str(point["date"]) for point in portfolio]
-    values = {str(point["date"]): float(point["value"]) for point in portfolio}
-    bench_values = (
-        {str(point["date"]): float(point["value"]) for point in benchmark}
-        if benchmark
-        else {}
-    )
-    low = min(values.values())
-    high = max(values.values())
-    if bench_values:
-        low = min(low, min(bench_values.values()))
-        high = max(high, max(bench_values.values()))
-    span = high - low or 1.0
-    step = (width - 2 * pad) / (len(months) - 1)
-
-    def y(value: float) -> float:
-        return height - pad - (value - low) / span * (height - 2 * pad)
-
-    def line(points: list[tuple[float, float]]) -> str:
-        return " ".join(f"{x:.1f},{yv:.1f}" for x, yv in points)
-
-    portfolio_line = line(
-        [(pad + index * step, values[m]) for index, m in enumerate(months)]
-    )
-    area = (
-        f"{pad:.1f},{height - pad:.1f} {portfolio_line} "
-        f"{width - pad:.1f},{height - pad:.1f}"
-    )
-    benchmark_line = ""
-    if bench_values:
-        points = [
-            (pad + index * step, bench_values[month])
-            for index, month in enumerate(months)
-            if month in bench_values
-        ]
-        if len(points) > 1:
-            benchmark_line = (
-                f'<polyline points="{line(points)}" fill="none" stroke="#94a3b8" '
-                'stroke-width="1.6" stroke-dasharray="5 4" stroke-linejoin="round" />'
-            )
-    return (
-        f'<svg class="sk-spark" viewBox="0 0 {width} {height}" '
-        'preserveAspectRatio="none" role="img" aria-label="Portfolio growth">'
-        f'<polygon points="{area}" fill="rgba(99, 102, 241, 0.12)" />'
-        f"{benchmark_line}"
-        f'<polyline points="{portfolio_line}" fill="none" stroke="#6366f1" '
-        'stroke-width="2" stroke-linejoin="round" stroke-linecap="round" /></svg>'
-    )
-
-
 def _html(markup: str) -> None:
     """Render card markup as HTML (markdown would treat it as code)."""
     st.html(markup.strip())
@@ -396,19 +339,8 @@ def _render_result(result: dict[str, Any]) -> None:
         )
     _html('<div class="sk-card"><div class="sk-pills">' + pills + "</div></div>")
 
-    closes = [float(point["value"]) for point in result["curve"]]
-    chart = _growth_svg(
-        result["curve"], benchmark["curve"] if benchmark else None
-    ) or sparkline_svg(closes)
-    _html(
-        '<div class="sk-card"><div class="sk-card-title">Growth of the portfolio</div>'
-        f'<div class="sk-chart">{chart}</div>'
-        '<div class="sk-range-labels">'
-        f"<span>{result['start']}</span>"
-        f'<span class="sk-chart-change {_direction(result["total_return_pct"])}">'
-        f"{result['total_return_pct']:+.1f}%</span>"
-        f"<span>{result['end']}</span></div></div>"
-    )
+    st.caption("Growth of the portfolio")
+    st.plotly_chart(growth_figure(result), width="stretch")
 
     if yearly:
         bench_yearly = (

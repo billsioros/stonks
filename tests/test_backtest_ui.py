@@ -5,6 +5,8 @@ import json
 from streamlit.testing.v1 import AppTest
 
 from stonks import sanity
+from stonks.backtest import simulate
+from stonks.backtest_view import _RESULT_KEY
 from stonks.sanity import CheckResult
 from stonks.store import SQLiteStore
 
@@ -22,6 +24,29 @@ def test_backtest_tab_sits_next_to_the_watchlist() -> None:
     assert any("Screener" in label for label in labels)
     assert any("Watchlist" in label for label in labels)
     assert any("Backtest" in label for label in labels)
+
+
+def test_backtest_result_renders_an_interactive_chart() -> None:
+    result = simulate(
+        {"AAA": {"2025-01": 100.0, "2025-02": 110.0}},
+        {"AAA": 1.0},
+        initial=1000.0,
+    )
+    result.update(
+        {
+            "symbols": ["AAA"],
+            "weights": {"AAA": 100.0},
+            "rebalance": "none",
+            "allocation_mode": "percent",
+            "contributions": None,
+        }
+    )
+    at = _app()
+    at.session_state[_RESULT_KEY] = result
+    at.run()
+
+    assert not at.exception
+    assert len(at.get("plotly_chart")) >= 1
 
 
 def _seed_report(results: list[CheckResult]) -> tuple[SQLiteStore, str | None]:
