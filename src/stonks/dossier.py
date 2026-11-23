@@ -643,3 +643,70 @@ def forward_gate(
         checks=tuple(checks),
         summary=summary,
     )
+
+
+def build_dossier(
+    symbol: str,
+    *,
+    row: Mapping[str, Any] | None = None,
+    forecast: Mapping[str, Any] | None = None,
+    statements: Mapping[str, Any] | None = None,
+    overview: Mapping[str, Any] | None = None,
+    as_of: str | None = None,
+) -> Dossier:
+    """Assemble the gates available today into one deterministic dossier.
+
+    Filing evidence and portfolio holdings belong to later phases, so those
+    gates are explicit unknown/inapplicable rather than guessed. Nothing here
+    performs I/O; the caller supplies already-fetched data.
+    """
+    snapshot = row or {}
+    gates = [
+        quality_gate(snapshot, statements=statements),
+        forward_gate(
+            snapshot,
+            forecast=forecast,
+            statements=statements,
+            overview=overview,
+        ),
+        Gate(
+            key="filings",
+            label="Filings & guidance",
+            checks=(
+                Check(
+                    id="filings.primary",
+                    label="Primary filing evidence",
+                    status="unverified",
+                    value=DASH,
+                    threshold="Verified filing text",
+                    evidence="No filing evidence available in this phase",
+                ),
+            ),
+            summary="No filing evidence available in this phase",
+        ),
+        Gate(
+            key="fit",
+            label="Portfolio fit",
+            checks=(
+                Check(
+                    id="fit.portfolio",
+                    label="Holding context",
+                    status="not_applicable",
+                    value=DASH,
+                    threshold="Portfolio supplied",
+                    evidence="No portfolio supplied",
+                ),
+            ),
+            summary="No portfolio supplied",
+        ),
+    ]
+    stamp = as_of or "unknown"
+    return Dossier(
+        symbol=symbol.strip().upper(),
+        as_of=stamp,
+        gates=tuple(gates),
+        conflicts=(),
+        red_flags=(),
+        provenance=(("screener", "stored row snapshot", stamp),),
+        coverage=coverage(gates),
+    )

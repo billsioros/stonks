@@ -13,7 +13,8 @@ from typing import Any
 
 import streamlit as st
 
-from stonks import detail, detail_parse, report
+from stonks import detail, detail_parse, dossier, report
+from stonks.dossier import Dossier
 from stonks.store import SQLiteStore
 
 # The dossier block is part of the prompt, so a changed filing also changes the
@@ -25,6 +26,7 @@ __all__ = [
     "render_llm_report",
     "render_symbol_report",
     "symbol_report_prompt_for",
+    "symbol_report_prompt_parts",
 ]
 
 _DefaultCaption = Callable[[str], str]
@@ -128,8 +130,8 @@ def render_llm_report(
                 st.code(shown_prompt, language="text")
 
 
-def symbol_report_prompt_for(store: SQLiteStore, symbol: str) -> str:
-    """Refresh one symbol's pages and return the assembled decision prompt."""
+def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Dossier]:
+    """Refresh one symbol's pages; return its decision prompt and dossier."""
     rows, _, _ = store.get_stocks(filters={"symbol": {"values": [symbol]}}, page_size=1)
     row = rows[0] if rows else {}
     overview_data, _ = detail.load_page(store, symbol, "overview", force=True)
@@ -151,25 +153,57 @@ def symbol_report_prompt_for(store: SQLiteStore, symbol: str) -> str:
                 detail_parse.parse_statement(data) or {} if data else {}
             )
 
-    return report.symbol_report_prompt(
+    overview = detail_parse.parse_overview(overview_data) if overview_data else None
+    statistics = (
+        detail_parse.parse_statistics(statistics_data) if statistics_data else None
+    )
+    forecast = detail_parse.parse_forecast(forecast_data) if forecast_data else None
+    built = dossier.build_dossier(
         symbol,
         row=row,
-        overview=detail_parse.parse_overview(overview_data) if overview_data else None,
-        statistics=(
-            detail_parse.parse_statistics(statistics_data) if statistics_data else None
-        ),
-        forecast=detail_parse.parse_forecast(forecast_data) if forecast_data else None,
+        overview=overview,
+        forecast=forecast,
+        statements=statements,
+    )
+    prompt = report.symbol_report_prompt(
+        symbol,
+        row=row,
+        overview=overview,
+        statistics=statistics,
+        forecast=forecast,
         statements=statements,
         history=detail.load_history(store, symbol, "1Y"),
+        dossier=built,
     )
+    return prompt, built
+
+
+def symbol_report_prompt_for(
+    store: SQLiteStore,
+    symbol: str,
+    *,
+    on_dossier: Callable[[Dossier], None] | None = None,
+) -> str:
+    """Build the prompt on demand, handing its dossier to the optional callback."""
+    prompt, built = symbol_report_prompt_parts(store, symbol)
+    if on_dossier is not None:
+        on_dossier(built)
+    return prompt
 
 
 def render_symbol_report(store: SQLiteStore, symbol: str) -> None:
     """The per-symbol investment report shown above the detail sections."""
+    dossier_key = f"symbol-{symbol}-dossier"
+
+    def capture(built: Dossier) -> None:
+        st.session_state[dossier_key] = built
+
     render_llm_report(
         scope_key=f"symbol-{symbol}-llm-report",
         heading="🤖 AI report",
-        prompt_factory=lambda: symbol_report_prompt_for(store, symbol),
+        prompt_factory=lambda: symbol_report_prompt_for(
+            store, symbol, on_dossier=capture
+        ),
         caption=lambda model: (
             f"Model: {model} — freshly fetched data for {symbol} is sent."
         ),

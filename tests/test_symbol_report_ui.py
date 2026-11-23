@@ -12,6 +12,7 @@ from openrouter import errors as or_errors
 from streamlit.testing.v1 import AppTest
 
 from stonks.detail import cache_key, resolve_payload
+from stonks.dossier import Check, Dossier, Gate
 from stonks.store import SQLiteStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -112,7 +113,7 @@ def test_debug_shows_prompt_on_the_generate_click(monkeypatch: Any) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(
         "stonks.report_view.symbol_report_prompt_for",
-        lambda _store, _symbol: "PROMPT-GENERATE",
+        lambda _store, _symbol, **_kwargs: "PROMPT-GENERATE",
     )
     monkeypatch.setattr("stonks.report.request_report", lambda *_a, **_k: "YES")
     try:
@@ -130,7 +131,7 @@ def test_debug_shows_prompt_even_when_openrouter_rate_limits(monkeypatch: Any) -
     monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
     monkeypatch.setattr(
         "stonks.report_view.symbol_report_prompt_for",
-        lambda _store, _symbol: "PROMPT-RATE-LIMIT",
+        lambda _store, _symbol, **_kwargs: "PROMPT-RATE-LIMIT",
     )
 
     def _raise(*_args: Any, **_kwargs: Any) -> str:
@@ -146,5 +147,63 @@ def test_debug_shows_prompt_even_when_openrouter_rate_limits(monkeypatch: Any) -
         _generate_button(at).click().run()
         assert any(code.value == "PROMPT-RATE-LIMIT" for code in at.code)
         assert any("rate limit" in str(err.value).lower() for err in at.error)
+    finally:
+        store.cache_delete(key)
+
+
+def _dossier() -> Dossier:
+    gates = (
+        Gate(
+            "filings",
+            "Filings",
+            (
+                Check(
+                    "filings.primary",
+                    "Primary filing",
+                    "unverified",
+                    "—",
+                    "filed text",
+                    "No filing evidence available",
+                ),
+            ),
+            "Unverified",
+        ),
+    )
+    return Dossier("NVDA", "unknown", gates, (), (), (("test", "fixture", "now"),), 0.0)
+
+
+def test_plain_page_view_does_not_build_a_dossier(monkeypatch: Any) -> None:
+    store, key = _seed_overview()
+    builder = Mock(side_effect=AssertionError("dossier built on page view"))
+    monkeypatch.setattr("stonks.report_view.dossier.build_dossier", builder)
+    try:
+        at = _open_detail()
+        assert not at.exception
+        assert not any("Deep dive —" in str(md.value) for md in at.markdown)
+        builder.assert_not_called()
+    finally:
+        store.cache_delete(key)
+
+
+def test_generated_page_shows_the_gate_strip_before_the_ai_report(
+    monkeypatch: Any,
+) -> None:
+    store, key = _seed_overview()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    factory = Mock(return_value=("PROMPT-DOSSIER-ORDER", _dossier()))
+    monkeypatch.setattr("stonks.report_view.symbol_report_prompt_parts", factory)
+    monkeypatch.setattr(
+        "stonks.report.request_report", lambda *_a, **_k: "## TL;DR\nAnswer"
+    )
+    try:
+        at = _open_detail()
+        _generate_button(at).click().run()
+        at.run()
+        assert not at.exception
+        values = [str(md.value) for md in at.markdown]
+        strip = next(i for i, value in enumerate(values) if "Deep dive — NVDA" in value)
+        reply = next(i for i, value in enumerate(values) if "## TL;DR" in value)
+        assert strip < reply
+        factory.assert_called_once()
     finally:
         store.cache_delete(key)

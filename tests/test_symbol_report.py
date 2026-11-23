@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from stonks import report, report_view
+from stonks import dossier, report, report_view
 from stonks.dossier import Check, Dossier, Gate
 
 ROW: dict[str, Any] = {
@@ -201,7 +201,8 @@ class _Store:
         return [ROW], 1, 1
 
 
-def test_symbol_prompt_gathering_forces_every_page_refresh(monkeypatch: Any) -> None:
+def _stub_pages(monkeypatch: Any) -> list[tuple[str, str, str, bool]]:
+    """Replace the eleven provider reads with deterministic fixtures."""
     calls: list[tuple[str, str, str, bool]] = []
 
     def fake_load_page(
@@ -233,6 +234,11 @@ def test_symbol_prompt_gathering_forces_every_page_refresh(monkeypatch: Any) -> 
         "parse_statement",
         lambda data: STATEMENTS["income-statement annual"],
     )
+    return calls
+
+
+def test_symbol_prompt_gathering_forces_every_page_refresh(monkeypatch: Any) -> None:
+    calls = _stub_pages(monkeypatch)
 
     prompt = report_view.symbol_report_prompt_for(_Store(), "NVDA")
 
@@ -246,6 +252,40 @@ def test_symbol_prompt_gathering_forces_every_page_refresh(monkeypatch: Any) -> 
     }
     assert "Revenue" in prompt
     assert "Strong quarter" in prompt
+
+
+def test_prompt_parts_build_one_dossier_with_unverified_filings(
+    monkeypatch: Any,
+) -> None:
+    _stub_pages(monkeypatch)
+    calls: list[int] = []
+    original = dossier.build_dossier
+
+    def counted(*args: Any, **kwargs: Any) -> Dossier:
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(report_view.dossier, "build_dossier", counted)
+
+    prompt, built = report_view.symbol_report_prompt_parts(_Store(), "NVDA")
+
+    assert len(calls) == 1
+    assert "## Verdict" in prompt
+    filings = next(gate for gate in built.gates if gate.key == "filings")
+    assert dossier.gate_status(filings.checks) == "unverified"
+
+
+def test_prompt_for_hands_the_same_dossier_to_its_callback(monkeypatch: Any) -> None:
+    _stub_pages(monkeypatch)
+    seen: list[Dossier] = []
+
+    prompt = report_view.symbol_report_prompt_for(
+        _Store(), "NVDA", on_dossier=seen.append
+    )
+
+    assert len(seen) == 1
+    assert "## Verdict" in prompt
+    assert seen[0].symbol == "NVDA"
 
 
 class _Choice:

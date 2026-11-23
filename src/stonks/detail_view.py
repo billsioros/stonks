@@ -15,7 +15,7 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from stonks import report_view
+from stonks import deepdive_view, report_view
 from stonks.charts import price_history_figure
 from stonks.detail import RANGES, STATEMENTS, cache_key, load_history, load_page
 from stonks.detail_parse import (
@@ -151,6 +151,9 @@ def render_detail_page(store: SQLiteStore, symbol: str) -> None:
             _clear_cache(store, symbol)
             st.rerun()
 
+    built = st.session_state.get(f"symbol-{symbol}-dossier")
+    if built is not None:
+        deepdive_view.render_deep_dive(store, symbol, built)
     report_view.render_symbol_report(store, symbol)
 
     section = st.segmented_control(
