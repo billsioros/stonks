@@ -843,6 +843,14 @@ def filing_gate(
     )
 
 
+def _hit_line(hit: Mapping[str, Any]) -> str:
+    """One dated, linked phrase hit for the dossier's filing list."""
+    phrase = str(hit.get("phrase") or "phrase")
+    filed = str(hit.get("filing_date") or "unknown date")
+    url = str(hit.get("url") or "")
+    return f"{phrase} ({filed}) {url}".strip()
+
+
 def build_dossier(
     symbol: str,
     *,
@@ -853,15 +861,19 @@ def build_dossier(
     peers: Iterable[Mapping[str, Any]] | None = None,
     as_of: str | None = None,
     today: object = None,
+    filing_evidence: FilingEvidence | None = None,
+    guidance_hits: Sequence[Mapping[str, Any]] = (),
 ) -> Dossier:
     """Assemble the gates available today into one deterministic dossier.
 
-    Filing evidence and portfolio holdings belong to later phases, so those
-    gates are explicit unknown/inapplicable rather than guessed. Nothing here
-    performs I/O; the caller supplies already-fetched data.
+    Filing evidence is supplied by the caller, together with its guidance hits
+    for the forward gate; portfolio holdings still belong to a later phase and
+    stay explicit unknown/inapplicable. Nothing here performs I/O.
     """
     snapshot = row or {}
+    evidence = filing_evidence or FilingEvidence.empty()
     medians = industry_medians(peers) if peers is not None else None
+    filings = filing_gate(snapshot, statements or {}, evidence, today=today)
     gates = [
         quality_gate(snapshot, medians=medians, statements=statements),
         forward_gate(
@@ -869,23 +881,10 @@ def build_dossier(
             forecast=forecast,
             statements=statements,
             overview=overview,
+            guidance_hits=guidance_hits,
             today=today,
         ),
-        Gate(
-            key="filings",
-            label="Filings & guidance",
-            checks=(
-                Check(
-                    id="filings.primary",
-                    label="Primary filing evidence",
-                    status="unverified",
-                    value=DASH,
-                    threshold="Verified filing text",
-                    evidence="No filing evidence available in this phase",
-                ),
-            ),
-            summary="No filing evidence available in this phase",
-        ),
+        filings,
         Gate(
             key="fit",
             label="Portfolio fit",
@@ -903,12 +902,26 @@ def build_dossier(
         ),
     ]
     stamp = as_of or "unknown"
+    provenance: list[tuple[str, str, str]] = [
+        ("screener", "stored row snapshot", stamp)
+    ]
+    if evidence.cik:
+        latest = evidence.latest_10k or evidence.latest_10q
+        provenance.append(
+            (
+                "sec",
+                f"CIK {evidence.cik} companyfacts and EFTS",
+                f"filed {latest}" if latest else "no filing date",
+            )
+        )
     return Dossier(
         symbol=symbol.strip().upper(),
         as_of=stamp,
         gates=tuple(gates),
-        conflicts=(),
-        red_flags=(),
-        provenance=(("screener", "stored row snapshot", stamp),),
+        conflicts=tuple(filings.conflicts),
+        red_flags=tuple(
+            _hit_line(hit) for hit in evidence.hits if isinstance(hit, Mapping)
+        ),
+        provenance=tuple(provenance),
         coverage=coverage(gates),
     )

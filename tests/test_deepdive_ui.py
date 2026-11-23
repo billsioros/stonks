@@ -35,12 +35,52 @@ dossier = Dossier(
 render_deep_dive(None, "NVDA", dossier)
 """
 
+REAL_APP = """
+from stonks.dossier import FilingEvidence, build_dossier
+from stonks.deepdive_view import render_deep_dive
 
-def _values() -> list[str]:
-    at = AppTest.from_string(APP, default_timeout=180)
+facts = {"facts": {"us-gaap": {"Revenues": {"units": {"USD": [
+    {"end": "2025-09-27", "filed": "2025-10-30", "form": "10-K",
+     "accn": "000-2025-01", "val": 1000000000}
+]}}}}}
+evidence = FilingEvidence(
+    cik="0000320193",
+    facts=facts,
+    hits=({"phrase": "material weakness", "count": 1,
+           "filing_date": "2025-10-30", "accession": "000-2025-02",
+           "url": "https://www.sec.gov/Archives/x"},),
+    latest_10k="2025-10-30",
+)
+dossier = build_dossier(
+    "NVDA",
+    row={"revenue": 1100000000.0},
+    filing_evidence=evidence,
+    today="2026-11-23",
+)
+render_deep_dive(None, "NVDA", dossier)
+"""
+
+USER_AGENT_APP = """
+from stonks.dossier import FilingEvidence, build_dossier
+from stonks.deepdive_view import render_deep_dive
+
+dossier = build_dossier(
+    "NVDA",
+    filing_evidence=FilingEvidence(reason="EDGAR_USER_AGENT not configured"),
+)
+render_deep_dive(None, "NVDA", dossier)
+"""
+
+
+def _run(app: str = APP) -> AppTest:
+    at = AppTest.from_string(app, default_timeout=180)
     at.run()
     assert not at.exception, at.exception
-    return [str(block.value) for block in at.markdown]
+    return at
+
+
+def _values(app: str = APP) -> list[str]:
+    return [str(block.value) for block in _run(app).markdown]
 
 
 def test_gate_strip_has_one_badge_per_gate_with_the_right_glyph() -> None:
@@ -75,3 +115,24 @@ def test_not_applicable_gate_is_a_dash_not_a_green_pass() -> None:
     assert any("➖ Portfolio fit" in value for value in values)
     strip = next(value for value in values if "✅ Quality" in value)
     assert "✅ Portfolio fit" not in strip
+
+
+def test_gate_strip_shows_real_filings_gate_and_conflicts() -> None:
+    values = _values(REAL_APP)
+
+    assert any("⛔ Filings & guidance" in value for value in values)
+    filing_list = next(
+        value for value in values if value.startswith("### Read these filings")
+    )
+    assert "filings.revenue" in filing_list
+    assert "1,100,000,000" in filing_list
+    assert "000-2025-01" in filing_list
+    assert "material weakness" in filing_list
+    assert "https://www.sec.gov/Archives/x" in filing_list
+
+
+def test_missing_user_agent_hint() -> None:
+    captions = [str(c.value) for c in _run(USER_AGENT_APP).caption]
+    assert captions.count("Set EDGAR_USER_AGENT to verify filings") == 1
+    plain = [str(c.value) for c in _run().caption]
+    assert not [value for value in plain if "Set EDGAR_USER_AGENT" in value]

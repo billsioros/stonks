@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from stonks import app, dossier, report_view
-from stonks.dossier import Gate
+from stonks.dossier import FilingEvidence, Gate
 
 
 def test_report_bundle_uses_the_keys_the_gates_read(monkeypatch: Any) -> None:
@@ -38,6 +38,10 @@ def test_report_bundle_uses_the_keys_the_gates_read(monkeypatch: Any) -> None:
     monkeypatch.setattr(report_view.detail, "load_page", fake_load_page)
     monkeypatch.setattr(report_view.detail, "load_history", lambda *a, **k: [])
     monkeypatch.setattr(report_view.dossier, "build_dossier", fake_build)
+    monkeypatch.setattr(
+        "stonks.report_view.filing_evidence.build_filing_evidence",
+        lambda *_a, **_k: FilingEvidence.empty(),
+    )
     report_view.symbol_report_prompt_parts(Store(), "NVDA")
     statements = captured["statements"]
     assert "income_annual" in statements

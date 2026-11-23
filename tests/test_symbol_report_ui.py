@@ -11,8 +11,9 @@ import httpx
 from openrouter import errors as or_errors
 from streamlit.testing.v1 import AppTest
 
-from stonks.detail import cache_key, resolve_payload
-from stonks.dossier import Check, Dossier, Gate
+from stonks import report_view
+from stonks.detail import cache_key, load_page, resolve_payload
+from stonks.dossier import Check, Dossier, FilingEvidence, Gate
 from stonks.store import SQLiteStore
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -40,6 +41,25 @@ def _debug_toggle(at: AppTest) -> Any:
 
 def _generate_button(at: AppTest) -> Any:
     return next(button for button in at.button if button.label == "Generate report")
+
+
+def _stub_detail(monkeypatch: Any) -> None:
+    """Keep the Generate path offline without changing the plain page render."""
+
+    def fake_load_page(
+        store: SQLiteStore,
+        symbol: str,
+        page: str,
+        *,
+        force: bool = False,
+        **kwargs: Any,
+    ) -> Any:
+        if force:
+            return {}, 1.0
+        return load_page(store, symbol, page, force=force, **kwargs)
+
+    monkeypatch.setattr(report_view.detail, "load_page", fake_load_page)
+    monkeypatch.setattr(report_view.detail, "load_history", lambda *_a, **_k: [])
 
 
 def test_symbol_detail_has_an_opt_in_ai_report() -> None:
@@ -204,5 +224,45 @@ def test_generated_page_shows_the_gate_strip_before_the_ai_report(
         reply = next(i for i, value in enumerate(values) if "## TL;DR" in value)
         assert strip < reply
         factory.assert_called_once()
+    finally:
+        store.cache_delete(key)
+
+
+def test_report_click_builds_evidence_once(monkeypatch: Any) -> None:
+    store, key = _seed_overview()
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    _stub_detail(monkeypatch)
+    builder = Mock(return_value=FilingEvidence(reason="stubbed SEC failure"))
+    monkeypatch.setattr(
+        "stonks.report_view.filing_evidence.build_filing_evidence", builder
+    )
+    monkeypatch.setattr("stonks.report.request_report", lambda *_a, **_k: "YES")
+    try:
+        at = _open_detail()
+        assert not at.exception
+        assert builder.call_count == 0
+
+        _generate_button(at).click().run()
+
+        assert not at.exception
+        builder.assert_called_once()
+        assert builder.call_args.args == ("NVDA",)
+        assert set(builder.call_args.kwargs) == {"store"}
+        assert any(md.value == "YES" for md in at.markdown)
+    finally:
+        store.cache_delete(key)
+
+
+def test_plain_page_view_never_calls_edgar(monkeypatch: Any) -> None:
+    store, key = _seed_overview()
+    builder = Mock(side_effect=AssertionError("SEC called on a plain page view"))
+    monkeypatch.setattr(
+        "stonks.report_view.filing_evidence.build_filing_evidence", builder
+    )
+    try:
+        at = _open_detail()
+        assert not at.exception
+        builder.assert_not_called()
+        assert not any("Deep dive —" in str(md.value) for md in at.markdown)
     finally:
         store.cache_delete(key)

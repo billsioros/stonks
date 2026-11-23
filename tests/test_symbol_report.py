@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import Mock
 
 from stonks import dossier, report, report_view
-from stonks.dossier import Check, Dossier, Gate
+from stonks.dossier import Check, Dossier, FilingEvidence, Gate
 
 ROW: dict[str, Any] = {
     "symbol": "NVDA",
@@ -234,6 +235,11 @@ def _stub_pages(monkeypatch: Any) -> list[tuple[str, str, str, bool]]:
         "parse_statement",
         lambda data: STATEMENTS["income-statement annual"],
     )
+    # Prompt building now gathers filing evidence too; keep every test offline.
+    monkeypatch.setattr(
+        "stonks.report_view.filing_evidence.build_filing_evidence",
+        lambda _symbol, **_kwargs: FilingEvidence.empty(),
+    )
     return calls
 
 
@@ -286,6 +292,54 @@ def test_prompt_for_hands_the_same_dossier_to_its_callback(monkeypatch: Any) -> 
     assert len(seen) == 1
     assert "## Verdict" in prompt
     assert seen[0].symbol == "NVDA"
+
+
+def test_edgar_failure_still_produces_a_memo(monkeypatch: Any) -> None:
+    _stub_pages(monkeypatch)
+    builder = Mock(
+        return_value=FilingEvidence(reason="EDGAR_USER_AGENT not configured")
+    )
+    monkeypatch.setattr(
+        "stonks.report_view.filing_evidence.build_filing_evidence", builder
+    )
+
+    prompt, built = report_view.symbol_report_prompt_parts(_Store(), "NVDA")
+
+    builder.assert_called_once()
+    assert builder.call_args.args == ("NVDA",)
+    assert set(builder.call_args.kwargs) == {"store"}
+    assert "## Verdict" in prompt
+    assert "EDGAR_USER_AGENT not configured" in prompt
+    filings = next(gate for gate in built.gates if gate.key == "filings")
+    assert dossier.gate_status(filings.checks) == "unverified"
+    assert filings.summary == "EDGAR_USER_AGENT not configured"
+    # The memo prompt still reaches the model and yields an answer.
+    assert report.request_report(prompt, api_key="k", client=_Client()) == (
+        "## TL;DR\nYES."
+    )
+
+
+def test_guidance_hits_reach_the_forward_gate(monkeypatch: Any) -> None:
+    _stub_pages(monkeypatch)
+    hit = {
+        "phrase": "guidance",
+        "count": 1,
+        "filing_date": "2026-11-01",
+        "accession": "000-2026-01",
+        "form": "8-K",
+        "url": "https://www.sec.gov/Archives/8k",
+    }
+    builder = Mock(return_value=FilingEvidence(guidance_hits=(hit,)))
+    monkeypatch.setattr(
+        "stonks.report_view.filing_evidence.build_filing_evidence", builder
+    )
+
+    _, built = report_view.symbol_report_prompt_parts(_Store(), "NVDA")
+
+    forward = next(gate for gate in built.gates if gate.key == "forward")
+    check = next(c for c in forward.checks if c.id == "forward.guidance_present")
+    assert check.status == "pass"
+    assert "1 filing(s) mention guidance" in check.value
 
 
 class _Choice:
@@ -442,3 +496,55 @@ def test_symbol_prompt_without_a_dossier_is_unchanged() -> None:
 def test_symbol_report_uses_the_larger_thinking_budget() -> None:
     assert report.SYMBOL_MAX_TOKENS == 4000
     assert report_view.SYMBOL_MAX_TOKENS == 4000
+
+
+def test_build_dossier_carries_filing_conflicts_hits_and_provenance() -> None:
+    facts = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": {
+                    "units": {
+                        "USD": [
+                            {
+                                "end": "2025-09-27",
+                                "filed": "2025-10-30",
+                                "form": "10-K",
+                                "accn": "000-2025-01",
+                                "val": 1_000_000_000,
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    }
+    hit = {
+        "phrase": "material weakness",
+        "count": 1,
+        "filing_date": "2025-10-30",
+        "accession": "000-2025-02",
+        "url": "https://www.sec.gov/Archives/x",
+    }
+    evidence = FilingEvidence(
+        cik="0000320193",
+        facts=facts,
+        hits=(hit,),
+        latest_10k="2025-10-30",
+    )
+
+    built = dossier.build_dossier(
+        "NVDA",
+        row={"revenue": 1_100_000_000.0},
+        filing_evidence=evidence,
+        today="2026-11-23",
+    )
+
+    assert any("filings.revenue" in item for item in built.conflicts)
+    assert any(
+        "material weakness" in item and "https://www.sec.gov/Archives/x" in item
+        for item in built.red_flags
+    )
+    assert any(
+        source == "sec" and "0000320193" in detail
+        for source, detail, _ in built.provenance
+    )

@@ -14,7 +14,14 @@ from typing import Any
 
 import streamlit as st
 
-from stonks import deepdive_view, detail, detail_parse, dossier, report
+from stonks import (
+    deepdive_view,
+    detail,
+    detail_parse,
+    dossier,
+    filing_evidence,
+    report,
+)
 from stonks.dossier import Dossier
 from stonks.store import SQLiteStore
 
@@ -164,6 +171,10 @@ def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Do
                 detail_parse.parse_statement(data) or {} if data else {}
             )
 
+    # Only Generate/Debug reach this function, so SEC requests never happen on a
+    # plain page render. The builder degrades failures to a reason on evidence.
+    evidence = filing_evidence.build_filing_evidence(symbol, store=store)
+
     peers, _, _ = store.get_stocks(page_size=0)
     stamp = None
     if hasattr(store, "get_metadata"):
@@ -188,6 +199,8 @@ def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Do
         peers=peers,
         as_of=stamp,
         today=datetime.fromisoformat(stamp).date() if stamp else None,
+        filing_evidence=evidence,
+        guidance_hits=evidence.guidance_hits,
     )
     prompt = report.symbol_report_prompt(
         symbol,

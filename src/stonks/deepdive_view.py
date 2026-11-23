@@ -22,6 +22,8 @@ GLYPHS = {
     "not_applicable": "➖",
 }
 _SEVERITY = {"fail": 0, "unverified": 1, "not_applicable": 2, "pass": 3}
+USER_AGENT_REASON = "EDGAR_USER_AGENT not configured"
+USER_AGENT_HINT = "Set EDGAR_USER_AGENT to verify filings"
 
 __all__ = [
     "render_check_tables",
@@ -91,6 +93,19 @@ def render_filings(dossier: Dossier) -> None:
     st.markdown("\n".join(lines))
 
 
+def _needs_user_agent_hint(dossier: Dossier) -> bool:
+    """True only when the filings gate is unverified for a missing contact string."""
+    filings = next((gate for gate in dossier.gates if gate.key == "filings"), None)
+    return (
+        filings is not None
+        and gate_status(filings.checks) == "unverified"
+        and any(
+            USER_AGENT_REASON in f"{check.value} {check.evidence}"
+            for check in filings.checks
+        )
+    )
+
+
 def render_portfolio_panel(store: Any, dossier: Dossier) -> None:
     """Portfolio fit checks and sizing ceiling, with no portfolio as a dash."""
     fit = next((gate for gate in dossier.gates if gate.key == "fit"), None)
@@ -120,6 +135,8 @@ def render_deep_dive(store: Any, symbol: str, dossier: Dossier) -> None:
     """Render the whole dossier above the symbol page's existing sections."""
     st.markdown(f"### Deep dive — {symbol}")
     render_gate_strip(dossier)
+    if _needs_user_agent_hint(dossier):
+        st.caption(USER_AGENT_HINT)
     render_check_tables(dossier)
     render_filings(dossier)
     render_portfolio_panel(store, dossier)
