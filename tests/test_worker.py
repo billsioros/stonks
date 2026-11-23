@@ -276,6 +276,16 @@ def test_job_persists_failure_metadata_on_exception(monkeypatch, tmp_path) -> No
     assert "StockAnalysis timeout" in store.get_metadata("last_sync_error")
 
 
+def test_job_survives_a_store_that_cannot_be_opened(monkeypatch) -> None:
+    def boom():
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(worker, "SQLiteStore", boom)
+
+    # The worker loop must not die because one sync could not open the store.
+    job()
+
+
 def test_job_persists_success_metadata(monkeypatch, tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
@@ -288,6 +298,18 @@ def test_job_persists_success_metadata(monkeypatch, tmp_path) -> None:
     job()
     assert store.get_metadata("last_sync_status") == "success"
     assert store.get_metadata("last_successful_sync_at") is not None
+
+
+def test_screener_report_prompt_explains_the_13f_flag() -> None:
+    from stonks import report
+
+    prompt = report.screener_report_prompt(
+        [{"symbol": "AAA", "hedge_fund_buys": 0}], total_matching=1
+    )
+    lowered = prompt.lower()
+    assert "13f" in lowered
+    assert "45 days" in lowered
+    assert "do not penalize" in lowered
 
 
 def test_sanity_checks_skip_a_fresh_report(monkeypatch) -> None:

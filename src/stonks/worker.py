@@ -121,9 +121,10 @@ def _record_sync_outcome(
 def job() -> None:
     """Sync the full StockAnalysis screener dataset into the local store."""
     logger.info("🚀 Starting data sync...")
-    store = SQLiteStore()
+    store: SQLiteStore | None = None
     attempted_at = str(time.time())
     try:
+        store = SQLiteStore()
         # Alerts are transient; nothing older than the retention window is useful.
         store.prune_alerts()
         watched = set(store.get_watchlist_symbols())
@@ -167,7 +168,8 @@ def job() -> None:
         logger.info("✅ Synced %s symbols", len(rows))
     except Exception as exc:
         logger.exception("💥 Critical error")
-        _record_sync_outcome(store, attempted_at, "failed", str(exc))
+        if store is not None:
+            _record_sync_outcome(store, attempted_at, "failed", str(exc))
 
 
 def run_worker() -> None:

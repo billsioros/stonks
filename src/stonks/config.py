@@ -80,7 +80,7 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "dcf_upside_pct": "DCF Upside %",
     "lynch_fair_value": "Lynch Fair Value",
     "lynch_upside_pct": "Lynch Upside %",
-    "hedge_fund_buys": "Largest HF Buy",
+    "hedge_fund_buys": "13F Whale",
 }
 
 # ── View presets ─────────────────────────────────────────────────────

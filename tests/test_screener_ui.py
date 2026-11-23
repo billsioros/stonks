@@ -50,6 +50,12 @@ def test_apply_screen_state_prunes_filters_and_defaults_sort_ascending(
     assert state["current_page"] == 1
 
 
+def test_hedge_fund_flag_is_labelled_as_a_13f_whale() -> None:
+    from stonks.config import COLUMN_DISPLAY_NAMES
+
+    assert COLUMN_DISPLAY_NAMES["hedge_fund_buys"] == "13F Whale"
+
+
 def test_cyclical_risk_flag_renders_a_badge() -> None:
     assert app._fmt_cyclical_risk(1) == "⚠️ Peak"
     assert app._fmt_cyclical_risk(0) == ""

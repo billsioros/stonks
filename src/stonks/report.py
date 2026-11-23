@@ -68,6 +68,10 @@ REPORT_SECTIONS: str = (
     "figures and the 1-2 names worth researching further -- every claim backed by "
     "figures from the data. No recap of above headings.\n"
     "\n"
+    "Context: hedge_fund_buys (13F Whale) marks stocks in HedgeFollow's latest "
+    "largest 13F buys. Filings lag up to 45 days and a crowded position is not "
+    "a signal by itself; do not penalize a stock because hedge_fund_buys is 0.\n"
+    "\n"
     "Data:\n"
 )
 
