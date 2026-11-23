@@ -295,15 +295,23 @@ def _latest_entry(facts: Mapping[str, Any], tag: str, unit: str) -> _Fact | None
     return None
 
 
+def _first_fact(
+    facts: Mapping[str, Any], tags: Sequence[str], unit: str
+) -> _Fact | None:
+    """Return the first usable fact across alias tags, with its filing context."""
+    for tag in tags:
+        fact = _latest_entry(facts, tag, unit)
+        if fact is not None:
+            return fact
+    return None
+
+
 def latest_fact(
     facts: Mapping[str, Any], tags: Sequence[str], unit: str
 ) -> tuple[float, str] | None:
     """Return ``(value, accession)`` from the first tag that has a usable fact."""
-    for tag in tags:
-        fact = _latest_entry(facts, tag, unit)
-        if fact is not None:
-            return fact.value, fact.accn
-    return None
+    fact = _first_fact(facts, tags, unit)
+    return (fact.value, fact.accn) if fact is not None else None
 
 
 def _combined_fact(facts: Mapping[str, Any], spec: _CheckSpec) -> _Fact | None:
@@ -391,7 +399,7 @@ def _cross_check(
     fact = (
         _combined_fact(facts, spec)
         if spec.combine
-        else _latest_entry(facts, spec.tags[0], spec.unit)
+        else _first_fact(facts, spec.tags, spec.unit)
     )
     vendor = _vendor_value(row, statements, spec.vendor)
 

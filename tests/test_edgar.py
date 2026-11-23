@@ -393,6 +393,20 @@ def test_latest_fact_prefers_unamended_period() -> None:
     assert edgar_parse.latest_fact(tied, ["Revenues"], "USD") == (20.0, "000-K")
 
 
+def test_filing_checks_falls_back_to_revenue_alias() -> None:
+    facts = _facts()
+    del facts["facts"]["us-gaap"]["RevenueFromContractWithCustomerExcludingAssessedTax"]
+
+    checks, conflicts = edgar_parse.filing_checks(
+        _row(revenue=600_000_000.0), _statements(), facts
+    )
+    revenue = _check_map(checks)["filings.revenue"]
+    assert revenue.status == "pass"
+    assert "600,000,000" in revenue.value
+    assert "us-gaap:Revenues" in revenue.evidence
+    assert conflicts == []
+
+
 def test_wrong_unit_is_ignored() -> None:
     facts = _facts()
     # The EUR entry has a later period than any USD entry.
