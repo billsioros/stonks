@@ -58,5 +58,14 @@ def test_hedge_fund_flag_is_labelled_as_a_13f_whale() -> None:
 
 def test_cyclical_risk_flag_renders_a_badge() -> None:
     assert app._fmt_cyclical_risk(1) == "⚠️ Peak"
+
+
+def test_sync_time_text_tolerates_malformed_metadata() -> None:
+    assert app._sync_time_text(None) == "never"
+    assert app._sync_time_text("") == "never"
+    assert app._sync_time_text("not-a-timestamp") == "an unknown time"
+    assert app._sync_time_text("nan") == "an unknown time"
+    assert app._sync_time_text("1e400") == "an unknown time"
+    assert app._sync_time_text("0") != "an unknown time"
     assert app._fmt_cyclical_risk(0) == ""
     assert app._fmt_cyclical_risk(None) == "—"

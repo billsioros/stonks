@@ -172,6 +172,10 @@ def evaluate_valuation_triangulation(
 
     capped_upside = min(sum(valid_upsides) / len(valid_upsides), 150.0)
 
+    # A single model is never a triangulation, however the sector behaves.
+    if len(valid_upsides) < 2:
+        return "Unrated / Insufficient Data", capped_upside
+
     if cyclical_risk == 1:
         return "Cyclical Distorted", capped_upside
 
@@ -187,8 +191,6 @@ def evaluate_valuation_triangulation(
     if any(u > 150.0 for u in valid_upsides) and signals <= 1:
         return "Model Divergence / Outlier", capped_upside
 
-    if len(valid_upsides) < 2:
-        return "Unrated / Insufficient Data", capped_upside
     if signals >= 3:
         return "Strong Consensus", capped_upside
     if signals == 2:

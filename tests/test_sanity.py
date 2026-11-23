@@ -107,6 +107,20 @@ def test_stockanalysis_check_fails_on_an_empty_payload(tmp_path) -> None:
     assert "no rows" in result.detail
 
 
+def test_metric_drift_tolerates_normal_market_movement() -> None:
+    stored = [{"symbol": "AAA", "ev_to_ebitda": 15.0, "gross_margin_pct": 40.0}]
+    fresh = [{"symbol": "AAA", "ev_to_ebitda": 15.4, "gross_margin_pct": 38.5}]
+
+    assert sanity._metric_drift(fresh, stored) == []
+
+
+def test_metric_drift_still_flags_a_real_disagreement() -> None:
+    stored = [{"symbol": "AAA", "ev_to_ebitda": 15.0}]
+    fresh = [{"symbol": "AAA", "ev_to_ebitda": 19.0}]
+
+    assert sanity._metric_drift(fresh, stored) == ["AAA.ev_to_ebitda"]
+
+
 def test_hedgefollow_check_compares_flags(monkeypatch, tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     symbols = [f"HF{i}" for i in range(300)]

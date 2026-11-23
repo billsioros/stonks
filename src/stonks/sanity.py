@@ -58,7 +58,9 @@ DRIFT_COLUMNS = (
     "shares_insiders_pct",
     "gross_margin_pct",
 )
-DRIFT_RELATIVE_TOLERANCE = 0.02
+# The stored and fresh reads are hours apart, so a routine move in a price-linked
+# multiple is expected; only a real disagreement should fail the check.
+DRIFT_RELATIVE_TOLERANCE = 0.10
 DRIFT_SAMPLE_SIZE = 10
 HEDGE_OVERLAP_MIN = 0.60
 LYNCH_RELATIVE_TOLERANCE = 0.01

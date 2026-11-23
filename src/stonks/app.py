@@ -1062,6 +1062,16 @@ def render_top_filters() -> dict[str, Any]:
     return filters  # type: ignore[no-any-return]
 
 
+def _sync_time_text(raw: str | None) -> str:
+    """Render a stored sync timestamp, tolerating malformed metadata."""
+    if not raw:
+        return "never"
+    try:
+        return datetime.fromtimestamp(float(raw)).strftime("%Y-%m-%d %H:%M")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "an unknown time"
+
+
 def render_screener_table() -> None:
     """Render the main screener table with controls using DB-level filtering."""
     store = get_store()
@@ -1142,12 +1152,7 @@ def render_screener_table() -> None:
 
     if store.get_metadata("last_sync_status") == "failed":
         error = store.get_metadata("last_sync_error") or "unknown error"
-        last_ok = store.get_metadata("last_successful_sync_at")
-        since = (
-            datetime.fromtimestamp(float(last_ok)).strftime("%Y-%m-%d %H:%M")
-            if last_ok
-            else "never"
-        )
+        since = _sync_time_text(store.get_metadata("last_successful_sync_at"))
         st.error(
             f"⚠️ **Last background sync failed** ({error}). "
             f"Showing the snapshot from {since}."

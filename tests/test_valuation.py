@@ -155,6 +155,18 @@ def test_evaluate_valuation_triangulation_needs_two_models() -> None:
     assert capped == pytest.approx(10.0)
 
 
+def test_a_cyclical_flag_does_not_upgrade_a_single_model() -> None:
+    verdict, capped = valuation.evaluate_valuation_triangulation(
+        dcf_upside=40.0,
+        lynch_upside=None,
+        pt_upside=None,
+        peg_ratio=None,
+        cyclical_risk=1,
+    )
+    assert verdict == "Unrated / Insufficient Data"
+    assert capped == pytest.approx(40.0)
+
+
 class TestUpsidePct:
     def test_below_fair_value_is_positive(self) -> None:
         assert valuation.upside_pct(110.0, 100.0) == pytest.approx(10.0)
