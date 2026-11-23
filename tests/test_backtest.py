@@ -230,3 +230,104 @@ def test_saved_backtests_round_trip(tmp_path) -> None:
 
     store.delete_backtest("Main")
     assert store.list_backtests() == []
+
+
+def test_contributions_buy_at_month_zero_and_accumulate() -> None:
+    months = _months(2020, 4)
+    result = simulate(
+        {"A": dict.fromkeys(months, 100.0)},
+        {"A": 1.0},
+        initial=0.0,
+        contributions={"A": 100.0},
+        frequency="monthly",
+    )
+    assert "error" not in result
+    assert result["invested"] == 400.0
+    assert [point["value"] for point in result["curve"]] == [
+        100.0,
+        200.0,
+        300.0,
+        400.0,
+    ]
+    assert result["cagr_pct"] == pytest.approx(0.0)
+
+
+def test_contributions_keep_time_weighted_stats_independent_of_deposits() -> None:
+    months = _months(2020, 25)
+    prices = {
+        "A": {
+            month: 100.0 if index < 12 else 50.0 for index, month in enumerate(months)
+        }
+    }
+    result = simulate(
+        prices,
+        {"A": 1.0},
+        initial=0.0,
+        contributions={"A": 100.0},
+        frequency="monthly",
+        rebalance="none",
+    )
+    assert result["max_drawdown_pct"] == pytest.approx(-50.0)
+    assert result["cagr_pct"] < 0
+    assert result["invested"] == 2500.0
+
+
+def test_contributions_are_invested_in_full_at_month_zero() -> None:
+    months = _months(2020, 2)
+    prices = {
+        "A": dict.fromkeys(months, 100.0),
+        "B": dict.fromkeys(months, 100.0),
+    }
+    result = simulate(
+        prices,
+        {"A": 60.0, "B": 40.0},
+        initial=0.0,
+        contributions={"A": 60.0, "B": 40.0},
+        frequency="monthly",
+    )
+    assert result["curve"][0]["value"] == pytest.approx(100.0)
+
+
+def test_rebalance_happens_after_contribution() -> None:
+    months = _months(2020, 3)
+    prices = {
+        "A": dict.fromkeys(months, 100.0),
+        "B": {month: 100.0 * 1.1**index for index, month in enumerate(months)},
+    }
+    kwargs = {
+        "initial": 0.0,
+        "contributions": {"A": 60.0, "B": 40.0},
+        "frequency": "monthly",
+    }
+    drift = simulate(prices, {"A": 60.0, "B": 40.0}, rebalance="none", **kwargs)
+    rebalanced = simulate(prices, {"A": 60.0, "B": 40.0}, rebalance="monthly", **kwargs)
+    assert rebalanced["final"] < drift["final"]
+
+
+def test_money_weighted_return_reflects_contribution_timing() -> None:
+    months = _months(2020, 13)
+    prices = {
+        "A": {
+            month: 100.0 if index == 0 else 200.0 for index, month in enumerate(months)
+        }
+    }
+    result = simulate(
+        prices,
+        {"A": 1.0},
+        initial=0.0,
+        contributions={"A": 100.0},
+        frequency="monthly",
+    )
+    assert result["money_weighted_cagr_pct"] is not None
+    assert 0 < result["money_weighted_cagr_pct"] < result["cagr_pct"]
+    assert simulate(prices, {"A": 1.0})["money_weighted_cagr_pct"] is None
+
+
+def test_simulate_rejects_bad_contribution_inputs() -> None:
+    prices = {"A": dict.fromkeys(_months(2020, 3), 100.0)}
+    assert "error" in simulate(prices, {"A": 1.0}, frequency="weekly")
+    assert "error" in simulate(prices, {"A": 1.0}, contributions={"A": -1.0})
+    assert "error" in simulate(prices, {"A": 1.0}, initial=0.0)
+    assert "error" in simulate(
+        prices, {"A": 1.0}, initial=0.0, contributions={"A": 1.0}, frequency="none"
+    )

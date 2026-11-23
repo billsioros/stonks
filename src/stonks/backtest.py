@@ -44,6 +44,9 @@ REBALANCE_LABELS: dict[str, str] = {
     "monthly": "Monthly",
 }
 
+# Contribution cadences use the same month intervals as rebalancing.
+CONTRIBUTION_MONTHS: dict[str, int] = dict(REBALANCE_MONTHS)
+
 
 def monthly_url(symbol: str) -> str:
     """Build the monthly history URL for one symbol."""
@@ -122,14 +125,37 @@ def _yearly_returns(curve: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return rows
 
 
+def _annualized_irr(flows: list[tuple[int, float]]) -> float | None:
+    """Annualize the monthly IRR of dated cash flows, or ``None`` if unsolvable."""
+
+    def npv(rate: float) -> float:
+        return sum(amount / (1 + rate) ** month for month, amount in flows)
+
+    low, high = -0.9999, 1.0
+    at_low = npv(low)
+    while npv(high) * at_low > 0 and high < 1e6:
+        high *= 2
+    if npv(high) * at_low > 0:
+        return None
+    for _ in range(200):
+        middle = (low + high) / 2
+        if npv(middle) * at_low > 0:
+            low = middle
+        else:
+            high = middle
+    return ((1 + (low + high) / 2) ** 12 - 1) * 100
+
+
 def simulate(
     prices: dict[str, dict[str, float]],
     weights: dict[str, float],
     *,
     rebalance: str = "annual",
     initial: float = 10_000.0,
+    contributions: dict[str, float] | None = None,
+    frequency: str = "none",
 ) -> dict[str, Any]:
-    """Grow `initial` through a weighted, periodically rebalanced portfolio.
+    """Grow a portfolio with an initial amount and optional periodic deposits.
 
     Args:
         prices: ``{symbol: {"YYYY-MM": adjusted close}}``, one mapping per
@@ -137,15 +163,26 @@ def simulate(
         weights: Target weight per symbol; normalised to sum to one.
         rebalance: One of :data:`REBALANCE_MONTHS`.
         initial: Starting portfolio value.
+        contributions: Amount added per contribution, keyed by symbol.
+        frequency: One of :data:`CONTRIBUTION_MONTHS`; ``none`` disables deposits.
 
     Returns:
         A result dict with the monthly ``curve`` and the summary statistics, or
-        ``{"error": ...}`` when the inputs cannot produce a series.
+        ``{"error": ...}`` when the inputs cannot produce a series. Performance
+        statistics are time-weighted so deposits do not inflate them.
     """
     if not prices or not weights:
         return {"error": "Pick at least one symbol."}
     if rebalance not in REBALANCE_MONTHS:
         return {"error": f"Unknown rebalancing: {rebalance}"}
+    if frequency not in CONTRIBUTION_MONTHS:
+        return {"error": f"Unknown contribution frequency: {frequency}"}
+    if initial < 0 or (
+        contributions and any(amount < 0 for amount in contributions.values())
+    ):
+        return {"error": "Amounts cannot be negative."}
+    if frequency == "none" and contributions:
+        return {"error": "Choose a contribution frequency for recurring amounts."}
 
     months = sorted(set.intersection(*(set(series) for series in prices.values())))
     if len(months) < 2:
@@ -155,43 +192,78 @@ def simulate(
     if total_weight <= 0:
         return {"error": "Weights must add up to more than zero."}
     targets = {symbol: weight / total_weight for symbol, weight in weights.items()}
+    step = CONTRIBUTION_MONTHS[frequency]
+    additions = (
+        {symbol: contributions.get(symbol, 0.0) for symbol in targets}
+        if contributions
+        else dict.fromkeys(targets, 0.0)
+    )
+    per_contribution = sum(additions.values())
+    if initial + (per_contribution if step else 0) <= 0:
+        return {"error": "Invest an initial amount or set recurring contributions."}
 
+    invested = initial + (per_contribution if step else 0)
     units = {
-        symbol: initial * targets[symbol] / prices[symbol][months[0]]
+        symbol: (initial * targets[symbol] + (additions[symbol] if step else 0))
+        / prices[symbol][months[0]]
         for symbol in targets
     }
     every = REBALANCE_MONTHS[rebalance]
     curve: list[dict[str, Any]] = []
+    growth = [1.0]
+    flows = [(0, -invested)]
 
-    for index, month in enumerate(months):
+    first_value = sum(units[symbol] * prices[symbol][months[0]] for symbol in targets)
+    curve.append({"date": months[0], "value": first_value})
+    previous = first_value
+
+    for index, month in enumerate(months[1:], start=1):
         value = sum(units[symbol] * prices[symbol][month] for symbol in targets)
-        curve.append({"date": month, "value": value})
-        if every and index and index % every == 0:
+        growth.append(growth[-1] * (value / previous if previous else 1.0))
+        if step and index % step == 0:
+            for symbol in targets:
+                units[symbol] += additions[symbol] / prices[symbol][month]
+            value += per_contribution
+            invested += per_contribution
+            flows.append((index, -per_contribution))
+        if every and index % every == 0:
             # Rebalance at this month's close: the units change, the value does
             # not, and next month's returns then accrue on the target mix.
             units = {
                 symbol: value * targets[symbol] / prices[symbol][month]
                 for symbol in targets
             }
+        previous = value
+        curve.append({"date": month, "value": value})
 
-    values = [float(point["value"]) for point in curve]
+    final = curve[-1]["value"]
+    flows.append((len(months) - 1, final))
+    index_curve = [
+        {"date": month, "value": value} for month, value in zip(months, growth)
+    ]
     years = (len(months) - 1) / 12
-    total_return = values[-1] / values[0] - 1 if values[0] else 0.0
+    total_return = growth[-1] - 1
     cagr = (1 + total_return) ** (1 / years) - 1 if years > 0 else 0.0
-    returns = _monthly_returns(values)
-    deviation = _stdev(returns)
-    yearly = _yearly_returns(curve)
+    deviation = _stdev(_monthly_returns(growth))
+    yearly = _yearly_returns(index_curve)
 
     return {
         "start": months[0],
         "end": months[-1],
         "months": len(months),
         "initial": initial,
-        "final": values[-1],
+        "contribution": per_contribution if step else 0.0,
+        "frequency": frequency,
+        "invested": invested,
+        "gain": final - invested,
+        "final": final,
         "total_return_pct": total_return * 100,
         "cagr_pct": cagr * 100,
+        "money_weighted_cagr_pct": _annualized_irr(flows)
+        if step and per_contribution
+        else None,
         "stdev_pct": deviation * math.sqrt(12) * 100 if deviation is not None else None,
-        "max_drawdown_pct": _max_drawdown(values),
+        "max_drawdown_pct": _max_drawdown(growth),
         "best_year_pct": max((row["return_pct"] for row in yearly), default=None),
         "worst_year_pct": min((row["return_pct"] for row in yearly), default=None),
         "yearly": yearly,
