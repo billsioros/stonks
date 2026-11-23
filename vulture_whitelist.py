@@ -4,6 +4,7 @@ from stonks.backtest_view import parse_symbols, parse_weights
 
 from stonks.alerts import Alert, evaluate_alerts, week_bucket
 from stonks.detail import load_page
+from stonks.dossier import Check, Dossier, Gate, coverage, gate_status
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,
@@ -23,6 +24,21 @@ from stonks.detail_view import (
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 from stonks.worker import NEWS_ALERTS_PER_SYNC, fetch_watched_news
+
+# Dossier fields are read by the report prompt and the deep-dive view, which are
+# wired in later tasks; the model itself only carries them.
+Check.id  # noqa: B018
+Check.threshold  # noqa: B018
+Check.evidence  # noqa: B018
+Gate.summary  # noqa: B018
+Dossier  # noqa: B018
+Dossier.as_of  # noqa: B018
+Dossier.conflicts  # noqa: B018
+Dossier.red_flags  # noqa: B018
+Dossier.provenance  # noqa: B018
+Dossier.coverage  # noqa: B018
+gate_status  # noqa: B018
+coverage  # noqa: B018
 
 LocalCache.delete  # noqa: B018
 SQLiteStore.get_screen  # noqa: B018
