@@ -16,9 +16,16 @@ import streamlit as st
 from stonks import detail, detail_parse, report
 from stonks.store import SQLiteStore
 
-SYMBOL_MAX_TOKENS = 2500
+# The dossier block is part of the prompt, so a changed filing also changes the
+# cache key of `_cached_report` without a second, redundant hash argument.
+SYMBOL_MAX_TOKENS = report.SYMBOL_MAX_TOKENS
 
-__all__ = ["render_llm_report", "render_symbol_report", "symbol_report_prompt_for"]
+__all__ = [
+    "SYMBOL_MAX_TOKENS",
+    "render_llm_report",
+    "render_symbol_report",
+    "symbol_report_prompt_for",
+]
 
 _DefaultCaption = Callable[[str], str]
 

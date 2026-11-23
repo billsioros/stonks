@@ -20,11 +20,14 @@ from openrouter import OpenRouter, errors
 from openrouter.components import ChatSystemMessageTypedDict, ChatUserMessageTypedDict
 
 from stonks.config import COLUMN_DISPLAY_NAMES
+from stonks.dossier import Dossier, gate_status
 
 __all__ = [
     "REPORT_MODEL",
+    "SYMBOL_MAX_TOKENS",
     "SYMBOL_SYSTEM_INSTRUCTION",
     "SYSTEM_INSTRUCTION",
+    "dossier_block",
     "explain_error",
     "request_report",
     "screener_report_prompt",
@@ -32,6 +35,8 @@ __all__ = [
 ]
 
 REPORT_MODEL: str = "openrouter/free"
+SYMBOL_MAX_TOKENS = 4000
+UNVERIFIED_HEADING = "## What this dossier could not verify"
 
 SYSTEM_INSTRUCTION: str = (
     "You are a stock-screening assistant. Be concise and informative: short, "
@@ -80,7 +85,12 @@ SYMBOL_SYSTEM_INSTRUCTION: str = (
     "stock. Use only the figures and text provided. Quantify every claim, keep "
     "facts separate from interpretation, and treat missing fields as unavailable "
     "rather than guessing. Today's price is the decision price: judge valuation "
-    "against it. This is research support, not financial advice."
+    "against it. Cite the check id behind every dossier claim. Never assert a "
+    "moat, catalyst or filing fact that is absent from the dossier. Treat an "
+    "unverified check as unknown, never as favourable evidence, and keep trailing "
+    "results separate from forward estimates. If the filings gate fails, lead "
+    "the memo with that failure rather than the valuation case. This is research "
+    "support, not financial advice."
 )
 
 # A decision memo, not a screener summary: the verdict is about buying at the
@@ -529,6 +539,81 @@ def _news_block(news: Sequence[Mapping[str, Any]]) -> str:
     )
 
 
+def dossier_block(dossier: Dossier) -> str:
+    """A compact, table-only rendering of the deterministic verdict.
+
+    Passing checks omit their evidence strings: the number and threshold are
+    enough there, while a fail or an unverifiable check keeps the reason that a
+    reader needs to audit the memo.
+    """
+    lines = [
+        "## Verdict",
+        f"Symbol: {dossier.symbol} | as of {dossier.as_of} | "
+        f"coverage {dossier.coverage:.0%}",
+        "",
+        _md_table(
+            ["Gate", "Status", "Summary"],
+            [
+                (
+                    gate.label,
+                    gate_status(gate.checks),
+                    gate.summary,
+                )
+                for gate in dossier.gates
+            ],
+        ),
+    ]
+    for gate in dossier.gates:
+        lines.extend(
+            [
+                "",
+                f"### {gate.label}",
+                _md_table(
+                    ["id", "check", "status", "value", "threshold", "evidence"],
+                    [
+                        (
+                            check.id,
+                            check.label,
+                            check.status,
+                            check.value,
+                            check.threshold,
+                            check.evidence if check.status != "pass" else "",
+                        )
+                        for check in gate.checks
+                    ],
+                ),
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            f"Conflicts: {'; '.join(dossier.conflicts) if dossier.conflicts else 'none'}",
+            f"Red flags: {'; '.join(dossier.red_flags) if dossier.red_flags else 'none'}",
+            "Provenance:\n"
+            + _md_table(
+                ["Source", "What", "Age"],
+                [tuple(source) for source in dossier.provenance],
+            ),
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _unverified_section(dossier: Dossier) -> str:
+    missing = [
+        check
+        for gate in dossier.gates
+        for check in gate.checks
+        if check.status == "unverified"
+    ]
+    body = (
+        "\n".join(f"- {check.id}: {check.evidence}" for check in missing)
+        if missing
+        else "None: every applicable check was verified."
+    )
+    return f"{UNVERIFIED_HEADING}\n{body}"
+
+
 def symbol_report_prompt(
     symbol: str,
     *,
@@ -539,11 +624,14 @@ def symbol_report_prompt(
     statements: Mapping[str, Mapping[str, Any]] | None = None,
     history: Sequence[Mapping[str, Any]] | None = None,
     news: Sequence[Mapping[str, Any]] | None = None,
+    dossier: Dossier | None = None,
 ) -> str:
     """One symbol's cached data as the input to an investment decision memo.
 
     Every supplied field is included so the verdict can be checked against the
     figures; missing provider sections are named rather than silently skipped.
+    A dossier, when present, leads with the deterministic verdict and forces a
+    section naming everything that could not be verified.
     """
     overview = overview or {}
     statement_blocks: list[str] = []
@@ -573,7 +661,14 @@ def symbol_report_prompt(
         "Recent news:\n"
         + _news_block(news if news is not None else overview.get("news") or []),
     ]
-    return SYMBOL_REPORT_SECTIONS + "\n\n".join(sections)
+    if dossier is not None:
+        sections.insert(0, dossier_block(dossier))
+        skeleton = SYMBOL_REPORT_SECTIONS.replace(
+            "## TL;DR\n", _unverified_section(dossier) + "\n\n## TL;DR\n"
+        )
+    else:
+        skeleton = SYMBOL_REPORT_SECTIONS
+    return skeleton + "\n\n".join(sections)
 
 
 def request_report(

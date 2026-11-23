@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from stonks import report, report_view
+from stonks.dossier import Check, Dossier, Gate
 
 ROW: dict[str, Any] = {
     "symbol": "NVDA",
@@ -287,3 +288,104 @@ def test_request_report_accepts_a_longer_thorough_response() -> None:
         "content": "You are a financial analyst.",
     }
     assert call["max_tokens"] == 2500
+
+
+def _dossier(value: str = "1.0 vs 1.2") -> Dossier:
+    return Dossier(
+        symbol="NVDA",
+        as_of="2026-11-23T09:00:00Z",
+        gates=(
+            Gate(
+                "quality",
+                "Business quality",
+                (
+                    Check(
+                        "quality.roic_5y",
+                        "ROIC",
+                        "pass",
+                        "14.2%",
+                        ">= 10%",
+                        "PASS-EVIDENCE-MARKER",
+                    ),
+                    Check(
+                        "quality.cash_conversion",
+                        "Cash conversion",
+                        "unverified",
+                        "n/a",
+                        ">= 0.8",
+                        "net income missing",
+                    ),
+                ),
+                "One check needs input",
+            ),
+            Gate(
+                "filings",
+                "Primary filings",
+                (
+                    Check(
+                        "filings.revenue_crosscheck",
+                        "Revenue",
+                        "fail",
+                        value,
+                        "<= 1%",
+                        "acc 0000320193-25-000001",
+                    ),
+                ),
+                "Revenue differs",
+            ),
+        ),
+        conflicts=(f"revenue differs: {value} (0000320193-25-000001)",),
+        red_flags=("material weakness (2025-10-30)",),
+        provenance=(("screener", "row snapshot", "1h"),),
+        coverage=0.5,
+    )
+
+
+def test_symbol_prompt_leads_with_the_verdict_before_the_data() -> None:
+    prompt = report.symbol_report_prompt("NVDA", row=ROW, dossier=_dossier())
+    assert prompt.index("## Verdict") < prompt.index("Symbol: NVDA")
+    for check_id in (
+        "quality.roic_5y",
+        "quality.cash_conversion",
+        "filings.revenue_crosscheck",
+    ):
+        assert check_id in prompt
+    assert "Business quality" in prompt
+    assert "fail" in prompt and "unverified" in prompt
+
+
+def test_unverified_checks_are_listed_under_the_required_heading() -> None:
+    prompt = report.symbol_report_prompt("NVDA", dossier=_dossier())
+    heading = "## What this dossier could not verify"
+    assert heading in prompt
+    section = prompt.split(heading, 1)[1].split("## ", 1)[0]
+    assert "quality.cash_conversion" in section
+    assert "net income missing" in section
+    assert "quality.roic_5y" not in section
+
+
+def test_symbol_system_instruction_forbids_unsupported_claims() -> None:
+    instruction = report.SYMBOL_SYSTEM_INSTRUCTION
+    assert "moat" in instruction and "catalyst" in instruction
+    assert "unverified" in instruction
+    assert "check id" in instruction
+
+
+def test_dossier_block_omits_passing_evidence_and_changes_with_the_dossier() -> None:
+    first = report.dossier_block(_dossier())
+    second = report.dossier_block(_dossier("1.0 vs 1.9"))
+    assert "PASS-EVIDENCE-MARKER" not in first
+    assert "1.0 vs 1.2" in first
+    assert first != second
+
+
+def test_symbol_prompt_without_a_dossier_is_unchanged() -> None:
+    prompt = report.symbol_report_prompt("NVDA", row=ROW)
+    assert "## Verdict" not in prompt
+    assert "## What this dossier could not verify" not in prompt
+    assert "Symbol: NVDA" in prompt
+
+
+def test_symbol_report_uses_the_larger_thinking_budget() -> None:
+    assert report.SYMBOL_MAX_TOKENS == 4000
+    assert report_view.SYMBOL_MAX_TOKENS == 4000
