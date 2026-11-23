@@ -691,10 +691,24 @@ def _is_missing(val: object) -> bool:
 
 
 def _fmt_flag(val: object) -> str:
-    """Render a stored 1/0 flag: ✓ in the list, ✗ not, — unknown."""
+    """Render the 13F flag: a whale when the stock is a top hedge-fund buy."""
     if _is_missing(val):
         return "—"
-    return "✓" if val else "✗"
+    return "🐋" if val else "—"
+
+
+def _fmt_upside(val: float | None) -> str:
+    """Render an upside with its direction: green for gains, red for losses."""
+    if _is_missing(val):
+        return "—"
+    return f"{'🟢' if val >= 0 else '🔴'} {val:+.1f}%"
+
+
+def _fmt_current_ratio(val: float | None) -> str:
+    """Render the current ratio, marking liquidity below 1."""
+    if _is_missing(val):
+        return "—"
+    return f"🔴 {val:.2f}" if val < 1.0 else f"{val:.2f}"
 
 
 def _fmt_market_cap(val: float | None) -> str:
@@ -727,6 +741,38 @@ def _fmt_cyclical_risk(val: object) -> str:
     if _is_missing(val) or val is None:
         return "—"
     return "⚠️ Peak" if val else ""
+
+
+def _format_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a formatted copy; sorting and filtering stay on the raw values."""
+    display = frame.copy()
+    for col in display.columns:
+        if col == "13F Whale":
+            display[col] = display[col].apply(_fmt_flag)
+        elif col == "Cyclical Peak Risk":
+            display[col] = display[col].apply(_fmt_cyclical_risk)
+        elif col == "Market Cap":
+            display[col] = display[col].apply(_fmt_market_cap)
+        elif col in ("PT Upside", "DCF Upside %", "Lynch Upside %", "Avg Upside %"):
+            display[col] = display[col].apply(_fmt_upside)
+        elif col == "Current Ratio":
+            display[col] = display[col].apply(_fmt_current_ratio)
+        elif "%" in col or "Upside" in col or "Short" in col:
+            display[col] = display[col].apply(_fmt_pct)
+        elif col in (
+            "P/E",
+            "PE Ratio",
+            "P/B",
+            "P/S",
+            "PEG",
+            "EV/EBITDA",
+            "EV/EBITDA^",
+            "Beta",
+            "DCF Fair Value",
+            "Lynch Fair Value",
+        ):
+            display[col] = display[col].apply(lambda x: _fmt_number(x, 2))
+    return display
 
 
 def _prune_filters(filters: dict[str, Any]) -> dict[str, Any]:
@@ -1190,28 +1236,7 @@ def render_screener_table() -> None:
     visible_cols = [c for c in visible_cols if c in page_df.columns]
     display_df = page_df[visible_cols].rename(columns=rename_map)
 
-    for col in display_df.columns:
-        if col == "13F Whale":
-            display_df[col] = display_df[col].apply(_fmt_flag)
-        elif col == "Cyclical Peak Risk":
-            display_df[col] = display_df[col].apply(_fmt_cyclical_risk)
-        elif col == "Market Cap":
-            display_df[col] = display_df[col].apply(_fmt_market_cap)
-        elif "%" in col or "Upside" in col or "Short" in col:
-            display_df[col] = display_df[col].apply(_fmt_pct)
-        elif col in (
-            "P/E",
-            "PE Ratio",
-            "P/B",
-            "P/S",
-            "PEG",
-            "EV/EBITDA",
-            "EV/EBITDA^",
-            "Beta",
-            "DCF Fair Value",
-            "Lynch Fair Value",
-        ):
-            display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
+    display_df = _format_display_frame(display_df)
 
     def _row_style(row: pd.Series) -> list[str]:
         if bool(hf_mask.loc[row.name]):
