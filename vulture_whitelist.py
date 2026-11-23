@@ -1,19 +1,9 @@
 # Vulture whitelist for methods that are used in tests or intended for public API
 from stonks.cache import LocalCache
-from stonks.backtest_view import parse_symbols, parse_weights
 
 from stonks.alerts import Alert, evaluate_alerts, week_bucket
+from stonks.backtest_view import parse_symbols, parse_weights
 from stonks.detail import load_page
-from stonks.dossier import (
-    Check,
-    Dossier,
-    Gate,
-    coverage,
-    forward_gate,
-    gate_status,
-    industry_medians,
-    quality_gate,
-)
 from stonks.detail_parse import (
     parse_forecast,
     parse_overview,
@@ -30,8 +20,21 @@ from stonks.detail_view import (
     statement_frame,
     yoy_pct,
 )
+from stonks.dossier import (
+    Check,
+    Dossier,
+    FilingEvidence,
+    Gate,
+    coverage,
+    filing_gate,
+    forward_gate,
+    gate_status,
+    industry_medians,
+    quality_gate,
+)
 from stonks.edgar import EdgarUnavailable, edgar_json, resolve_cik, user_agent
 from stonks.edgar_parse import filing_checks, latest_fact, maturity_ladder
+from stonks.filing_evidence import build_filing_evidence, search_filings
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 from stonks.worker import NEWS_ALERTS_PER_SYNC, fetch_watched_news
@@ -48,11 +51,16 @@ Dossier.conflicts  # noqa: B018
 Dossier.red_flags  # noqa: B018
 Dossier.provenance  # noqa: B018
 Dossier.coverage  # noqa: B018
+FilingEvidence  # noqa: B018
+FilingEvidence.empty  # noqa: B018
 gate_status  # noqa: B018
 coverage  # noqa: B018
 industry_medians  # noqa: B018
 quality_gate  # noqa: B018
 forward_gate  # noqa: B018
+filing_gate  # noqa: B018
+build_filing_evidence  # noqa: B018
+search_filings  # noqa: B018
 
 LocalCache.delete  # noqa: B018
 SQLiteStore.get_screen  # noqa: B018

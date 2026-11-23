@@ -1,0 +1,32 @@
+{
+  "took": 4,
+  "timed_out": false,
+  "hits": {
+    "total": {
+      "value": 2,
+      "relation": "eq"
+    },
+    "max_score": 8.4,
+    "hits": [
+      {
+        "_id": "0000320193-25-000012",
+        "_score": 8.4,
+        "_source": {
+          "form": "10-K",
+          "file_date": "2025-10-30",
+          "adsh": "0000320193-25-000012",
+          "file_num": "1"
+        }
+      },
+      {
+        "_id": "0000320193-26-000003",
+        "_score": 6.1,
+        "_source": {
+          "form": "10-Q",
+          "file_date": "2026-02-02",
+          "accession_number": "0000320193-26-000003"
+        }
+      }
+    ]
+  }
+}

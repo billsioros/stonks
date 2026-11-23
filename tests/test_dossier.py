@@ -8,11 +8,18 @@ not apply never dilute the number.
 
 from __future__ import annotations
 
+import json
+from datetime import date, timedelta
+from pathlib import Path
+from typing import Any
+
 from stonks.dossier import (
     Check,
     Dossier,
+    FilingEvidence,
     Gate,
     coverage,
+    filing_gate,
     forward_gate,
     gate_status,
     industry_medians,
@@ -486,3 +493,166 @@ def test_backward_only_evidence_fails_the_gate_and_says_so() -> None:
     assert all_missing.summary == "Trailing evidence only"
     assert gate_status(all_missing.checks) == "fail"
     assert gate_status(trailing.checks) != "pass"
+
+
+# ── Task 3: filing evidence gate ──────────────────────────────────────
+FACTS_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "edgar" / "companyfacts_sample.json"
+)
+FILING_FACTS: dict[str, Any] = json.loads(FACTS_FIXTURE.read_text(encoding="utf-8"))
+TODAY = "2026-11-23"
+
+
+def _hit(
+    phrase: str,
+    *,
+    filing_date: str = "2025-10-30",
+    accession: str = "0000320193-25-000012",
+    count: int = 1,
+) -> dict[str, Any]:
+    compact = accession.replace("-", "")
+    return {
+        "phrase": phrase,
+        "count": count,
+        "filing_date": filing_date,
+        "accession": accession,
+        "form": "10-K",
+        "url": (
+            "https://www.sec.gov/Archives/edgar/data/320193/"
+            f"{compact}/{accession}-index.html"
+        ),
+    }
+
+
+def _evidence(
+    *,
+    hits: tuple[dict[str, Any], ...] = (),
+    latest_10k: str | None = "2026-02-15",
+    latest_10q: str | None = "2026-11-01",
+    facts: dict[str, Any] | None = None,
+    reason: str | None = None,
+) -> FilingEvidence:
+    return FilingEvidence(
+        cik="0000320193",
+        facts=facts if facts is not None else {},
+        hits=hits,
+        latest_10k=latest_10k,
+        latest_10q=latest_10q,
+        reason=reason,
+    )
+
+
+def _fgate(evidence: FilingEvidence, *, today: object = TODAY) -> Gate:
+    return filing_gate(_row(), _statements(), evidence, today=today)
+
+
+def _by_id(gate: Gate) -> dict[str, Check]:
+    return {check.id: check for check in gate.checks}
+
+
+def test_filing_evidence_empty_is_unverified_not_a_pass() -> None:
+    evidence = FilingEvidence.empty()
+    gate = filing_gate({}, {}, evidence)
+
+    assert evidence.reason == "No filing evidence supplied"
+    assert evidence.facts == {}
+    assert evidence.hits == ()
+    assert gate.checks[0].id == "filings.primary"
+    assert gate.checks[0].status == "unverified"
+    assert gate_status(gate.checks) == "unverified"
+
+
+def test_material_weakness_hit_fails_the_gate_and_is_a_red_flag() -> None:
+    hit = _hit("material weakness", count=2)
+    gate = _fgate(_evidence(hits=(hit,)))
+
+    check = _by_id(gate)["filings.material_weakness"]
+    assert check.status == "fail"
+    assert "2" in check.value
+    assert hit["filing_date"] in check.evidence
+    assert hit["url"] in check.evidence
+    assert gate_status(gate.checks) == "fail"
+
+
+def test_zero_hits_passes_with_absence_is_not_proof_note() -> None:
+    gate = _fgate(_evidence())
+    checks = _by_id(gate)
+
+    red_flags = (
+        "filings.material_weakness",
+        "filings.going_concern",
+        "filings.covenant",
+        "filings.restatement",
+        "filings.sec_investigation",
+    )
+    assert all(checks[check_id].status == "pass" for check_id in red_flags)
+    assert all(
+        "absence of a phrase is not proof" in checks[check_id].evidence
+        for check_id in red_flags
+    )
+    assert checks["filings.freshness"].status == "pass"
+    # The qualitative phrase checks remain unverified by construction.
+    assert gate_status(gate.checks) == "unverified"
+
+
+def test_stale_filing_fails() -> None:
+    today = date.fromisoformat(TODAY)
+    old_10k = (today - timedelta(days=500)).isoformat()
+    gate = _fgate(_evidence(latest_10k=old_10k))
+
+    freshness = _by_id(gate)["filings.freshness"]
+    assert freshness.status == "fail"
+    assert "stale" in gate.summary.lower()
+    assert gate_status(gate.checks) == "fail"
+
+    old_10q = (today - timedelta(days=121)).isoformat()
+    assert (
+        _by_id(_fgate(_evidence(latest_10q=old_10q)))["filings.freshness"].status
+        == "fail"
+    )
+    # The boundary is inclusive: 400 days for a 10-K, 120 for a 10-Q.
+    boundary = _evidence(
+        latest_10k=(today - timedelta(days=400)).isoformat(),
+        latest_10q=(today - timedelta(days=120)).isoformat(),
+    )
+    assert _by_id(_fgate(boundary))["filings.freshness"].status == "pass"
+    # A missing date cannot be judged fresh.
+    missing = _evidence(latest_10k=None, latest_10q=None)
+    assert _by_id(_fgate(missing))["filings.freshness"].status == "unverified"
+
+
+def test_phrase_checks_are_unverified_with_links() -> None:
+    phrases = {
+        "filings.customer_concentration": "customer concentration",
+        "filings.litigation": "litigation",
+        "filings.regulatory": "regulatory",
+        "filings.related_party": "related party",
+    }
+    hits = tuple(_hit(phrase) for phrase in phrases.values())
+    gate = _fgate(_evidence(hits=hits))
+
+    for check_id, phrase in phrases.items():
+        check = _by_id(gate)[check_id]
+        assert check.status == "unverified"
+        assert phrase in check.evidence
+        assert "phrase search is evidence, not proof" in check.evidence
+        assert "https://www.sec.gov/Archives/edgar/data/320193/" in check.evidence
+        assert gate_status((check,)) == "unverified"
+
+
+def test_filing_gate_runs_xbrl_checks_on_supplied_facts() -> None:
+    gate = filing_gate({}, {}, _evidence(facts=FILING_FACTS), today=TODAY)
+    checks = _by_id(gate)
+
+    for check_id in (
+        "filings.revenue",
+        "filings.net_income",
+        "filings.operating_cash_flow",
+        "filings.capex",
+        "filings.shares_out",
+        "filings.total_debt",
+        "filings.cash",
+        "filings.debt_coverage",
+    ):
+        assert check_id in checks
+        assert checks[check_id].status == "unverified"  # no vendor figures supplied

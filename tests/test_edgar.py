@@ -10,11 +10,19 @@ from typing import Any
 import httpx
 import pytest
 
-from stonks import edgar, edgar_parse
+from stonks import edgar, edgar_parse, filing_evidence
+from stonks.dossier import (
+    GUIDANCE_PHRASES,
+    INFORMATIONAL_PHRASES,
+    RED_FLAG_PHRASES,
+    filing_gate,
+)
 from stonks.store import SQLiteStore
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "edgar" / "company_tickers.json"
 COMPANY_TICKERS = json.loads(_FIXTURE.read_text(encoding="utf-8"))
+_EFTS_FIXTURE = Path(__file__).parent / "fixtures" / "edgar" / "efts_sample.json"
+EFTS_HITS = json.loads(_EFTS_FIXTURE.read_text(encoding="utf-8"))
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index?q=test"
 USER_AGENT = "stonks/2.5.0 (dev@example.com)"
 
@@ -552,3 +560,142 @@ def test_maturity_ladder_sums_five_buckets() -> None:
         value for label, value in ladder if not label.endswith("+")
     ) == pytest.approx(300_000_000.0)
     assert sum(value for _, value in ladder) == pytest.approx(350_000_000.0)
+
+
+# ── Task 3: EFTS sweep and filing evidence (I/O side) ────────────────
+CIK = "0000320193"
+
+
+def test_efts_hit_parsing_yields_count_date_accession_link(store: SQLiteStore) -> None:
+    fetch, calls = fetch_recorder(FakeResponse(EFTS_HITS))
+
+    hits = filing_evidence.search_filings(
+        "material weakness", CIK, forms=("10-K", "10-Q"), store=store, fetch=fetch
+    )
+
+    assert len(hits) == 2
+    assert hits[0] == {
+        "phrase": "material weakness",
+        "count": 2,
+        "filing_date": "2025-10-30",
+        "accession": "0000320193-25-000012",
+        "form": "10-K",
+        "url": "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019325000012/0000320193-25-000012-index.html",
+    }
+    assert hits[1]["filing_date"] == "2026-02-02"
+    assert hits[1]["accession"] == "0000320193-26-000003"
+    assert "q=%22material+weakness%22" in calls[0][0]
+    assert "forms=10-K%2C10-Q" in calls[0][0]
+    assert f"ciks={CIK}" in calls[0][0]
+    assert calls[0][1] == {"User-Agent": USER_AGENT}
+    # The same cache contract as every other EDGAR entry, for seven days.
+    assert store.cache_get(f"edgar:{CIK}:efts:material weakness") == EFTS_HITS
+
+
+def test_efts_caches_each_phrase_for_seven_days(
+    monkeypatch: pytest.MonkeyPatch, store: SQLiteStore
+) -> None:
+    ttls: list[tuple[str, int]] = []
+    real_cache_set = store.cache_set
+
+    def spy_cache_set(key: str, value: Any, ttl_seconds: int) -> None:
+        ttls.append((key, ttl_seconds))
+        real_cache_set(key, value, ttl_seconds)
+
+    monkeypatch.setattr(store, "cache_set", spy_cache_set)
+    fetch, _ = fetch_recorder(FakeResponse(EFTS_HITS))
+
+    filing_evidence.search_filings(
+        "covenant", CIK, forms=("10-K",), store=store, fetch=fetch
+    )
+
+    assert ttls == [(f"edgar:{CIK}:efts:covenant", 7 * 24 * 60 * 60)]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{}, {"hits": "unexpected"}, {"hits": {"hits": [{}]}}, {"hits": {"hits": "no"}}],
+)
+def test_unparsable_efts_payload_raises(payload: Any, store: SQLiteStore) -> None:
+    fetch, _ = fetch_recorder(FakeResponse(payload))
+
+    with pytest.raises(edgar.EdgarUnavailable):
+        filing_evidence.search_filings(
+            "going concern", CIK, forms=("10-K",), store=store, fetch=fetch
+        )
+
+
+def test_efts_failure_is_unverified(
+    monkeypatch: pytest.MonkeyPatch, store: SQLiteStore
+) -> None:
+    def broken(*args: Any, **kwargs: Any) -> FakeResponse:
+        raise edgar.EdgarUnavailable("SEC request failed with HTTP 429")
+
+    monkeypatch.setattr(filing_evidence.edgar, "edgar_json", broken)
+
+    evidence = filing_evidence.build_filing_evidence("AAPL", store=store)
+    gate = filing_gate({}, {}, evidence)
+
+    assert evidence.reason == "SEC request failed with HTTP 429"
+    assert evidence.cik is None
+    assert evidence.facts == {}
+    assert evidence.hits == ()
+    assert evidence.guidance_hits == ()
+    assert len(gate.checks) == 1
+    assert gate.checks[0].id == "filings.primary"
+    assert gate.checks[0].status == "unverified"
+    assert gate.checks[0].value == evidence.reason
+    assert gate.checks[0].evidence == evidence.reason
+
+
+def test_evidence_build_without_user_agent_makes_no_requests(
+    monkeypatch: pytest.MonkeyPatch, store: SQLiteStore
+) -> None:
+    monkeypatch.delenv("EDGAR_USER_AGENT", raising=False)
+    fetch, calls = fetch_recorder(FakeResponse(COMPANY_TICKERS))
+
+    evidence = filing_evidence.build_filing_evidence("AAPL", store=store, fetch=fetch)
+
+    assert evidence.reason == "EDGAR_USER_AGENT not configured"
+    assert evidence.facts == {}
+    assert evidence.hits == ()
+    assert calls == []
+
+
+def test_unknown_cik_is_unverified(store: SQLiteStore) -> None:
+    fetch, _ = fetch_recorder(FakeResponse(COMPANY_TICKERS))
+
+    evidence = filing_evidence.build_filing_evidence("ZZZZ", store=store, fetch=fetch)
+
+    assert evidence.reason == "no CIK"
+    assert evidence.facts == {}
+    assert filing_gate({}, {}, evidence).checks[0].value == "no CIK"
+
+
+def test_build_evidence_sweeps_facts_hits_and_guidance(store: SQLiteStore) -> None:
+    calls: list[tuple[str, dict[str, str], float]] = []
+
+    def fetch(url: str, headers: dict[str, str], timeout: float) -> FakeResponse:
+        calls.append((url, headers, timeout))
+        if url.startswith("https://data.sec.gov/api/xbrl/companyfacts/"):
+            return FakeResponse(SAMPLE_FACTS)
+        if url.startswith(edgar.TICKER_MAP_URL):
+            return FakeResponse(COMPANY_TICKERS)
+        return FakeResponse(EFTS_HITS)
+
+    evidence = filing_evidence.build_filing_evidence("AAPL", store=store, fetch=fetch)
+
+    assert evidence.cik == CIK
+    assert evidence.reason is None
+    assert evidence.facts == SAMPLE_FACTS
+    # The amended 10-K is ignored; the newest 10-Q date comes from a Q2 fact.
+    assert evidence.latest_10k == "2026-02-15"
+    assert evidence.latest_10q == "2026-08-01"
+    assert {hit["phrase"] for hit in evidence.hits} == set(
+        RED_FLAG_PHRASES + INFORMATIONAL_PHRASES
+    )
+    assert {hit["phrase"] for hit in evidence.guidance_hits} == set(GUIDANCE_PHRASES)
+    assert store.cache_get(f"edgar:{CIK}:companyfacts") == SAMPLE_FACTS
+    assert all(call[1] == {"User-Agent": USER_AGENT} for call in calls)
+    assert any("forms=8-K%2C10-Q" in call[0] for call in calls)

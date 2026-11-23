@@ -16,6 +16,7 @@ import math
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import date, datetime
 from typing import Any, Literal
 
@@ -55,6 +56,29 @@ class Dossier:
     red_flags: tuple[str, ...]
     provenance: tuple[tuple[str, str, str], ...]
     coverage: float
+
+
+@dataclass(frozen=True)
+class FilingEvidence:
+    """Fetched filing facts and phrase hits, supplied to the pure filing gate.
+
+    The dossier owns this shape so it never imports an I/O module. ``reason`` is
+    set when SEC data could not be fetched or trusted; in that case the gate
+    reports one unverified check rather than pretending the filings are clean.
+    """
+
+    cik: str | None = None
+    facts: Mapping[str, Any] = dataclass_field(default_factory=dict)
+    hits: tuple[Mapping[str, Any], ...] = ()
+    latest_10k: str | None = None
+    latest_10q: str | None = None
+    guidance_hits: tuple[Mapping[str, Any], ...] = ()
+    reason: str | None = None
+
+    @classmethod
+    def empty(cls) -> FilingEvidence:
+        """Evidence placeholder for callers that supplied no filing evidence."""
+        return cls(reason="No filing evidence supplied")
 
 
 def gate_status(checks: Sequence[Check]) -> Status:
@@ -658,6 +682,156 @@ def forward_gate(
         label="Forward evidence",
         checks=tuple(checks),
         summary=summary,
+    )
+
+
+# ── Filing evidence ───────────────────────────────────────────────────
+# Phrases and thresholds are named here, next to the deterministic gate, so the
+# I/O layer sweeps exactly the phrases the gate reports.
+RED_FLAG_PHRASES = (
+    "material weakness",
+    "going concern",
+    "covenant",
+    "restatement",
+    "SEC investigation",
+)
+INFORMATIONAL_PHRASES = (
+    "customer concentration",
+    "litigation",
+    "regulatory",
+    "related party",
+)
+GUIDANCE_PHRASES = ("guidance", "outlook")
+FRESHNESS_MAX_DAYS = {"10-K": 400, "10-Q": 120}
+PHRASE_NOTE = "phrase search is evidence, not proof"
+ABSENCE_NOTE = "absence of a phrase is not proof"
+
+
+def _phrase_check_id(phrase: str) -> str:
+    return f"filings.{phrase.casefold().replace(' ', '_')}"
+
+
+def _matching_hits(
+    hits: Iterable[Mapping[str, Any]], phrase: str
+) -> list[Mapping[str, Any]]:
+    wanted = phrase.casefold()
+    return [
+        hit
+        for hit in hits
+        if isinstance(hit, Mapping)
+        and str(hit.get("phrase") or "").casefold() == wanted
+    ]
+
+
+def _phrase_check(
+    phrase: str, hits: Iterable[Mapping[str, Any]], *, informational: bool = False
+) -> Check:
+    """One phrase search: red-flag phrases pass or fail, the rest never pass.
+
+    A hit is evidence to read, not a verdict about the business, so every hit
+    carries its filing date and link; no prose is scored.
+    """
+    matching = _matching_hits(hits, phrase)
+    count = matching[0].get("count", 0) if matching else 0
+    value = f"{count} hit(s)" if matching else "no hits"
+    links = ", ".join(
+        f"{hit.get('filing_date') or 'unknown date'} "
+        f"{hit.get('accession') or 'unknown accession'} "
+        f"{hit.get('url') or 'no filing link'}"
+        for hit in matching
+    )
+    if informational:
+        status: Status = "unverified"
+        evidence = f"{phrase}: {PHRASE_NOTE}; {links or 'no hits'}"
+        threshold = PHRASE_NOTE
+    elif matching:
+        status = "fail"
+        evidence = f"{phrase}: {links}"
+        threshold = "no phrase hits in 10-K/10-Q"
+    else:
+        status = "pass"
+        evidence = f"{phrase}: {ABSENCE_NOTE}"
+        threshold = "no phrase hits in 10-K/10-Q"
+    return Check(
+        _phrase_check_id(phrase),
+        f"Filing mentions '{phrase}'",
+        status,
+        value,
+        threshold,
+        evidence,
+    )
+
+
+def _freshness_check(evidence: FilingEvidence, today: date) -> Check:
+    """Compare the newest 10-K and 10-Q filing dates with fixed day limits."""
+    parts: list[str] = []
+    outcomes: list[bool | None] = []
+    for form, raw in (("10-K", evidence.latest_10k), ("10-Q", evidence.latest_10q)):
+        limit = FRESHNESS_MAX_DAYS[form]
+        filed = _as_date(raw)
+        if filed is None:
+            parts.append(f"{form}: no filing date")
+            outcomes.append(None)
+            continue
+        age = (today - filed).days
+        outcomes.append(age <= limit)
+        parts.append(f"{form} filed {filed.isoformat()} ({age}d old)")
+    if any(outcome is None for outcome in outcomes):
+        status: Status = "unverified"
+    elif all(outcome for outcome in outcomes):
+        status = "pass"
+    else:
+        status = "fail"
+    value = "; ".join(parts)
+    if status == "fail":
+        value += "; stale filings"
+    return Check(
+        "filings.freshness",
+        "Primary filings are current",
+        status,
+        value,
+        f"10-K <= {FRESHNESS_MAX_DAYS['10-K']} days, "
+        f"10-Q <= {FRESHNESS_MAX_DAYS['10-Q']} days",
+        "companyfacts 10-K/10-Q filing dates",
+    )
+
+
+def filing_gate(
+    row: Mapping[str, Any],
+    statements: Mapping[str, Any],
+    evidence: FilingEvidence,
+    *,
+    today: object = None,
+) -> Gate:
+    """Gate 3: verify vendor figures against filings and sweep them for red flags."""
+    if evidence.reason:
+        check = Check(
+            "filings.primary",
+            "Primary filing evidence",
+            "unverified",
+            evidence.reason,
+            "Verified filing text",
+            evidence.reason,
+        )
+        return Gate("filings", "Filings & guidance", (check,), evidence.reason)
+
+    # Imported here rather than at module scope: edgar_parse imports Check from
+    # this module, and the dossier itself stays free of I/O dependencies.
+    from stonks.edgar_parse import filing_checks
+
+    facts = evidence.facts if isinstance(evidence.facts, Mapping) else {}
+    checks, _conflicts = filing_checks(row, statements, facts)
+    checks.extend(_phrase_check(phrase, evidence.hits) for phrase in RED_FLAG_PHRASES)
+    checks.append(_freshness_check(evidence, _as_date(today) or date.today()))
+    checks.extend(
+        _phrase_check(phrase, evidence.hits, informational=True)
+        for phrase in INFORMATIONAL_PHRASES
+    )
+    return Gate(
+        "filings",
+        "Filings & guidance",
+        tuple(checks),
+        _gate_summary("filings", checks),
     )
 
 
