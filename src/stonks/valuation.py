@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import math
 
+from stonks.config import CYCLICAL_INDUSTRIES
+
 # GuruFocus DCF defaults.
 DCF_GROWTH_YEARS = 10
 DCF_TERMINAL_YEARS = 10
@@ -116,6 +118,82 @@ def lynch_fair_value(eps: object, growth_rate_pct: object) -> float | None:
     if growth < LYNCH_MIN_GROWTH_PCT:
         return None
     return earnings * min(growth, LYNCH_MAX_GROWTH_PCT)
+
+
+def evaluate_cyclical_peak_risk(
+    industry: object,
+    ev_to_ebitda: object,
+    roic_5y_avg_pct: object,
+    fcf_growth_5y_pct: object,
+) -> int:
+    """Flag a cyclical industry trading on a low multiple with peak returns.
+
+    A compressed EV/EBITDA multiple beside peak trailing returns is the classic
+    peak-earnings trap: the denominator is temporarily inflated, so the stock
+    looks cheap at exactly the wrong moment.
+    """
+    sector = str(industry or "")
+    if sector not in CYCLICAL_INDUSTRIES:
+        return 0
+    ev = _number(ev_to_ebitda)
+    roic = _number(roic_5y_avg_pct)
+    fcf_growth = _number(fcf_growth_5y_pct)
+    if ev is None or ev >= 8.0:
+        return 0
+    if (roic is not None and roic > 20.0) or (
+        fcf_growth is not None and fcf_growth > 25.0
+    ):
+        return 1
+    return 0
+
+
+def evaluate_valuation_triangulation(
+    dcf_upside: object,
+    lynch_upside: object,
+    pt_upside: object,
+    peg_ratio: object,
+    cyclical_risk: int,
+) -> tuple[str, float | None]:
+    """Classify how many valuation models agree and cap the display upside.
+
+    Returns:
+        The consensus label and the mean of the available model upsides,
+        capped at 150% so a multi-year cyclical outlier cannot dominate a
+        ranking.
+    """
+    dcf = _number(dcf_upside)
+    lynch = _number(lynch_upside)
+    pt = _number(pt_upside)
+    peg = _number(peg_ratio)
+
+    valid_upsides = [u for u in (dcf, lynch, pt) if u is not None]
+    if not valid_upsides:
+        return "Unrated / Insufficient Data", None
+
+    capped_upside = min(sum(valid_upsides) / len(valid_upsides), 150.0)
+
+    if cyclical_risk == 1:
+        return "Cyclical Distorted", capped_upside
+
+    signals = sum(
+        [
+            dcf is not None and dcf > 15.0,
+            lynch is not None and lynch > 15.0,
+            pt is not None and pt > 15.0,
+            peg is not None and 0 < peg <= 1.5,
+        ]
+    )
+
+    if any(u > 150.0 for u in valid_upsides) and signals <= 1:
+        return "Model Divergence / Outlier", capped_upside
+
+    if len(valid_upsides) < 2:
+        return "Unrated / Insufficient Data", capped_upside
+    if signals >= 3:
+        return "Strong Consensus", capped_upside
+    if signals == 2:
+        return "Moderate Value", capped_upside
+    return "Model Divergence / Outlier", capped_upside
 
 
 def upside_pct(fair_value: object, price: object) -> float | None:

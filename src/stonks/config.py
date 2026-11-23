@@ -232,6 +232,25 @@ NUMERIC_FILTER_COLUMNS: list[str] = [
     "hedge_fund_buys",
 ]
 
+# ── Investment logic ─────────────────────────────────────────────────
+# Industries where a low multiple on peak trailing earnings is a trap, not value.
+CYCLICAL_INDUSTRIES: frozenset[str] = frozenset(
+    {
+        "Metals & Mining",
+        "Gold",
+        "Silver",
+        "Agricultural Inputs",
+        "Chemicals",
+        "Semiconductors",
+        "Semiconductor Equipment & Materials",
+        "Engineering & Construction",
+        "Oil & Gas E&P",
+        "Oil & Gas Refining & Marketing",
+        "Steel",
+        "Building Products & Equipment",
+    }
+)
+
 # ── Enum filter columns ─────────────────────────────────────────────
 ENUM_FILTER_COLUMNS: list[str] = [
     "exchange",
