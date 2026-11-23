@@ -26,7 +26,7 @@
 - 💾 **Saved Configurations** — Save your complex filter setups for later use.
 - 🔍 **Symbol Detail Pages** — Click any screener or watchlist row for an in-app page with Overview, Financials (annual and quarterly statements), Statistics, Metrics, and Forecast, fetched live from StockAnalysis and cached per symbol.
 - 🔔 **Watchlist Alerts** — The worker flags watched symbols that get cheap, drop or jump sharply, or hit the news, and the app shows them in a banner plus a badge on the Watchlist tab.
-- 🧪 **Portfolio Backtest** — Weight a handful of tickers and see CAGR, volatility, max drawdown, best/worst year and a growth curve over up to ten years of adjusted monthly closes, with or without periodic rebalancing. Portfolio Visualizer is linked for deeper analysis.
+- 🧪 **Portfolio Backtest** — Allocate a handful of tickers by percentage or fixed sums, add recurring contributions on a chosen cadence, and let holdings rebalance or drift. See CAGR, money-weighted return when contributions are active, volatility, max drawdown, best/worst year and a growth curve over up to ten years of adjusted monthly closes. Amounts are used as-is with no currency conversion. Portfolio Visualizer is linked for deeper analysis.
 - 🛡️ **Reference-Site Cross-Checks** — Every twelve hours the worker re-runs the reference implementations (the 36-symbol StockAnalysis default screen, HedgeFollow's largest buys, the GuruFocus DCF/Lynch models and a Portfolio Visualizer 60/40 backtest) and shows a banner naming any platform that diverged, with the numbers.
 - 📥 **Export Ready** — Download your results or watchlist to CSV.
 
