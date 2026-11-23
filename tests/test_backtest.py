@@ -12,6 +12,7 @@ from stonks.backtest import (
     simulate,
 )
 from stonks.backtest_view import (
+    _portfolio_rows,
     default_settings,
     parse_portfolio,
     parse_symbols,
@@ -358,3 +359,32 @@ def test_run_backtest_rejects_mismatched_contributions(tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     store.cache_set("hist:AAA:10Y:Monthly", {"2020-01": 1.0, "2020-02": 2.0}, 3600)
     assert "error" in run_backtest(store, ["AAA"], contributions=[1.0, 2.0])
+
+
+def test_parse_portfolio_amount_mode_requires_every_amount() -> None:
+    rows = [
+        {"Allocation": "vuaa", "Amount": 600},
+        {"Allocation": "NVDA", "Amount": 400},
+    ]
+    assert parse_portfolio(rows, mode="amount") == (["VUAA", "NVDA"], [600.0, 400.0])
+    with pytest.raises(ValueError):
+        parse_portfolio(
+            [{"Allocation": "VUAA", "Amount": 600}, {"Allocation": "NVDA"}],
+            mode="amount",
+        )
+
+
+def test_new_settings_round_trip_and_old_settings_default() -> None:
+    settings = default_settings()
+    assert settings["allocation_mode"] == "percent"
+    assert settings["contribution"] == 0.0
+    assert settings["contribution_frequency"] == "monthly"
+    rows = _portfolio_rows(settings)
+    assert "Allocation" in rows[0]
+    legacy = {
+        "symbols": ["AAA"],
+        "weights": [60.0],
+        "benchmark": "",
+        "rebalance": "none",
+    }
+    assert _portfolio_rows(legacy)[0]["Allocation"] == 60.0

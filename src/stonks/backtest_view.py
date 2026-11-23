@@ -16,7 +16,7 @@ from typing import Any
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
-from stonks.backtest import REBALANCE_LABELS, run_backtest
+from stonks.backtest import CONTRIBUTION_MONTHS, REBALANCE_LABELS, run_backtest
 from stonks.detail_view import sparkline_svg
 from stonks.store import SQLiteStore
 
@@ -29,6 +29,9 @@ _PENDING_LOAD_KEY = "backtest_pending_load"
 _SAVE_NAME_KEY = "backtest_save_name"
 _WIDGET_KEYS = (
     "bt_editor",
+    "bt_allocation_mode",
+    "bt_contribution",
+    "bt_contribution_frequency",
     "bt_benchmark",
     "bt_initial",
     "bt_start",
@@ -36,6 +39,11 @@ _WIDGET_KEYS = (
     "bt_rebalance",
 )
 _LABEL_TO_KEY = {label: key for key, label in REBALANCE_LABELS.items()}
+_ALLOCATION_MODES = {"percent": "Percent", "amount": "Fixed amount"}
+
+
+def _cadence_label(key: str) -> str:
+    return "None" if key == "none" else REBALANCE_LABELS[key]
 
 
 def parse_symbols(text: str) -> list[str]:
@@ -73,41 +81,61 @@ def parse_weights(text: str) -> list[float] | None:
 
 
 def parse_portfolio(
-    rows: list[dict[str, Any]],
+    rows: list[dict[str, Any]], mode: str = "percent"
 ) -> tuple[list[str], list[float] | None]:
-    """Read the portfolio editor's rows into symbols and optional weights.
+    """Read the portfolio editor's rows into symbols and allocations.
 
-    Blank weights mean equal weight when the whole column is blank.
+    Percent mode treats blank cells as equal weight when the whole column is
+    blank. Amount mode requires a positive sum in every row.
 
     Raises:
-        ValueError: when a symbol repeats or only some rows carry a weight.
+        ValueError: when a symbol repeats or an allocation is missing or invalid.
     """
+    if mode not in _ALLOCATION_MODES:
+        raise ValueError(f"Unknown allocation mode: {mode}")
+    keys = (
+        ("Amount", "Allocation", "Weight %")
+        if mode == "amount"
+        else (
+            "Allocation",
+            "Weight %",
+            "Amount",
+        )
+    )
     symbols: list[str] = []
-    weights: list[float | None] = []
+    values: list[float | None] = []
     for row in rows:
-        symbol = str(row.get("Symbol") or "").strip().upper()
+        raw_symbol = row.get("Symbol")
+        if raw_symbol is None or str(raw_symbol).strip() == "":
+            raw_symbol = row.get("Allocation")
+        symbol = str(raw_symbol).strip().upper() if isinstance(raw_symbol, str) else ""
         if not symbol:
             continue
         if symbol in symbols:
             raise ValueError(f"{symbol} appears twice.")
-        raw = row.get("Weight %")
-        weight: float | None
+        raw = next((row[key] for key in keys if key in row), None)
+        value: float | None
         if raw is None or (isinstance(raw, float) and pd.isna(raw)) or raw == "":
-            weight = None
+            value = None
         else:
-            weight = float(raw)
-            if weight <= 0:
-                raise ValueError(f"Weight for {symbol} must be positive.")
+            value = float(raw)
+            if value <= 0:
+                label = "Amount" if mode == "amount" else "Weight"
+                raise ValueError(f"{label} for {symbol} must be positive.")
         symbols.append(symbol)
-        weights.append(weight)
+        values.append(value)
 
     if not symbols:
         raise ValueError("Add at least one symbol.")
-    if all(weight is None for weight in weights):
+    if mode == "amount":
+        if any(value is None for value in values):
+            raise ValueError("Give an amount for every symbol.")
+        return symbols, values  # type: ignore[return-value]
+    if all(value is None for value in values):
         return symbols, None
-    if any(weight is None for weight in weights):
+    if any(value is None for value in values):
         raise ValueError("Give a weight for every symbol, or leave them all blank.")
-    return symbols, weights  # type: ignore[return-value]
+    return symbols, values  # type: ignore[return-value]
 
 
 def default_settings() -> dict[str, Any]:
@@ -120,6 +148,9 @@ def default_settings() -> dict[str, Any]:
         "start": dt.date(2017, 1, 1),
         "end": dt.date.today(),
         "rebalance": "annual",
+        "allocation_mode": "percent",
+        "contribution": 0.0,
+        "contribution_frequency": "monthly",
     }
 
 
@@ -130,8 +161,11 @@ def _settings_from_widgets(
     start: dt.date,
     end: dt.date,
     rebalance: str,
+    allocation_mode: str,
+    contribution: float,
+    contribution_frequency: str,
 ) -> dict[str, Any]:
-    symbols, weights = parse_portfolio(rows)
+    symbols, weights = parse_portfolio(rows, mode=allocation_mode)
     return {
         "symbols": symbols,
         "weights": weights,
@@ -140,15 +174,32 @@ def _settings_from_widgets(
         "start": start,
         "end": end,
         "rebalance": rebalance,
+        "allocation_mode": allocation_mode,
+        "contribution": float(contribution),
+        "contribution_frequency": contribution_frequency,
     }
 
 
 def _portfolio_rows(settings: dict[str, Any]) -> list[dict[str, Any]]:
     weights = settings.get("weights") or [None] * len(settings["symbols"])
     return [
-        {"Symbol": symbol, "Weight %": weight}
+        {"Symbol": symbol, "Allocation": weight}
         for symbol, weight in zip(settings["symbols"], weights, strict=True)
     ]
+
+
+def _contribution_amounts(settings: dict[str, Any]) -> list[float] | None:
+    """Split the configured cash arrival across the portfolio's symbols."""
+    if settings.get("contribution_frequency", "none") == "none":
+        return None
+    weights = settings.get("weights") or [1.0] * len(settings["symbols"])
+    if settings.get("allocation_mode") == "amount":
+        return [float(weight) for weight in weights]
+    total = float(settings.get("contribution") or 0.0)
+    if total <= 0:
+        return None
+    weight_total = sum(weights)
+    return [total * weight / weight_total for weight in weights]
 
 
 def _as_date(value: Any, fallback: dt.date) -> dt.date:
@@ -163,13 +214,27 @@ def _as_date(value: Any, fallback: dt.date) -> dt.date:
 def _describe_settings(settings: dict[str, Any]) -> str:
     """One-line summary for a saved portfolio card."""
     weights = settings.get("weights")
-    if weights:
+    amount_mode = settings.get("allocation_mode") == "amount"
+    if weights and amount_mode:
+        allocation = " · ".join(
+            f"{symbol} {weight:g}"
+            for symbol, weight in zip(settings["symbols"], weights)
+        )
+    elif weights:
         allocation = " · ".join(
             f"{symbol} {weight:g}%"
             for symbol, weight in zip(settings["symbols"], weights)
         )
     else:
         allocation = " · ".join(f"{symbol} equal" for symbol in settings["symbols"])
+    frequency = settings.get("contribution_frequency", "none")
+    if frequency != "none":
+        amounts = _contribution_amounts(settings)
+        total = sum(amounts) if amounts else 0.0
+        cadence = "off" if total == 0 else _cadence_label(frequency).lower()
+        allocation += f" · {total:g} {cadence}"
+        if amount_mode:
+            allocation += " (fixed amounts)"
     benchmark = f" — vs {settings['benchmark']}" if settings.get("benchmark") else ""
     return f"{allocation}{benchmark}"
 
@@ -408,12 +473,25 @@ def render_backtest_tab(store: SQLiteStore) -> None:
             "end": _as_date(pending.get("end"), dt.date.today()),
         }
     settings = st.session_state.get(_SETTINGS_KEY) or default_settings()
+    if settings.get("allocation_mode") not in _ALLOCATION_MODES:
+        settings["allocation_mode"] = "percent"
 
     _render_saved(store)
 
+    mode_options = list(_ALLOCATION_MODES)
+    mode_labels = list(_ALLOCATION_MODES.values())
+    mode_label = st.radio(
+        "Allocation mode",
+        mode_labels,
+        index=mode_options.index(settings["allocation_mode"]),
+        key="bt_allocation_mode",
+    )
+    current_mode = mode_options[mode_labels.index(mode_label)]
+    amount_mode = current_mode == "amount"
+
     rows = pd.DataFrame(
         _portfolio_rows(settings),
-        columns=["Symbol", "Weight %"],
+        columns=["Symbol", "Allocation"],
     )
     with st.form("backtest_form"):
         edited = st.data_editor(
@@ -426,14 +504,39 @@ def render_backtest_tab(store: SQLiteStore) -> None:
                 "Symbol": st.column_config.TextColumn(
                     "Symbol", help="Ticker, e.g. VUAA", required=True
                 ),
-                "Weight %": st.column_config.NumberColumn(
-                    "Weight %",
-                    help="Optional; blank means equal weight",
+                "Allocation": st.column_config.NumberColumn(
+                    "Amount per contribution" if amount_mode else "Weight %",
+                    help=(
+                        "Positive sum added at every contribution"
+                        if amount_mode
+                        else "Optional; blank means equal weight"
+                    ),
                     min_value=0.0,
-                    step=5.0,
+                    step=100.0 if amount_mode else 5.0,
                     format="%g",
                 ),
             },
+        )
+        contribution_col, frequency_col = st.columns(2)
+        contribution = contribution_col.number_input(
+            "Contribution per period",
+            min_value=0.0,
+            value=float(settings.get("contribution", 0.0)),
+            step=100.0,
+            disabled=amount_mode,
+            help="Split across the portfolio in percent mode",
+            key="bt_contribution",
+        )
+        frequency_options = list(CONTRIBUTION_MONTHS)
+        saved_frequency = settings.get("contribution_frequency", "monthly")
+        frequency = frequency_col.selectbox(
+            "Contribution cadence",
+            frequency_options,
+            index=frequency_options.index(saved_frequency)
+            if saved_frequency in frequency_options
+            else frequency_options.index("monthly"),
+            format_func=_cadence_label,
+            key="bt_contribution_frequency",
         )
         benchmark_col, initial_col = st.columns(2)
         benchmark = benchmark_col.text_input(
@@ -443,9 +546,10 @@ def render_backtest_tab(store: SQLiteStore) -> None:
         )
         initial = initial_col.number_input(
             "Initial amount",
-            min_value=100.0,
+            min_value=0.0,
             value=float(settings.get("initial", 10_000.0)),
             step=1_000.0,
+            help="May be zero when only recurring contributions are used",
         )
         start_col, end_col, rebalance_col = st.columns(3)
         start = start_col.date_input(
@@ -470,15 +574,24 @@ def render_backtest_tab(store: SQLiteStore) -> None:
                 start,
                 end,
                 _LABEL_TO_KEY[rebalance_label],
+                current_mode,
+                float(contribution),
+                frequency,
             )
             if start > end:
                 raise ValueError("The start date is after the end date.")
+            contributions = _contribution_amounts(current)
+            current["contribution"] = (
+                float(sum(contributions)) if contributions else 0.0
+            )
+            if current["initial"] <= 0 and not contributions:
+                raise ValueError("Add an initial amount or a recurring contribution.")
         except ValueError as exc:
             st.session_state[_RESULT_KEY] = None
             st.error(str(exc))
         else:
             with st.spinner("Backtesting…"):
-                st.session_state[_RESULT_KEY] = run_backtest(
+                result = run_backtest(
                     store,
                     current["symbols"],
                     current["weights"],
@@ -487,7 +600,11 @@ def render_backtest_tab(store: SQLiteStore) -> None:
                     end=end.isoformat(),
                     initial=current["initial"],
                     benchmark=current["benchmark"] or None,
+                    contributions=contributions,
+                    frequency=frequency,
                 )
+                result["allocation_mode"] = current_mode
+                st.session_state[_RESULT_KEY] = result
             st.session_state[_SETTINGS_KEY] = current
 
     result = st.session_state.get(_RESULT_KEY)
