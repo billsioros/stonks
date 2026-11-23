@@ -172,17 +172,15 @@ for column_name, column_type in new_columns:
 * **Capped Display Upside**:
   `valuation_upside_capped_pct`: min(average of available upsides, 150.0). Keeps sorting and charts meaningful.
 
-### 3.3 Presets Strategy: Reference Screen Untouched + New Disciplined Preset
-* **Untouched Reference Preset**:
-  `"💎 The Quality Screen"` retains its exact original 14 filters (including `shares_insiders_pct: {"min": 0.000001}`), guaranteeing that `default_screen()` and `check_stockanalysis` (36 symbols) pass without drift.
-* **New Enhanced Preset: `"🛡️ Disciplined Quality Compounders"`**:
-  - `fcf_margin_pct`: `{"min": 5.0}` (eliminates paper earnings).
-  - `current_ratio`: `{"min": 1.0}` (eliminates liquidity stress).
-  - `short_pct`: `{"max": 10.0}` (avoids collapse bets).
-  - `debt_to_equity`: `{"max": 1.0}` (prudent leverage).
-  - `shares_insiders_percent`: `{"min": 0.01}` (> 0% insider ownership on the true percentage scale).
-  - `cyclical_peak_risk`: `{"max": 0}` (filters out peak cyclical traps).
-  - `sort_column`: `"ev_to_ebitda"`, `sort_ascending`: `True`.
+### 3.3 Presets & View Integration: Streamlined Side-by-Side Views
+* **No Redundant Presets**: Avoid preset sprawl. Keep `"💎 The Quality Screen"` with its exact 14 filters, preserving the StockAnalysis 36-symbol sanity check benchmark.
+* **Side-by-Side View Presets (`src/stonks/config.py`)**:
+  - Update `"Quality"` and `"Overview"` view presets in `VIEW_PRESETS` to include:
+    - `cyclical_peak_risk` (renders ⚠️ badge on peak cyclical traps).
+    - `valuation_triangulation` (renders consensus / outlier label).
+    - `shares_insiders_percent` (percentage) alongside `shares_insiders_pct` (ratio).
+    - Existing guardrail metrics (`fcf_margin_pct`, `current_ratio`, `short_pct`).
+  - Users can filter by any of these metrics on demand via the `"➕ Add Filter"` menu without needing separate presets.
 
 ### 3.4 13F Whale Indicator Contextualization
 * UI header labeled **"13F Whale"** with tooltip explaining 45-day lag and institutional crowding; treating `0` as neutral.
