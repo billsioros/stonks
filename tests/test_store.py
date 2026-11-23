@@ -408,3 +408,49 @@ def test_get_stocks_handles_zero_and_negative_page_size(tmp_path) -> None:
     rows_neg, pages_neg, total_neg = store.get_stocks(page_size=-10)
     assert len(rows_neg) == 1
     assert pages_neg == 1
+
+
+def test_unknown_filter_column_records_warning_and_skips(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"market_cap": 3000.0})
+    result = store.get_stocks(filters={"non_existent_column": {"min": 10}})
+    rows, _, total = result
+    assert total == 1
+    assert any("non_existent_column" in w for w in result.warnings)
+
+
+def test_empty_enum_values_matches_zero_rows(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"exchange": "NMS"})
+    result = store.get_stocks(filters={"symbol": {"values": []}})
+    rows, _, total = result
+    assert total == 0
+    assert len(rows) == 0
+
+
+def test_inverted_bounds_records_warning_and_matches_nothing(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"pe_ratio": 25.0})
+    result = store.get_stocks(filters={"pe_ratio": {"min": 50, "max": 10}})
+    rows, _, total = result
+    assert total == 0
+    assert any("min" in w and "max" in w for w in result.warnings)
+
+
+def test_non_finite_numeric_bounds_ignored_with_warning(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    store.save_stock("AAPL", {"pe_ratio": 25.0})
+    result = store.get_stocks(filters={"pe_ratio": {"min": float("nan")}})
+    rows, _, total = result
+    assert total == 1
+    assert any("non-finite" in w.lower() for w in result.warnings)
+
+
+def test_all_filter_and_sort_columns_exist_in_schema(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    with store._connect() as conn:
+        schema_cols = {row[1] for row in conn.execute("PRAGMA table_info(stocks)")}
+    from stonks.config import NUMERIC_FILTER_COLUMNS, ENUM_FILTER_COLUMNS
+
+    assert set(NUMERIC_FILTER_COLUMNS) <= schema_cols
+    assert set(ENUM_FILTER_COLUMNS) <= schema_cols

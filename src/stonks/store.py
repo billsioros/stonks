@@ -1,6 +1,7 @@
 """SQLiteStore — persists saved screens and watchlists."""
 
 import json
+import math
 import sqlite3
 import time
 from pathlib import Path
@@ -95,6 +96,23 @@ STOCK_FIELDS = [
     *VALUATION_COLUMNS,
     *FLAG_COLUMNS,
 ]
+
+
+def _finite_bound(
+    column: str, value: Any, bound: str, warnings: list[str]
+) -> float | None:
+    """Coerce one filter bound to a finite float, recording why it was dropped."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except (ValueError, TypeError):
+        warnings.append(f"Ignored non-numeric {bound} bound on '{column}'")
+        return None
+    if not math.isfinite(number):
+        warnings.append(f"Ignored non-finite {bound} bound on '{column}'")
+        return None
+    return number
 
 
 class StockQueryResult(tuple[Any, ...]):
@@ -778,17 +796,44 @@ class SQLiteStore:
 
         if filters:
             for col, spec in filters.items():
+                if not isinstance(spec, dict):
+                    warnings.append(
+                        f"Invalid filter specification for '{col}': expected dict"
+                    )
+                    continue
                 if col in numeric_columns:
-                    if "min" in spec and spec["min"] is not None:
-                        where_clauses.append(f"{col} >= ?")
-                        params.append(spec["min"])
-                    if "max" in spec and spec["max"] is not None:
-                        where_clauses.append(f"{col} <= ?")
-                        params.append(spec["max"])
-                elif col in enum_columns and "values" in spec and spec["values"]:
-                    placeholders = ",".join(["?"] * len(spec["values"]))
-                    where_clauses.append(f"{col} IN ({placeholders})")
-                    params.extend(spec["values"])
+                    parsed_min = _finite_bound(col, spec.get("min"), "min", warnings)
+                    parsed_max = _finite_bound(col, spec.get("max"), "max", warnings)
+
+                    if (
+                        parsed_min is not None
+                        and parsed_max is not None
+                        and parsed_min > parsed_max
+                    ):
+                        warnings.append(
+                            f"Filter '{col}' has min ({parsed_min}) > max "
+                            f"({parsed_max}); matches 0 rows"
+                        )
+                        where_clauses.append("1=0")
+                    else:
+                        if parsed_min is not None:
+                            where_clauses.append(f"{col} >= ?")
+                            params.append(parsed_min)
+                        if parsed_max is not None:
+                            where_clauses.append(f"{col} <= ?")
+                            params.append(parsed_max)
+                elif col in enum_columns:
+                    if "values" in spec:
+                        values = spec["values"]
+                        if not values:
+                            # An empty selection means "none of them", not "all".
+                            where_clauses.append("1=0")
+                        else:
+                            placeholders = ",".join(["?"] * len(values))
+                            where_clauses.append(f"{col} IN ({placeholders})")
+                            params.extend(values)
+                else:
+                    warnings.append(f"Ignored unknown filter column: '{col}'")
 
         if search_query:
             q = f"%{search_query.strip().upper()}%"
