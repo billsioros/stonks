@@ -46,6 +46,16 @@ def _cadence_label(key: str) -> str:
     return "None" if key == "none" else REBALANCE_LABELS[key]
 
 
+def format_allocation(result: dict[str, Any]) -> str:
+    """Allocation caption for a backtest result, in either allocation mode."""
+    if result.get("allocation_mode") == "amount":
+        amounts = result.get("contributions") or {}
+        parts = [f"{symbol} {amount:g}" for symbol, amount in amounts.items()]
+        return f"{' · '.join(parts)} per contribution" if parts else ""
+    weights = result.get("weights") or {}
+    return " · ".join(f"{symbol} {weight:g}%" for symbol, weight in weights.items())
+
+
 def parse_symbols(text: str) -> list[str]:
     """Split a comma/space separated ticker list, upper-cased and de-duplicated."""
     symbols: list[str] = []
@@ -320,24 +330,30 @@ def _render_result(result: dict[str, Any]) -> None:
         st.warning(result["error"])
         return
 
-    allocation = " · ".join(
-        f"{symbol} {weight:.0f}%" for symbol, weight in result["weights"].items()
-    )
+    allocation = format_allocation(result)
+    frequency = result.get("frequency", "none")
+    active = frequency != "none" and result.get("contribution", 0.0) > 0
+    contributions = f" · {_cadence_label(frequency)} contributions" if active else ""
     benchmark = result.get("benchmark")
     comparison = f" · vs {benchmark['symbol']}" if benchmark else ""
     st.caption(
         f"{result['start']} → {result['end']} · {allocation} · "
-        f"{REBALANCE_LABELS[result['rebalance']]} · "
-        f"${result['initial']:,.0f} invested{comparison}"
+        f"{REBALANCE_LABELS[result['rebalance']]}{contributions} · "
+        f"${result['invested']:,.0f} invested{comparison}"
     )
     if result.get("benchmark_error"):
         st.warning(result["benchmark_error"])
 
     yearly = result["yearly"]
+    prefix = "Time-weighted " if active else ""
     pills = (
-        _pill("CAGR", f"{result['cagr_pct']:+.2f}%", _direction(result["cagr_pct"]))
+        _pill(
+            f"{prefix}CAGR",
+            f"{result['cagr_pct']:+.2f}%",
+            _direction(result["cagr_pct"]),
+        )
         + _pill(
-            "Total return",
+            f"{prefix}Total return",
             f"{result['total_return_pct']:+.1f}%",
             _direction(result["total_return_pct"]),
         )
@@ -360,6 +376,13 @@ def _render_result(result: dict[str, Any]) -> None:
             f"{result['best_year_pct']:+.1f}% / {result['worst_year_pct']:+.1f}%",
         )
     )
+    if active:
+        money_weighted = result.get("money_weighted_cagr_pct")
+        pills += _pill("Total invested", f"${result['invested']:,.0f}") + _pill(
+            "Money-weighted",
+            f"{money_weighted:+.2f}%" if money_weighted is not None else "—",
+            _direction(money_weighted),
+        )
     if benchmark:
         spread = result["cagr_pct"] - benchmark["cagr_pct"]
         pills += _pill(
@@ -408,9 +431,9 @@ def _render_result(result: dict[str, Any]) -> None:
         st.dataframe(rows, hide_index=True, use_container_width=True)
 
     st.caption(
-        "Dividends are reinvested and prices are adjusted closes. The same "
-        "portfolio can be reproduced on Portfolio Visualizer with the "
-        "allocation above."
+        "Dividends are reinvested and prices are adjusted closes. Returns are "
+        "time-weighted. The same portfolio can be reproduced on Portfolio "
+        "Visualizer with the allocation above."
     )
     st.link_button("Open in Portfolio Visualizer ↗", PORTFOLIO_VISUALIZER_URL)
 

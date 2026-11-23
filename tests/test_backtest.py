@@ -14,6 +14,7 @@ from stonks.backtest import (
 from stonks.backtest_view import (
     _portfolio_rows,
     default_settings,
+    format_allocation,
     parse_portfolio,
     parse_symbols,
     parse_weights,
@@ -359,6 +360,22 @@ def test_run_backtest_rejects_mismatched_contributions(tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     store.cache_set("hist:AAA:10Y:Monthly", {"2020-01": 1.0, "2020-02": 2.0}, 3600)
     assert "error" in run_backtest(store, ["AAA"], contributions=[1.0, 2.0])
+
+
+def test_format_allocation_for_both_modes() -> None:
+    assert (
+        format_allocation(
+            {
+                "allocation_mode": "amount",
+                "contributions": {"VUAA": 600.0, "NVDA": 400.0},
+            }
+        )
+        == "VUAA 600 · NVDA 400 per contribution"
+    )
+    assert (
+        format_allocation({"weights": {"VUAA": 60.0, "NVDA": 40.0}})
+        == "VUAA 60% · NVDA 40%"
+    )
 
 
 def test_parse_portfolio_amount_mode_requires_every_amount() -> None:
