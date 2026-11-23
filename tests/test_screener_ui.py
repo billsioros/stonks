@@ -57,6 +57,7 @@ def test_column_guide_explains_the_visible_columns() -> None:
     assert "divided by trailing twelve-month earnings per share" in guide
     assert "**13F Whale**" in guide
     assert "45 days" in guide
+    assert "crowding is not a signal on its own" in guide
 
 
 def test_column_guide_skips_unknown_columns() -> None:

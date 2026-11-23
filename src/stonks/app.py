@@ -1237,13 +1237,6 @@ def render_screener_table() -> None:
         heading="🤖 AI report",
         prompt=prompt,
     )
-    if "hedge_fund_buys" in visible_cols:
-        st.caption(
-            "🐋 **13F Whale** marks stocks in HedgeFollow's largest hedge-fund "
-            "buys. 13F filings lag up to 45 days and crowding is not a signal "
-            "on its own."
-        )
-
     selection = st.dataframe(
         display_df.style.apply(_row_style, axis=1),
         width="stretch",
