@@ -112,6 +112,24 @@ def test_monthly_prices_prefers_adjusted_close(tmp_path) -> None:
     assert store.cache_get("hist:AAA:10Y:Monthly") == prices
 
 
+def test_monthly_prices_maps_friendly_symbols_to_provider(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    payload = {"data": [{"t": "2020-01-01", "c": 100.0, "a": 100.0}]}
+    urls: list[str] = []
+
+    def fetch(url: str) -> dict:
+        urls.append(url)
+        return payload
+
+    prices = monthly_prices(store, "VUAA", fetch=fetch)
+
+    assert prices == {"2020-01": 100.0}
+    assert urls == [
+        "https://stockanalysis.com/api/symbol/s/voo/history?range=10Y&period=Monthly"
+    ]
+    assert store.cache_get("hist:VOO:10Y:Monthly") == prices
+
+
 def test_run_backtest_slices_the_window_and_reports_weights(tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     months = _months(2020, 30)

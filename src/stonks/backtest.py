@@ -48,9 +48,15 @@ REBALANCE_LABELS: dict[str, str] = {
 CONTRIBUTION_MONTHS: dict[str, int] = dict(REBALANCE_MONTHS)
 
 
+def provider_symbol(symbol: str) -> str:
+    """Resolve a user-facing ticker to the symbol the provider understands."""
+    ticker = symbol.strip().upper()
+    return SYMBOL_MAP.get(ticker, ticker)
+
+
 def monthly_url(symbol: str) -> str:
     """Build the monthly history URL for one symbol."""
-    return HISTORY_URL.format(symbol=symbol.strip().lower())
+    return HISTORY_URL.format(symbol=provider_symbol(symbol).lower())
 
 
 def monthly_prices(
@@ -63,7 +69,7 @@ def monthly_prices(
 
     Returns an empty mapping when the provider has no usable history.
     """
-    key = f"hist:{symbol.strip().upper()}:10Y:Monthly"
+    key = f"hist:{provider_symbol(symbol)}:10Y:Monthly"
     cached = store.cache_get(key)
     if isinstance(cached, dict) and cached:
         return dict(cached)  # type: ignore[arg-type]
@@ -283,9 +289,7 @@ def _benchmark_result(
     frequency: str,
 ) -> dict[str, Any]:
     """Grow the benchmark over the portfolio's months, for side-by-side stats."""
-    from stonks.backtest import SYMBOL_MAP
-
-    ticker = SYMBOL_MAP.get(benchmark.strip().upper(), benchmark.strip().upper())
+    ticker = provider_symbol(benchmark)
     series = monthly_prices(store, ticker)
     if not series:
         return {"benchmark_error": f"No monthly price history for {ticker}."}
