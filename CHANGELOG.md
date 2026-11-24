@@ -2,6 +2,83 @@
 
 <!-- version list -->
 
+## v2.6.0 (2026-11-24)
+
+### Bug Fixes
+
+- Close final review filing-verification gaps
+  ([`7ef8a52`](https://github.com/billsioros/stonks/commit/7ef8a52ee927aadb9f2332105ac13d52853ec468))
+
+- Close remaining deep-dive review minors
+  ([`23990bf`](https://github.com/billsioros/stonks/commit/23990bfb63f951128c3c22068a9b38c04ca1d139))
+
+- Fall back through XBRL tag aliases in filing checks
+  ([`b0dac9e`](https://github.com/billsioros/stonks/commit/b0dac9ee8250a4881c298c1b5c36fdc21c327fe8))
+
+- Harden sync failures, sanity checks, and dossier minors
+  ([`0fc60ba`](https://github.com/billsioros/stonks/commit/0fc60baaa1ed82f0659f87671da272ab64692301))
+
+- Keep known failures, carry filing conflicts, scope EFTS sweep
+  ([`18b8927`](https://github.com/billsioros/stonks/commit/18b8927c3454f3fe2c4d918200054e8f0d032998))
+
+- Make deep-dive gates and masthead badges trustworthy
+  ([`2a5a138`](https://github.com/billsioros/stonks/commit/2a5a1383d0a39680475fc8801da9de87e457c1b8))
+
+- Pass the local environment file into the containers
+  ([`09d2242`](https://github.com/billsioros/stonks/commit/09d2242cb9a528268bb08e225f369d803b7822cd))
+
+- Remove redundant data-source line from masthead
+  ([`cd65abb`](https://github.com/billsioros/stonks/commit/cd65abb8d22e2387445987c5c9fecf8ae7eebdd9))
+
+### Documentation
+
+- Plan Phase B EDGAR filing verification
+  ([`0576dc4`](https://github.com/billsioros/stonks/commit/0576dc40b64d35ddb5d0e63b936628eca9d5ee06))
+
+### Features
+
+- Add a keyless, rate-limited EDGAR client
+  ([`45f8fd6`](https://github.com/billsioros/stonks/commit/45f8fd6fbfcb09ccb4cc6bcaa8d843d7629d9de9))
+
+- Add buy-opportunity alerts and deepen dossier checks
+  ([`d132127`](https://github.com/billsioros/stonks/commit/d1321277f8aaa9602948ccab57a5176485fa43ff))
+
+- Add the forward-evidence gate and trailing-only guard
+  ([`ff5a9f1`](https://github.com/billsioros/stonks/commit/ff5a9f18cf42b01d71d3a88fb5d6e42936107592))
+
+- Build the dossier on demand from the symbol page
+  ([`fb345aa`](https://github.com/billsioros/stonks/commit/fb345aa28da4b4908a9e53b74a936b6bc5d4612e))
+
+- Compute the business-quality gate
+  ([`fefa095`](https://github.com/billsioros/stonks/commit/fefa09590486a509214e5d296ff5f5495a7b295e))
+
+- Cross-check vendor figures against XBRL and verify debt maturities
+  ([`6412eec`](https://github.com/billsioros/stonks/commit/6412eecd1d99ae45ec2f68e73ceba77722fc4972))
+
+- Feed primary filing evidence into the deep dive
+  ([`05d0666`](https://github.com/billsioros/stonks/commit/05d0666f517dd0b6f689cc066ee936986fe80b54))
+
+- Feed the dossier and its unverified list into the memo
+  ([`3e2661d`](https://github.com/billsioros/stonks/commit/3e2661d89ddb77a6e7298032a71fcbfbf96bdb53))
+
+- Make screener columns self-explanatory
+  ([`67ee29f`](https://github.com/billsioros/stonks/commit/67ee29f2cf2ba36b53ef1776bf25bdeb15b1fd70))
+
+- Render the deep-dive gate strip and portfolio panel
+  ([`e9ac6a8`](https://github.com/billsioros/stonks/commit/e9ac6a8f362ba1b3decf3f49a3e645b75d51cc6d))
+
+- Show honest sync and compatibility badges in the masthead
+  ([`8bcf177`](https://github.com/billsioros/stonks/commit/8bcf1778a31a9b57f42b00163eda9028cbe07a03))
+
+- Sweep filings for red flags and check their freshness
+  ([`b47f27c`](https://github.com/billsioros/stonks/commit/b47f27c508250edf70d94235892ed9c2132ed032))
+
+### Testing
+
+- Add the dossier gate model
+  ([`0809477`](https://github.com/billsioros/stonks/commit/08094776430b6fd9ef4230dd6e44ec39db607b3b))
+
+
 ## v2.5.0 (2026-11-23)
 
 ### Bug Fixes
