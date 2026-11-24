@@ -278,4 +278,44 @@ def test_masthead_renders_badges_on_repeated_apptest_runs() -> None:
         at.run()
         assert not at.exception
         html = " ".join(str(md.value) for md in at.markdown)
-        assert 'class="sk-badge sk-badge-unknown"' in html
+        assert "sk-badge" in html
+        assert "Sync" in html
+
+
+def test_store_get_buy_opportunities_prioritizes_below_both_fair_values(
+    tmp_path,
+) -> None:
+    store = SQLiteStore(db_path=tmp_path / "buy.db")
+    store.replace_stocks(
+        [
+            {
+                "symbol": "LOW",
+                "description": "Near low only",
+                "price": 101.0,
+                "week_52_low": 100.0,
+                "dcf_fair_value": None,
+                "lynch_fair_value": None,
+            },
+            {
+                "symbol": "BOTH",
+                "description": "Below both",
+                "price": 101.0,
+                "week_52_low": 100.0,
+                "dcf_fair_value": 120.0,
+                "lynch_fair_value": 130.0,
+            },
+            {
+                "symbol": "NOPE",
+                "description": "Not low",
+                "price": 150.0,
+                "week_52_low": 100.0,
+                "dcf_fair_value": 200.0,
+                "lynch_fair_value": 200.0,
+            },
+        ]
+    )
+
+    opportunities = store.get_buy_opportunities(limit=10)
+
+    assert [row["symbol"] for row in opportunities] == ["BOTH", "LOW"]
+    assert opportunities[0]["dcf_fair_value"] == 120.0

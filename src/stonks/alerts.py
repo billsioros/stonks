@@ -53,6 +53,42 @@ def _number(row: dict[str, Any] | None, key: str) -> float | None:
     return float(value)
 
 
+def buy_opportunity(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Return a buy-opportunity summary when a stock trades near its 52-week low.
+
+    "Historically low" is approximated as within 5% of the 52-week low. The
+    signal is stronger when the current price is at or below both DCF and Peter
+    Lynch fair value estimates.
+    """
+    if row is None:
+        return None
+    price = _number(row, "price")
+    low = _number(row, "week_52_low")
+    if price is None or low is None or low <= 0 or price <= 0:
+        return None
+    if price > low * NEAR_LOW_RATIO:
+        return None
+
+    dcf_fair = _number(row, "dcf_fair_value")
+    lynch_fair = _number(row, "lynch_fair_value")
+    below_both = (
+        dcf_fair is not None
+        and lynch_fair is not None
+        and price <= dcf_fair
+        and price <= lynch_fair
+    )
+    above_low_pct = (price / low - 1) * 100
+    return {
+        "symbol": str(row.get("symbol") or ""),
+        "price": price,
+        "week_52_low": low,
+        "dcf_fair_value": dcf_fair,
+        "lynch_fair_value": lynch_fair,
+        "below_both_fair_values": below_both,
+        "above_low_pct": above_low_pct,
+    }
+
+
 def _alert(
     symbol: str, kind: str, severity: str, title: str, detail: str, bucket: str
 ) -> Alert:

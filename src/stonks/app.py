@@ -1721,6 +1721,66 @@ def render_sanity_banner(store: SQLiteStore) -> None:
         )
 
 
+def render_buy_opportunities_banner() -> None:
+    """Surface screener stocks near 52-week lows, especially below fair value."""
+    store = get_store()
+    opportunities = store.get_buy_opportunities(limit=8)
+    if not opportunities:
+        return
+
+    below_both = [row for row in opportunities if row.get("below_both_fair_values")]
+    if not st.session_state.get("buy_opps_toasted"):
+        if below_both:
+            symbols = ", ".join(row["symbol"] for row in below_both[:3])
+            st.toast(f"Buy opportunities below DCF and Lynch: {symbols}", icon="📉")
+        else:
+            st.toast(
+                f"{len(opportunities)} screener stocks near 52-week lows",
+                icon="📉",
+            )
+        st.session_state["buy_opps_toasted"] = True
+
+    with st.container(key="buy-opportunities-banner"):
+        headline = f"{len(opportunities)} buy opportunities near 52-week lows"
+        if below_both:
+            headline += (
+                f" · {len(below_both)} below both DCF and Peter Lynch fair value"
+            )
+        st.success(headline, icon="📉")
+        for row in opportunities:
+            symbol = row["symbol"]
+            symbol_col, text_col = st.columns([1, 7])
+            with symbol_col:
+                if st.button(
+                    f"{symbol} ▸",
+                    key=f"buy_opp_open_{symbol}",
+                    help=f"Open {symbol}",
+                ):
+                    open_symbol(symbol)
+                    st.rerun()
+            with text_col:
+                price = row.get("price")
+                low = row.get("week_52_low")
+                dcf = row.get("dcf_fair_value")
+                lynch = row.get("lynch_fair_value")
+                parts = [
+                    f"Price {_fmt_number(price, 2)} vs 52w low {_fmt_number(low, 2)}"
+                ]
+                if row.get("below_both_fair_values"):
+                    parts.append(
+                        f"below DCF {_fmt_number(dcf, 2)} and Lynch {_fmt_number(lynch, 2)}"
+                    )
+                elif dcf is not None or lynch is not None:
+                    fair_bits = []
+                    if dcf is not None:
+                        fair_bits.append(f"DCF {_fmt_number(dcf, 2)}")
+                    if lynch is not None:
+                        fair_bits.append(f"Lynch {_fmt_number(lynch, 2)}")
+                    parts.append("fair value " + ", ".join(fair_bits))
+                st.markdown(f"**{symbol}** · {row.get('description') or ''}")
+                st.caption(" · ".join(parts))
+
+
 def render_alerts_banner() -> None:
     """Show the unread watchlist alerts; renders nothing when there are none."""
     store = get_store()
@@ -1795,6 +1855,7 @@ def main() -> None:
     )
 
     with tab_screener:
+        render_buy_opportunities_banner()
         render_alerts_banner()
 
         # Render the new top-level filters grid

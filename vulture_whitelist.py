@@ -106,3 +106,6 @@ user_agent  # noqa: B018
 filing_checks  # noqa: B018
 latest_fact  # noqa: B018
 maturity_ladder  # noqa: B018
+
+buy_opportunity  # noqa: B018, F821
+get_buy_opportunities  # noqa: B018, F821

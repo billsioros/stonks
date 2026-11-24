@@ -131,6 +131,7 @@ ROIC_MIN_PCT = 10.0
 GROSS_MARGIN_STDEV_MAX_PP = 3.0
 MIN_INDUSTRY_PEERS = 5
 CASH_CONVERSION_MIN = 0.8
+FCF_MARGIN_MIN_PCT = 5.0
 DILUTION_MAX_CAGR_PCT = 2.0
 LEVERAGE_MAX = 1.0
 DASH = "—"
@@ -349,6 +350,20 @@ def quality_gate(
             conversion_value,
             f">= {CASH_CONVERSION_MIN:.2f}",
             "screener.free_cash_flow / screener.net_income",
+        )
+    )
+
+    fcf_margin = _num(row.get("fcf_margin_pct"))
+    checks.append(
+        Check(
+            "quality.fcf_margin",
+            "Free cash flow margin is healthy",
+            _status_from(
+                None if fcf_margin is None else fcf_margin >= FCF_MARGIN_MIN_PCT
+            ),
+            DASH if fcf_margin is None else f"{fcf_margin:.1f}%",
+            f">= {FCF_MARGIN_MIN_PCT:.1f}%",
+            "screener.fcf_margin_pct",
         )
     )
 
@@ -709,6 +724,7 @@ INFORMATIONAL_PHRASES = (
     "litigation",
     "regulatory",
     "related party",
+    "off-balance sheet",
 )
 GUIDANCE_PHRASES = ("guidance", "outlook")
 FRESHNESS_MAX_DAYS = {"10-K": 400, "10-Q": 120}

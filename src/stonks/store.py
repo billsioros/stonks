@@ -721,6 +721,40 @@ class SQLiteStore:
             conn.commit()
         return cursor.rowcount
 
+    def get_buy_opportunities(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Screener stocks near their 52-week low, strongest first.
+
+        "Historically low" here means within 5% of the 52-week low. Stocks below
+        both DCF and Peter Lynch fair value estimates are ranked first.
+        """
+        limit = max(1, min(int(limit), 100))
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT symbol, description, price, week_52_low,
+                       dcf_fair_value, lynch_fair_value,
+                       dcf_upside_pct, lynch_upside_pct
+                FROM stocks
+                WHERE price > 0 AND week_52_low > 0
+                  AND price <= week_52_low * 1.05
+                ORDER BY
+                    CASE
+                        WHEN dcf_fair_value IS NOT NULL
+                         AND lynch_fair_value IS NOT NULL
+                         AND price <= dcf_fair_value
+                         AND price <= lynch_fair_value
+                        THEN 0 ELSE 1
+                    END,
+                    (price / week_52_low) ASC,
+                    COALESCE(dcf_upside_pct, -999999) DESC,
+                    COALESCE(lynch_upside_pct, -999999) DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
     # ── Stocks ────────────────────────────────────────────────────────
 
     def get_stocks(

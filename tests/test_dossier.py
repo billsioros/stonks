@@ -112,6 +112,7 @@ def _row(**overrides: object) -> dict[str, object]:
         "revenue_growth_5y_pct": 20.0,
         "free_cash_flow": 100.0,
         "net_income": 120.0,
+        "fcf_margin_pct": 12.0,
         "long_term_debt_to_equity": 0.4,
         "shares_insiders_percent": 3.0,
     }
@@ -178,7 +179,7 @@ def _quality(row: dict[str, object], statements: object = None, peers: int = 6) 
     return quality_gate(row, _medians(peers), statements)  # type: ignore[arg-type]
 
 
-def test_quality_gate_has_the_ten_spec_checks() -> None:
+def test_quality_gate_has_the_expected_checks() -> None:
     gate = _quality(_row(), _statements())
     assert [check.id for check in gate.checks] == [
         "quality.roic_5y",
@@ -187,6 +188,7 @@ def test_quality_gate_has_the_ten_spec_checks() -> None:
         "quality.margin_vs_industry",
         "quality.growth_vs_industry",
         "quality.cash_conversion",
+        "quality.fcf_margin",
         "quality.dilution",
         "quality.shareholder_yield",
         "quality.insider_alignment",
@@ -269,7 +271,7 @@ def test_quality_gross_margin_stability_needs_five_years_not_three() -> None:
 
 def test_quality_dilution_is_unverified_without_share_history() -> None:
     gate = _quality(_row(), {"income_annual": _annual_statement({"revenue": [1.0]})})
-    assert gate.checks[6].status == "unverified"
+    assert gate.checks[7].status == "unverified"
 
 
 def test_quality_dilution_needs_five_years_not_two() -> None:
@@ -278,7 +280,7 @@ def test_quality_dilution_needs_five_years_not_two() -> None:
             {"sharesOutTotalCommon": [100.0, 100.0, 100.0]}
         )
     )
-    assert _quality(_row(), three_years).checks[6].status == "unverified"
+    assert _quality(_row(), three_years).checks[7].status == "unverified"
 
 
 def test_quality_dilution_fails_when_share_count_grows_over_two_percent() -> None:
@@ -287,14 +289,14 @@ def test_quality_dilution_fails_when_share_count_grows_over_two_percent() -> Non
             {"sharesOutTotalCommon": [112.0, 108.0, 105.0, 102.0, 100.0, 98.0]}
         )
     )
-    assert _quality(_row(), growing).checks[6].status == "fail"
+    assert _quality(_row(), growing).checks[7].status == "fail"
 
     flat = _statements(
         balance_annual=_annual_statement(
             {"sharesOutTotalCommon": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0]}
         )
     )
-    assert _quality(_row(), flat).checks[6].status == "pass"
+    assert _quality(_row(), flat).checks[7].status == "pass"
 
 
 def test_quality_shareholder_yield_fails_when_payouts_exceed_free_cash_flow() -> None:
@@ -308,23 +310,23 @@ def test_quality_shareholder_yield_fails_when_payouts_exceed_free_cash_flow() ->
             }
         )
     )
-    assert _quality(_row(), generous).checks[7].status == "fail"
+    assert _quality(_row(), generous).checks[8].status == "fail"
 
 
 def test_quality_insider_alignment_is_pass_or_unverified_only() -> None:
-    assert _quality(_row(shares_insiders_percent=1.0)).checks[8].status == "pass"
-    assert _quality(_row(shares_insiders_percent=None)).checks[8].status == "unverified"
-    assert _quality(_row(shares_insiders_percent=0.0)).checks[8].status == "unverified"
+    assert _quality(_row(shares_insiders_percent=1.0)).checks[9].status == "pass"
+    assert _quality(_row(shares_insiders_percent=None)).checks[9].status == "unverified"
+    assert _quality(_row(shares_insiders_percent=0.0)).checks[9].status == "unverified"
 
 
 def test_quality_leverage_threshold_is_inclusive_at_one() -> None:
-    assert _quality(_row(long_term_debt_to_equity=1.0)).checks[9].status == "pass"
-    assert _quality(_row(long_term_debt_to_equity=1.01)).checks[9].status == "fail"
+    assert _quality(_row(long_term_debt_to_equity=1.0)).checks[10].status == "pass"
+    assert _quality(_row(long_term_debt_to_equity=1.01)).checks[10].status == "fail"
 
 
 def test_quality_summary_counts_passes_and_names_the_top_failure() -> None:
     gate = _quality(_row(roic_5y_avg_pct=9.0), _statements())
-    assert gate.summary.startswith("9/10 quality checks passed")
+    assert gate.summary.startswith("10/11 quality checks passed")
     assert "ROIC" in gate.summary
 
 
@@ -642,6 +644,7 @@ def test_phrase_checks_are_unverified_with_links() -> None:
         "filings.litigation": "litigation",
         "filings.regulatory": "regulatory",
         "filings.related_party": "related party",
+        "filings.off-balance_sheet": "off-balance sheet",
     }
     hits = tuple(_hit(phrase) for phrase in phrases.values())
     gate = _fgate(_evidence(hits=hits))
