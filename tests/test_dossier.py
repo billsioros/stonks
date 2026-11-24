@@ -108,6 +108,7 @@ def _row(**overrides: object) -> dict[str, object]:
         "industry": "Semiconductors",
         "roic_5y_avg_pct": 14.0,
         "roic_pct": 15.0,
+        "gross_margin_pct": 40.0,
         "operating_margin_pct": 30.0,
         "revenue_growth_5y_pct": 20.0,
         "free_cash_flow": 100.0,
@@ -184,11 +185,14 @@ def test_quality_gate_has_the_expected_checks() -> None:
     assert [check.id for check in gate.checks] == [
         "quality.roic_5y",
         "quality.roic_trend",
+        "quality.roic_persistence",
         "quality.gross_margin_stability",
+        "quality.gross_margin_level",
         "quality.margin_vs_industry",
         "quality.growth_vs_industry",
         "quality.cash_conversion",
         "quality.fcf_margin",
+        "quality.fcf_stability",
         "quality.dilution",
         "quality.shareholder_yield",
         "quality.insider_alignment",
@@ -212,23 +216,39 @@ def test_quality_roic_trend_compares_current_with_historical_average() -> None:
     assert _quality(_row(roic_pct=12.0)).checks[1].status == "fail"
 
 
+def test_quality_roic_persistence_requires_both_current_and_5y_above_bar() -> None:
+    gate = _quality(_row(roic_pct=12.0, roic_5y_avg_pct=11.0))
+    check = next(c for c in gate.checks if c.id == "quality.roic_persistence")
+    assert check.status == "pass"
+    fail = _quality(_row(roic_pct=12.0, roic_5y_avg_pct=9.0))
+    assert (
+        next(c for c in fail.checks if c.id == "quality.roic_persistence").status
+        == "fail"
+    )
+    missing = _quality(_row(roic_pct=None, roic_5y_avg_pct=11.0))
+    assert (
+        next(c for c in missing.checks if c.id == "quality.roic_persistence").status
+        == "unverified"
+    )
+
+
 def test_quality_cash_conversion_is_unverified_when_profit_is_negative() -> None:
     gate = _quality(_row(net_income=-5.0))
-    check = gate.checks[5]
+    check = gate.checks[7]
     assert check.status == "unverified"
     assert "not meaningful" in check.value
 
 
 def test_quality_industry_comparison_needs_five_peers() -> None:
     gate = _quality(_row(), peers=4)
-    assert gate.checks[3].status == "unverified"
-    assert "fewer than five" in gate.checks[3].value
+    assert gate.checks[5].status == "unverified"
+    assert "fewer than five" in gate.checks[5].value
 
 
 def test_quality_industry_comparison_uses_the_median() -> None:
     gate = _quality(_row(operating_margin_pct=25.0))
-    assert gate.checks[3].status == "pass"
-    assert _quality(_row(operating_margin_pct=24.9)).checks[3].status == "fail"
+    assert gate.checks[5].status == "pass"
+    assert _quality(_row(operating_margin_pct=24.9)).checks[5].status == "fail"
 
 
 def test_quality_gross_margin_stability_uses_five_fiscal_years() -> None:
@@ -240,7 +260,7 @@ def test_quality_gross_margin_stability_uses_five_fiscal_years() -> None:
             }
         )
     )
-    assert _quality(_row(), stable).checks[2].status == "pass"
+    assert _quality(_row(), stable).checks[3].status == "pass"
 
     volatile = _statements(
         income_annual=_annual_statement(
@@ -250,11 +270,11 @@ def test_quality_gross_margin_stability_uses_five_fiscal_years() -> None:
             }
         )
     )
-    assert _quality(_row(), volatile).checks[2].status == "fail"
+    assert _quality(_row(), volatile).checks[3].status == "fail"
 
 
 def test_quality_gross_margin_stability_needs_statement_history() -> None:
-    assert _quality(_row()).checks[2].status == "unverified"
+    assert _quality(_row()).checks[3].status == "unverified"
 
 
 def test_quality_gross_margin_stability_needs_five_years_not_three() -> None:
@@ -266,12 +286,52 @@ def test_quality_gross_margin_stability_needs_five_years_not_three() -> None:
             }
         )
     )
-    assert _quality(_row(), three_years).checks[2].status == "unverified"
+    assert _quality(_row(), three_years).checks[3].status == "unverified"
+
+
+def test_quality_gross_margin_level_uses_absolute_bar() -> None:
+    gate = _quality(_row(gross_margin_pct=30.0))
+    check = next(c for c in gate.checks if c.id == "quality.gross_margin_level")
+    assert check.status == "pass"
+    low = _quality(_row(gross_margin_pct=29.9))
+    assert (
+        next(c for c in low.checks if c.id == "quality.gross_margin_level").status
+        == "fail"
+    )
+    missing = _quality(_row(gross_margin_pct=None))
+    assert (
+        next(c for c in missing.checks if c.id == "quality.gross_margin_level").status
+        == "unverified"
+    )
+
+
+def test_quality_fcf_stability_requires_five_positive_fcf_years() -> None:
+    stable = _statements(
+        income_annual=_annual_statement({"fcf": [10.0, 9.0, 8.0, 7.0, 6.0, 5.0]})
+    )
+    gate = _quality(_row(), stable)
+    assert (
+        next(c for c in gate.checks if c.id == "quality.fcf_stability").status == "pass"
+    )
+    weak = _statements(
+        income_annual=_annual_statement({"fcf": [10.0, -1.0, 8.0, 7.0, 6.0, 5.0]})
+    )
+    assert (
+        next(
+            c for c in _quality(_row(), weak).checks if c.id == "quality.fcf_stability"
+        ).status
+        == "fail"
+    )
+    missing = _quality(_row())
+    assert (
+        next(c for c in missing.checks if c.id == "quality.fcf_stability").status
+        == "unverified"
+    )
 
 
 def test_quality_dilution_is_unverified_without_share_history() -> None:
     gate = _quality(_row(), {"income_annual": _annual_statement({"revenue": [1.0]})})
-    assert gate.checks[7].status == "unverified"
+    assert gate.checks[10].status == "unverified"
 
 
 def test_quality_dilution_needs_five_years_not_two() -> None:
@@ -280,7 +340,7 @@ def test_quality_dilution_needs_five_years_not_two() -> None:
             {"sharesOutTotalCommon": [100.0, 100.0, 100.0]}
         )
     )
-    assert _quality(_row(), three_years).checks[7].status == "unverified"
+    assert _quality(_row(), three_years).checks[10].status == "unverified"
 
 
 def test_quality_dilution_fails_when_share_count_grows_over_two_percent() -> None:
@@ -289,14 +349,14 @@ def test_quality_dilution_fails_when_share_count_grows_over_two_percent() -> Non
             {"sharesOutTotalCommon": [112.0, 108.0, 105.0, 102.0, 100.0, 98.0]}
         )
     )
-    assert _quality(_row(), growing).checks[7].status == "fail"
+    assert _quality(_row(), growing).checks[10].status == "fail"
 
     flat = _statements(
         balance_annual=_annual_statement(
             {"sharesOutTotalCommon": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0]}
         )
     )
-    assert _quality(_row(), flat).checks[7].status == "pass"
+    assert _quality(_row(), flat).checks[10].status == "pass"
 
 
 def test_quality_shareholder_yield_fails_when_payouts_exceed_free_cash_flow() -> None:
@@ -310,23 +370,25 @@ def test_quality_shareholder_yield_fails_when_payouts_exceed_free_cash_flow() ->
             }
         )
     )
-    assert _quality(_row(), generous).checks[8].status == "fail"
+    assert _quality(_row(), generous).checks[11].status == "fail"
 
 
 def test_quality_insider_alignment_is_pass_or_unverified_only() -> None:
-    assert _quality(_row(shares_insiders_percent=1.0)).checks[9].status == "pass"
-    assert _quality(_row(shares_insiders_percent=None)).checks[9].status == "unverified"
-    assert _quality(_row(shares_insiders_percent=0.0)).checks[9].status == "unverified"
+    assert _quality(_row(shares_insiders_percent=1.0)).checks[12].status == "pass"
+    assert (
+        _quality(_row(shares_insiders_percent=None)).checks[12].status == "unverified"
+    )
+    assert _quality(_row(shares_insiders_percent=0.0)).checks[12].status == "unverified"
 
 
 def test_quality_leverage_threshold_is_inclusive_at_one() -> None:
-    assert _quality(_row(long_term_debt_to_equity=1.0)).checks[10].status == "pass"
-    assert _quality(_row(long_term_debt_to_equity=1.01)).checks[10].status == "fail"
+    assert _quality(_row(long_term_debt_to_equity=1.0)).checks[13].status == "pass"
+    assert _quality(_row(long_term_debt_to_equity=1.01)).checks[13].status == "fail"
 
 
 def test_quality_summary_counts_passes_and_names_the_top_failure() -> None:
     gate = _quality(_row(roic_5y_avg_pct=9.0), _statements())
-    assert gate.summary.startswith("10/11 quality checks passed")
+    assert gate.summary.startswith("12/14 quality checks passed")
     assert "ROIC" in gate.summary
 
 

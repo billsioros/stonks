@@ -128,10 +128,12 @@ def coverage(gates: Iterable[Gate]) -> float:
 # Each constant is a judgement call, stated once here so tests pin the trade-off
 # rather than a magic number buried in a comparison.
 ROIC_MIN_PCT = 10.0
+GROSS_MARGIN_LEVEL_MIN_PCT = 30.0
 GROSS_MARGIN_STDEV_MAX_PP = 3.0
 MIN_INDUSTRY_PEERS = 5
 CASH_CONVERSION_MIN = 0.8
 FCF_MARGIN_MIN_PCT = 5.0
+FCF_STABILITY_YEARS = 5
 DILUTION_MAX_CAGR_PCT = 2.0
 LEVERAGE_MAX = 1.0
 DASH = "—"
@@ -260,6 +262,22 @@ def quality_gate(
         )
     )
 
+    persistence_ok: bool | None = None
+    if roic_now is not None and roic_5y is not None:
+        persistence_ok = roic_now >= ROIC_MIN_PCT and roic_5y >= ROIC_MIN_PCT
+    checks.append(
+        Check(
+            "quality.roic_persistence",
+            "Returns stay above the quality bar",
+            _status_from(persistence_ok),
+            DASH
+            if roic_now is None or roic_5y is None
+            else f"current {roic_now:.1f}%, 5y {roic_5y:.1f}%",
+            f"current and 5y >= {ROIC_MIN_PCT:.1f}%",
+            "screener.roic_pct, screener.roic_5y_avg_pct",
+        )
+    )
+
     revenue = _annual_series(income, "revenue")
     gross_profit = _annual_series(income, "gp")
     margins = [
@@ -282,6 +300,22 @@ def quality_gate(
             stability_value,
             f"stdev <= {GROSS_MARGIN_STDEV_MAX_PP:.1f}pp",
             "income_annual.gp / income_annual.revenue",
+        )
+    )
+
+    gross_margin = _num(row.get("gross_margin_pct"))
+    checks.append(
+        Check(
+            "quality.gross_margin_level",
+            "Gross margin shows pricing power",
+            _status_from(
+                None
+                if gross_margin is None
+                else gross_margin >= GROSS_MARGIN_LEVEL_MIN_PCT
+            ),
+            DASH if gross_margin is None else f"{gross_margin:.1f}%",
+            f">= {GROSS_MARGIN_LEVEL_MIN_PCT:.1f}%",
+            "screener.gross_margin_pct",
         )
     )
 
@@ -364,6 +398,26 @@ def quality_gate(
             DASH if fcf_margin is None else f"{fcf_margin:.1f}%",
             f">= {FCF_MARGIN_MIN_PCT:.1f}%",
             "screener.fcf_margin_pct",
+        )
+    )
+
+    fcf_series = [value for value in _annual_series(income, "fcf") if value is not None]
+    if len(fcf_series) < FCF_STABILITY_YEARS:
+        fcf_stability_ok: bool | None = None
+        fcf_stability_value = "no five-year free-cash-flow history"
+    else:
+        window = fcf_series[:FCF_STABILITY_YEARS]
+        fcf_stability_ok = all(value > 0 for value in window)
+        positive = sum(1 for value in window if value > 0)
+        fcf_stability_value = f"{positive}/{len(window)} positive FCF years"
+    checks.append(
+        Check(
+            "quality.fcf_stability",
+            "Free cash flow stays positive",
+            _status_from(fcf_stability_ok),
+            fcf_stability_value,
+            f"positive in {FCF_STABILITY_YEARS} fiscal years",
+            "income_annual.fcf",
         )
     )
 
