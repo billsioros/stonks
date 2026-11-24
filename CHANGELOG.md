@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.7.0 (2026-11-24)
+
+### Features
+
+- Close gaps and deferred minors follow-up
+  ([`f0bf31f`](https://github.com/billsioros/stonks/commit/f0bf31f8fb707b01bb61ed30653736a36b466c05))
+
+
 ## v2.6.0 (2026-11-24)
 
 ### Bug Fixes
