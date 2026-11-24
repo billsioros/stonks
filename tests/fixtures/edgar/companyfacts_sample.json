@@ -1,0 +1,328 @@
+{
+  "cik": 320193,
+  "entityName": "Sample Systems, Inc.",
+  "facts": {
+    "us-gaap": {
+      "RevenueFromContractWithCustomerExcludingAssessedTax": {
+        "label": "Revenue from Contract with Customer",
+        "units": {
+          "USD": [
+            {
+              "start": "2022-01-01",
+              "end": "2022-12-31",
+              "val": 700000000.0,
+              "accn": "000-2022-01",
+              "form": "10-K",
+              "filed": "2023-02-15",
+              "fy": 2022,
+              "fp": "FY"
+            },
+            {
+              "start": "2023-01-01",
+              "end": "2023-12-31",
+              "val": 800000000.0,
+              "accn": "000-2023-01",
+              "form": "10-K",
+              "filed": "2024-02-15",
+              "fy": 2023,
+              "fp": "FY"
+            },
+            {
+              "start": "2024-01-01",
+              "end": "2024-12-31",
+              "val": 900000000.0,
+              "accn": "000-2024-01",
+              "form": "10-K",
+              "filed": "2025-02-15",
+              "fy": 2024,
+              "fp": "FY"
+            },
+            {
+              "start": "2025-01-01",
+              "end": "2025-03-31",
+              "val": 200000000.0,
+              "accn": "000-2025-Q1",
+              "form": "10-Q",
+              "filed": "2025-05-01",
+              "fy": 2025,
+              "fp": "Q1"
+            },
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 1000000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            },
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 1500000000.0,
+              "accn": "000-2025-01A",
+              "form": "10-K/A",
+              "filed": "2026-06-01",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ],
+          "EUR": [
+            {
+              "start": "2026-01-01",
+              "end": "2026-06-30",
+              "val": 999999999.0,
+              "accn": "000-2026-EUR",
+              "form": "10-Q",
+              "filed": "2026-08-01",
+              "fy": 2026,
+              "fp": "Q2"
+            }
+          ]
+        }
+      },
+      "Revenues": {
+        "label": "Revenues",
+        "units": {
+          "USD": [
+            {
+              "start": "2021-01-01",
+              "end": "2021-12-31",
+              "val": 600000000.0,
+              "accn": "000-2021-01",
+              "form": "10-K",
+              "filed": "2022-02-15",
+              "fy": 2021,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "NetIncomeLoss": {
+        "label": "Net Income",
+        "units": {
+          "USD": [
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 100000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "NetCashProvidedByUsedInOperatingActivities": {
+        "label": "Net Cash Provided by Operating Activities",
+        "units": {
+          "USD": [
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": 150000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "PaymentsToAcquirePropertyPlantAndEquipment": {
+        "label": "Payments to Acquire Property, Plant and Equipment",
+        "units": {
+          "USD": [
+            {
+              "start": "2025-01-01",
+              "end": "2025-12-31",
+              "val": -50000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "LongTermDebt": {
+        "label": "Long-Term Debt",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 700000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "DebtCurrent": {
+        "label": "Debt Current",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 100000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "CashAndCashEquivalentsAtCarryingValue": {
+        "label": "Cash and Cash Equivalents",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 50000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths": {
+        "label": "Debt Maturities Next Twelve Months",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 100000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearTwo": {
+        "label": "Debt Maturities Year Two",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 80000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearThree": {
+        "label": "Debt Maturities Year Three",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 60000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFour": {
+        "label": "Debt Maturities Year Four",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 40000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalInYearFive": {
+        "label": "Debt Maturities Year Five",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 20000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      },
+      "LongTermDebtMaturitiesRepaymentsOfPrincipalAfterYearFive": {
+        "label": "Debt Maturities After Year Five",
+        "units": {
+          "USD": [
+            {
+              "end": "2025-12-31",
+              "val": 50000000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ]
+        }
+      }
+    },
+    "dei": {
+      "EntityCommonStockSharesOutstanding": {
+        "label": "Entity Common Stock Shares Outstanding",
+        "units": {
+          "shares": [
+            {
+              "end": "2025-12-31",
+              "val": 241060000.0,
+              "accn": "000-2025-01",
+              "form": "10-K",
+              "filed": "2026-02-15",
+              "fy": 2025,
+              "fp": "FY"
+            }
+          ],
+          "USD": [
+            {
+              "end": "2026-06-30",
+              "val": 999.0,
+              "accn": "000-2026-WRONG",
+              "form": "10-Q",
+              "filed": "2026-08-01",
+              "fy": 2026,
+              "fp": "Q2"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

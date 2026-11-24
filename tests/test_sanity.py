@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import time
+from typing import Any
 
 from stonks import sanity
 from stonks.sanity import CheckResult
@@ -146,7 +148,7 @@ def test_hedgefollow_check_compares_flags(monkeypatch, tmp_path) -> None:
     assert "token or payload changed" in unavailable.detail
 
 
-def test_gurufocus_check_recomputes_lynch_values(tmp_path) -> None:
+def test_gurufocus_lynch_check_recomputes_lynch_values(tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     rows = []
     for index in range(3):
@@ -165,11 +167,11 @@ def test_gurufocus_check_recomputes_lynch_values(tmp_path) -> None:
             }
         )
     store.replace_stocks(rows)
-    assert sanity.check_gurufocus_models(store).ok is True
+    assert sanity.check_gurufocus_lynch(store).ok is True
 
     broken = dict(rows[1], lynch_fair_value=1.0)
     store.replace_stocks([rows[0], broken, rows[2]])
-    result = sanity.check_gurufocus_models(store)
+    result = sanity.check_gurufocus_lynch(store)
     assert result.ok is False
     assert "GF1" in result.detail
 
@@ -235,8 +237,15 @@ def test_run_sanity_checks_isolates_a_failing_platform(monkeypatch, tmp_path) ->
     )
     monkeypatch.setattr(
         sanity,
-        "check_gurufocus_models",
-        lambda store, sample_size=50: CheckResult("GuruFocus", "x", True, "ok"),
+        "check_gurufocus_dcf",
+        lambda store, sample_size=50: CheckResult("GuruFocus", "DCF model", True, "ok"),
+    )
+    monkeypatch.setattr(
+        sanity,
+        "check_gurufocus_lynch",
+        lambda store, sample_size=50: CheckResult(
+            "GuruFocus", "Peter Lynch model", True, "ok"
+        ),
     )
     monkeypatch.setattr(
         sanity,
@@ -245,7 +254,7 @@ def test_run_sanity_checks_isolates_a_failing_platform(monkeypatch, tmp_path) ->
     )
 
     results = sanity.run_sanity_checks(store)
-    assert len(results) == 4
+    assert len(results) == 5
     assert results[0].ok is False
     assert "boom" in results[0].detail
 
@@ -269,3 +278,43 @@ def test_report_round_trip_and_freshness(tmp_path) -> None:
     assert sanity.load_report(store) is None
     store.save_metadata(sanity.REPORT_KEY, json.dumps({"results": "nope"}))
     assert sanity.load_report(store) is None
+
+
+def _report(results: list[dict[str, Any]], checked_at: float) -> dict[str, Any]:
+    return {"checked_at": checked_at, "results": results}
+
+
+def test_compatibility_uses_fresh_sanity_report() -> None:
+    report = _report(
+        [{"platform": "StockAnalysis", "ok": True, "detail": "ok"}], time.time()
+    )
+    badge = sanity.compatibility(report)
+    assert badge.level == "ok"
+    assert badge.label == "Platforms in sync"
+
+
+def test_compatibility_names_a_diverged_platform() -> None:
+    report = _report(
+        [{"platform": "StockAnalysis", "ok": False, "detail": "field renamed"}],
+        time.time(),
+    )
+    badge = sanity.compatibility(report)
+    assert badge.level == "fail"
+    assert "StockAnalysis" in badge.label
+    assert "field renamed" in badge.detail
+
+
+def test_compatibility_ignores_unverifiable_checks() -> None:
+    report = _report(
+        [{"platform": "GuruFocus", "ok": None, "detail": "blocked"}], time.time()
+    )
+    assert sanity.compatibility(report).level == "unknown"
+
+
+def test_compatibility_is_unknown_for_a_stale_or_missing_report() -> None:
+    stale = _report(
+        [{"platform": "StockAnalysis", "ok": True, "detail": "ok"}],
+        time.time() - sanity.SANITY_TTL_SECONDS - 1,
+    )
+    assert sanity.compatibility(stale).label == "Checks pending"
+    assert sanity.compatibility(None).level == "unknown"

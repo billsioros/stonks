@@ -102,7 +102,15 @@ def test_job_leaves_store_untouched_when_fetch_fails(monkeypatch):
 
     store.replace_stocks.assert_not_called()
     store.save_metadata.assert_any_call("last_sync_status", "failed")
-    store.save_metadata.assert_any_call("last_sync_error", "stockanalysis unavailable")
+    errors = [
+        call.args[1]
+        for call in store.save_metadata.call_args_list
+        if call.args[0] == "last_sync_error"
+    ]
+    assert any(
+        "StockAnalysis" in error and "stockanalysis unavailable" in error
+        for error in errors
+    )
 
 
 def _real_store(monkeypatch, tmp_path) -> SQLiteStore:

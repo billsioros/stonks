@@ -19,7 +19,7 @@ def test_config_columns_are_backed_by_store_schema(tmp_path):
 
 
 def test_every_displayed_column_has_a_help_text():
-    from stonks.config import COLUMN_HELP, COLUMN_DISPLAY_NAMES
+    from stonks.config import COLUMN_DISPLAY_NAMES, COLUMN_HELP
 
     missing = sorted(set(COLUMN_DISPLAY_NAMES) - set(COLUMN_HELP))
     assert missing == []

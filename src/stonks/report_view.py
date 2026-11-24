@@ -9,16 +9,35 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import streamlit as st
 
-from stonks import detail, detail_parse, report
+from stonks import (
+    deepdive_view,
+    detail,
+    detail_parse,
+    dossier,
+    filing_evidence,
+    report,
+)
+from stonks.dossier import Dossier
 from stonks.store import SQLiteStore
 
-SYMBOL_MAX_TOKENS = 2500
+# The dossier block is part of the prompt, so a changed filing also changes the
+# cache key of `_cached_report` without a second, redundant hash argument.
+SYMBOL_MAX_TOKENS = report.SYMBOL_MAX_TOKENS
+# Peer checks need the real universe. `get_stocks(page_size=0)` clamps to one row.
+UNIVERSE_PAGE_SIZE = 100_000
 
-__all__ = ["render_llm_report", "render_symbol_report", "symbol_report_prompt_for"]
+__all__ = [
+    "SYMBOL_MAX_TOKENS",
+    "render_llm_report",
+    "render_symbol_report",
+    "symbol_report_prompt_for",
+    "symbol_report_prompt_parts",
+]
 
 _DefaultCaption = Callable[[str], str]
 
@@ -50,6 +69,7 @@ def render_llm_report(
     caption: _DefaultCaption | None = None,
     system_instruction: str = report.SYSTEM_INSTRUCTION,
     max_tokens: int = 1024,
+    before_report: Callable[[], None] | None = None,
 ) -> None:
     """One collapsible, opt-in report; every widget is namespaced by `scope_key`.
 
@@ -95,6 +115,8 @@ def render_llm_report(
                 st.session_state[prompt_key] = prompt
             else:
                 prompt = prompt or str(st.session_state.get(prompt_key, ""))
+            if before_report is not None:
+                before_report()
             with st.spinner("Asking OpenRouter…"):
                 try:
                     reply = _cached_report(
@@ -121,8 +143,8 @@ def render_llm_report(
                 st.code(shown_prompt, language="text")
 
 
-def symbol_report_prompt_for(store: SQLiteStore, symbol: str) -> str:
-    """Refresh one symbol's pages and return the assembled decision prompt."""
+def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Dossier]:
+    """Refresh one symbol's pages; return its decision prompt and dossier."""
     rows, _, _ = store.get_stocks(filters={"symbol": {"values": [symbol]}}, page_size=1)
     row = rows[0] if rows else {}
     overview_data, _ = detail.load_page(store, symbol, "overview", force=True)
@@ -130,6 +152,13 @@ def symbol_report_prompt_for(store: SQLiteStore, symbol: str) -> str:
     forecast_data, _ = detail.load_page(store, symbol, "forecast", force=True)
 
     statements: dict[str, dict[str, Any]] = {}
+    # The gates read underscore names; provider pages use display names.
+    statement_keys = {
+        "income-statement": "income",
+        "balance-sheet": "balance",
+        "cash-flow-statement": "cash",
+        "ratios": "ratios",
+    }
     for statement in detail.STATEMENTS:
         for period in ("annual", "quarterly"):
             data, _ = detail.load_page(
@@ -140,32 +169,89 @@ def symbol_report_prompt_for(store: SQLiteStore, symbol: str) -> str:
                 period=period,
                 force=True,
             )
-            statements[f"{statement} {period}"] = (
+            statements[f"{statement_keys[statement]}_{period}"] = (
                 detail_parse.parse_statement(data) or {} if data else {}
             )
 
-    return report.symbol_report_prompt(
+    # Only Generate/Debug reach this function, so SEC requests never happen on a
+    # plain page render. The builder degrades failures to a reason on evidence.
+    evidence = filing_evidence.build_filing_evidence(symbol, store=store)
+
+    peers, _, _ = store.get_stocks(page_size=UNIVERSE_PAGE_SIZE)
+    stamp = None
+    if hasattr(store, "get_metadata"):
+        raw_stamp = store.get_metadata("last_successful_sync_at")
+        if raw_stamp:
+            try:
+                stamp = datetime.fromtimestamp(float(raw_stamp), UTC).isoformat()
+            except (TypeError, ValueError):
+                stamp = None
+
+    overview = detail_parse.parse_overview(overview_data) if overview_data else None
+    statistics = (
+        detail_parse.parse_statistics(statistics_data) if statistics_data else None
+    )
+    forecast = detail_parse.parse_forecast(forecast_data) if forecast_data else None
+    built = dossier.build_dossier(
         symbol,
         row=row,
-        overview=detail_parse.parse_overview(overview_data) if overview_data else None,
-        statistics=(
-            detail_parse.parse_statistics(statistics_data) if statistics_data else None
-        ),
-        forecast=detail_parse.parse_forecast(forecast_data) if forecast_data else None,
+        overview=overview,
+        forecast=forecast,
+        statements=statements,
+        peers=peers,
+        as_of=stamp,
+        today=datetime.fromisoformat(stamp).date() if stamp else None,
+        filing_evidence=evidence,
+        guidance_hits=evidence.guidance_hits,
+    )
+    prompt = report.symbol_report_prompt(
+        symbol,
+        row=row,
+        overview=overview,
+        statistics=statistics,
+        forecast=forecast,
         statements=statements,
         history=detail.load_history(store, symbol, "1Y"),
+        dossier=built,
     )
+    return prompt, built
+
+
+def symbol_report_prompt_for(
+    store: SQLiteStore,
+    symbol: str,
+    *,
+    on_dossier: Callable[[Dossier], None] | None = None,
+) -> str:
+    """Build the prompt on demand, handing its dossier to the optional callback."""
+    prompt, built = symbol_report_prompt_parts(store, symbol)
+    if on_dossier is not None:
+        on_dossier(built)
+    return prompt
 
 
 def render_symbol_report(store: SQLiteStore, symbol: str) -> None:
     """The per-symbol investment report shown above the detail sections."""
+    dossier_key = f"symbol-{symbol}-dossier"
+
+    def capture(built: Dossier) -> None:
+        st.session_state[dossier_key] = built
+
+    def show_dossier() -> None:
+        built = st.session_state.get(dossier_key)
+        if built is not None:
+            deepdive_view.render_deep_dive(store, symbol, built)
+
     render_llm_report(
         scope_key=f"symbol-{symbol}-llm-report",
         heading="🤖 AI report",
-        prompt_factory=lambda: symbol_report_prompt_for(store, symbol),
+        prompt_factory=lambda: symbol_report_prompt_for(
+            store, symbol, on_dossier=capture
+        ),
         caption=lambda model: (
             f"Model: {model} — freshly fetched data for {symbol} is sent."
         ),
         system_instruction=report.SYMBOL_SYSTEM_INSTRUCTION,
         max_tokens=SYMBOL_MAX_TOKENS,
+        before_report=show_dossier,
     )

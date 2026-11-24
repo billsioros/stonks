@@ -11,13 +11,14 @@ import time
 from collections.abc import Sequence
 from datetime import datetime
 from functools import lru_cache
+from html import escape as _escape
 from pathlib import Path
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
-from stonks import report, report_view, sanity
+from stonks import config, report, report_view, sanity
 from stonks.backtest_view import render_backtest_tab
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
@@ -150,6 +151,27 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     color: var(--text-secondary);
     font-size: 0.85rem;
 }
+
+.sk-badges {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 0.5rem;
+}
+
+.sk-badge {
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+}
+
+.sk-badge-ok { color: #22c55e; }
+.sk-badge-fail { color: #ef4444; }
+.sk-badge-unknown { color: #94a3b8; }
 
 /* Sidebar section label, matching the masthead's quieter register */
 .sk-side-title {
@@ -691,10 +713,24 @@ def _is_missing(val: object) -> bool:
 
 
 def _fmt_flag(val: object) -> str:
-    """Render a stored 1/0 flag: ✓ in the list, ✗ not, — unknown."""
+    """Render the 13F flag, keeping explicit zero distinct from missing data."""
     if _is_missing(val):
         return "—"
-    return "✓" if val else "✗"
+    return "🐋" if val else "✗"
+
+
+def _fmt_upside(val: float | None) -> str:
+    """Render an upside with its direction: green for gains, red for losses."""
+    if _is_missing(val) or val is None:
+        return "—"
+    return f"{'🟢' if val >= 0 else '🔴'} {val:+.1f}%"
+
+
+def _fmt_current_ratio(val: float | None) -> str:
+    """Render the current ratio, marking liquidity below 1."""
+    if _is_missing(val) or val is None:
+        return "—"
+    return f"🔴 {val:.2f}" if val < 1.0 else f"{val:.2f}"
 
 
 def _fmt_market_cap(val: float | None) -> str:
@@ -727,6 +763,38 @@ def _fmt_cyclical_risk(val: object) -> str:
     if _is_missing(val) or val is None:
         return "—"
     return "⚠️ Peak" if val else ""
+
+
+def _format_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Return a formatted copy; sorting and filtering stay on the raw values."""
+    display = frame.copy()
+    for col in display.columns:
+        if col == "13F Whale":
+            display[col] = display[col].apply(_fmt_flag)
+        elif col == "Cyclical Peak Risk":
+            display[col] = display[col].apply(_fmt_cyclical_risk)
+        elif col == "Market Cap":
+            display[col] = display[col].apply(_fmt_market_cap)
+        elif col in ("PT Upside", "DCF Upside %", "Lynch Upside %", "Avg Upside %"):
+            display[col] = display[col].apply(_fmt_upside)
+        elif col == "Current Ratio":
+            display[col] = display[col].apply(_fmt_current_ratio)
+        elif "%" in col or "Upside" in col or "Short" in col:
+            display[col] = display[col].apply(_fmt_pct)
+        elif col in (
+            "P/E",
+            "PE Ratio",
+            "P/B",
+            "P/S",
+            "PEG",
+            "EV/EBITDA",
+            "EV/EBITDA^",
+            "Beta",
+            "DCF Fair Value",
+            "Lynch Fair Value",
+        ):
+            display[col] = display[col].apply(lambda x: _fmt_number(x, 2))
+    return display
 
 
 def _prune_filters(filters: dict[str, Any]) -> dict[str, Any]:
@@ -762,8 +830,49 @@ def _logo_data_uri() -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def render_header() -> None:
-    """Render the masthead: brand on the left, data source on the right."""
+def live_sync_state(
+    sync_info: dict[str, Any], *, now: float | None = None
+) -> sanity.Badge:
+    """Judge the worker from its last recorded attempt, not from a constant."""
+    moment = now if now is not None else time.time()
+    if sync_info.get("last_sync_status") == "failed":
+        return sanity.Badge("fail", "Live Sync", "Last sync attempt failed.")
+
+    success_at = sync_info.get("last_successful_sync_at")
+    if not success_at:
+        return sanity.Badge("unknown", "Live Sync", "No successful sync recorded.")
+    try:
+        age = max(0.0, moment - float(success_at))
+    except (TypeError, ValueError):
+        return sanity.Badge("unknown", "Live Sync", "Unreadable sync timestamp.")
+
+    if age < 3600:
+        age_text = f"{int(age // 60)}m ago"
+    else:
+        age_text = f"{int(age // 3600)}h {int((age % 3600) // 60)}m ago"
+    detail = f"Last successful sync {age_text}."
+    if age > config.SYNC_ACTIVE_WINDOW_MINUTES * 60:
+        return sanity.Badge(
+            "fail", "Live Sync", f"{detail} Outside the active sync window."
+        )
+    return sanity.Badge("ok", "Live Sync", detail)
+
+
+def render_header(store: SQLiteStore) -> None:
+    """Render the masthead: brand on the left, evidence-backed badges on the right."""
+    sync_info = store.get_last_sync_info()
+    sync_info["last_sync_status"] = store.get_metadata("last_sync_status")
+    sync_info["last_successful_sync_at"] = store.get_metadata("last_successful_sync_at")
+    sync_info["last_sync_error"] = store.get_metadata("last_sync_error")
+    badges = (
+        live_sync_state(sync_info),
+        sanity.compatibility(sanity.load_report(store)),
+    )
+    pills = "".join(
+        f'<span class="sk-badge sk-badge-{badge.level}" title="{_escape(badge.detail)}">'
+        f"{_escape(badge.label)}</span>"
+        for badge in badges
+    )
     st.markdown(
         f"""
     <div class="sk-head">
@@ -772,7 +881,7 @@ def render_header() -> None:
             <h1>Stonks</h1>
         </div>
         <div class="sk-meta">
-            <p>Fundamental screener · data from StockAnalysis.com</p>
+            <div class="sk-badges">{pills}</div>
         </div>
     </div>
     """,
@@ -1190,28 +1299,7 @@ def render_screener_table() -> None:
     visible_cols = [c for c in visible_cols if c in page_df.columns]
     display_df = page_df[visible_cols].rename(columns=rename_map)
 
-    for col in display_df.columns:
-        if col == "13F Whale":
-            display_df[col] = display_df[col].apply(_fmt_flag)
-        elif col == "Cyclical Peak Risk":
-            display_df[col] = display_df[col].apply(_fmt_cyclical_risk)
-        elif col == "Market Cap":
-            display_df[col] = display_df[col].apply(_fmt_market_cap)
-        elif "%" in col or "Upside" in col or "Short" in col:
-            display_df[col] = display_df[col].apply(_fmt_pct)
-        elif col in (
-            "P/E",
-            "PE Ratio",
-            "P/B",
-            "P/S",
-            "PEG",
-            "EV/EBITDA",
-            "EV/EBITDA^",
-            "Beta",
-            "DCF Fair Value",
-            "Lynch Fair Value",
-        ):
-            display_df[col] = display_df[col].apply(lambda x: _fmt_number(x, 2))
+    display_df = _format_display_frame(display_df)
 
     def _row_style(row: pd.Series) -> list[str]:
         if bool(hf_mask.loc[row.name]):
@@ -1489,14 +1577,6 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
             text-transform: uppercase;
             letter-spacing: 0.05em;
         }
-        .hud-status {
-            font-size: 0.8rem;
-            padding: 2px 10px;
-            border-radius: 999px;
-            background: rgba(99, 102, 241, 0.12);
-            color: #f8fafc;
-            border: 1px solid rgba(99, 102, 241, 0.5);
-        }
         .hud-metrics {
             display: flex;
             gap: 2rem;
@@ -1542,7 +1622,6 @@ def render_pipeline_hud(sync_info: dict[str, Any]) -> None:
             <div class="hud-card">
                 <div class="hud-header">
                     <div class="hud-title">📡 Data Pipeline HUD</div>
-                    <div class="hud-status">● Live Sync Active</div>
                 </div>
                 <div class="hud-metrics">
                     <div class="metric-group">
@@ -1642,6 +1721,66 @@ def render_sanity_banner(store: SQLiteStore) -> None:
         )
 
 
+def render_buy_opportunities_banner() -> None:
+    """Surface screener stocks near 52-week lows, especially below fair value."""
+    store = get_store()
+    opportunities = store.get_buy_opportunities(limit=8)
+    if not opportunities:
+        return
+
+    below_both = [row for row in opportunities if row.get("below_both_fair_values")]
+    if not st.session_state.get("buy_opps_toasted"):
+        if below_both:
+            symbols = ", ".join(row["symbol"] for row in below_both[:3])
+            st.toast(f"Buy opportunities below DCF and Lynch: {symbols}", icon="📉")
+        else:
+            st.toast(
+                f"{len(opportunities)} screener stocks near 52-week lows",
+                icon="📉",
+            )
+        st.session_state["buy_opps_toasted"] = True
+
+    with st.container(key="buy-opportunities-banner"):
+        headline = f"{len(opportunities)} buy opportunities near 52-week lows"
+        if below_both:
+            headline += (
+                f" · {len(below_both)} below both DCF and Peter Lynch fair value"
+            )
+        st.success(headline, icon="📉")
+        for row in opportunities:
+            symbol = row["symbol"]
+            symbol_col, text_col = st.columns([1, 7])
+            with symbol_col:
+                if st.button(
+                    f"{symbol} ▸",
+                    key=f"buy_opp_open_{symbol}",
+                    help=f"Open {symbol}",
+                ):
+                    open_symbol(symbol)
+                    st.rerun()
+            with text_col:
+                price = row.get("price")
+                low = row.get("week_52_low")
+                dcf = row.get("dcf_fair_value")
+                lynch = row.get("lynch_fair_value")
+                parts = [
+                    f"Price {_fmt_number(price, 2)} vs 52w low {_fmt_number(low, 2)}"
+                ]
+                if row.get("below_both_fair_values"):
+                    parts.append(
+                        f"below DCF {_fmt_number(dcf, 2)} and Lynch {_fmt_number(lynch, 2)}"
+                    )
+                elif dcf is not None or lynch is not None:
+                    fair_bits = []
+                    if dcf is not None:
+                        fair_bits.append(f"DCF {_fmt_number(dcf, 2)}")
+                    if lynch is not None:
+                        fair_bits.append(f"Lynch {_fmt_number(lynch, 2)}")
+                    parts.append("fair value " + ", ".join(fair_bits))
+                st.markdown(f"**{symbol}** · {row.get('description') or ''}")
+                st.caption(" · ".join(parts))
+
+
 def render_alerts_banner() -> None:
     """Show the unread watchlist alerts; renders nothing when there are none."""
     store = get_store()
@@ -1692,7 +1831,7 @@ def main() -> None:
             screen["sort_ascending"],
         )
 
-    render_header()
+    render_header(store)
     render_sidebar_filters()
 
     sync_info = store.get_last_sync_info()
@@ -1716,6 +1855,7 @@ def main() -> None:
     )
 
     with tab_screener:
+        render_buy_opportunities_banner()
         render_alerts_banner()
 
         # Render the new top-level filters grid

@@ -96,3 +96,36 @@ def test_null_sides_are_skipped() -> None:
 def test_bucket_defaults_to_current_week() -> None:
     fired = evaluate_alerts(_row(price=161.0), _row(price=159.0))
     assert fired[0].dedupe_key == f"AAA:off_high:{week_bucket()}"
+
+
+def test_buy_opportunity_flags_near_52w_low() -> None:
+    from stonks.alerts import buy_opportunity
+
+    row = _row(price=94.0, week_52_low=90.0, dcf_fair_value=None, lynch_fair_value=None)
+    opp = buy_opportunity(row)
+    assert opp is not None
+    assert opp["symbol"] == "AAA"
+    assert opp["below_both_fair_values"] is False
+
+
+def test_buy_opportunity_highlights_below_both_fair_values() -> None:
+    from stonks.alerts import buy_opportunity
+
+    row = _row(
+        price=94.0,
+        week_52_low=90.0,
+        dcf_fair_value=120.0,
+        lynch_fair_value=110.0,
+    )
+    opp = buy_opportunity(row)
+    assert opp is not None
+    assert opp["below_both_fair_values"] is True
+
+
+def test_buy_opportunity_ignores_missing_or_not_low() -> None:
+    from stonks.alerts import buy_opportunity
+
+    assert buy_opportunity(_row(price=120.0, week_52_low=90.0)) is None
+    assert buy_opportunity(_row(price=None, week_52_low=90.0)) is None
+    assert buy_opportunity(_row(price=94.0, week_52_low=None)) is None
+    assert buy_opportunity(_row(price=94.0, week_52_low=0)) is None

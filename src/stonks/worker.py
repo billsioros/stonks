@@ -95,11 +95,19 @@ def fetch_watched_news(store: SQLiteStore, symbols: list[str]) -> int:
 
 
 def _maybe_run_sanity_checks(store: SQLiteStore) -> None:
-    """Re-run the reference-site checks every few hours and keep the verdicts."""
-    if sanity.report_is_fresh(sanity.load_report(store)):
+    """Re-run the reference-site checks every few hours and keep the verdicts.
+
+    Checks read the stored snapshot, so they can still run after a failed sync.
+    A broken check must never change the sync outcome we just recorded.
+    """
+    try:
+        if sanity.report_is_fresh(sanity.load_report(store)):
+            return
+        results = sanity.run_sanity_checks(store)
+        sanity.save_report(store, results)
+    except Exception:
+        logger.exception("Cross-checks could not be refreshed")
         return
-    results = sanity.run_sanity_checks(store)
-    sanity.save_report(store, results)
     diverged = [result.platform for result in results if result.ok is False]
     if diverged:
         logger.warning("⚠️ Cross-check diverged on: %s", ", ".join(diverged))
@@ -130,9 +138,15 @@ def job() -> None:
         watched = set(store.get_watchlist_symbols())
         previous = _watched_rows(store, watched)
 
-        discount_rate = current_discount_rate()
+        try:
+            discount_rate = current_discount_rate()
+        except OSError as exc:
+            raise OSError(f"Treasury yield lookup failed: {exc}") from exc
         logger.info("📉 DCF discount rate: %.0f%%", discount_rate * 100)
-        rows = fetch_rows(discount_rate=discount_rate)
+        try:
+            rows = fetch_rows(discount_rate=discount_rate)
+        except OSError as exc:
+            raise OSError(f"StockAnalysis screener fetch failed: {exc}") from exc
         if not rows:
             logger.warning("⚠️ No screener data found.")
             _record_sync_outcome(
@@ -143,7 +157,10 @@ def job() -> None:
             )
             return
 
-        largest_buys = fetch_largest_buys()
+        try:
+            largest_buys = fetch_largest_buys()
+        except OSError as exc:
+            raise OSError(f"HedgeFollow largest-buys fetch failed: {exc}") from exc
         if largest_buys is None:
             logger.warning("⚠️ HedgeFollow buys unavailable; flag left unknown")
         else:
@@ -163,13 +180,14 @@ def job() -> None:
         if changed or news:
             logger.info("🔔 %s change alerts, %s news alerts", changed, news)
 
-        _maybe_run_sanity_checks(store)
-
         logger.info("✅ Synced %s symbols", len(rows))
     except Exception as exc:
         logger.exception("💥 Critical error")
         if store is not None:
             _record_sync_outcome(store, attempted_at, "failed", str(exc))
+    finally:
+        if store is not None:
+            _maybe_run_sanity_checks(store)
 
 
 def run_worker() -> None:

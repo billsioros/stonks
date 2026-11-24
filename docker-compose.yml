@@ -6,6 +6,9 @@ services:
       - "${STONKS_PORT:-8501}:8501"
     volumes:
       - ./data:/app/data
+    env_file:
+      - path: .env
+        required: false
     command: ["streamlit", "run", "src/stonks/app.py"]
     restart: unless-stopped
     networks:
@@ -15,6 +18,9 @@ services:
     build: .
     volumes:
       - ./data:/app/data
+    env_file:
+      - path: .env
+        required: false
     command: ["python", "-m", "stonks.worker"]
     restart: unless-stopped
     networks:

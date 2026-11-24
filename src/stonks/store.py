@@ -5,7 +5,7 @@ import math
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
 
 from stonks.config import DB_PATH
 
@@ -15,6 +15,10 @@ VALUATION_COLUMNS = (
     "lynch_fair_value",
     "lynch_upside_pct",
 )
+
+# Inputs persisted beside the fair values so GuruFocus checks can recompute the
+# DCF model from the same data the screener used.
+DCF_INPUT_COLUMNS = ("eps_growth_10y_pct", "dcf_discount_rate_pct")
 
 # 1 when the symbol is in HedgeFollow's largest hedge fund buys, 0 when not, NULL
 # when the list could not be read during that sync.
@@ -61,6 +65,7 @@ STOCK_FIELDS = [
     "fcf_margin_pct",
     "revenue_growth_5y_pct",
     "eps_growth_5y_pct",
+    "eps_growth_10y_pct",
     "beta",
     "price",
     "week_52_high",
@@ -94,6 +99,7 @@ STOCK_FIELDS = [
     "valuation_triangulation",
     "valuation_upside_capped_pct",
     *VALUATION_COLUMNS,
+    *DCF_INPUT_COLUMNS,
     *FLAG_COLUMNS,
 ]
 
@@ -129,7 +135,7 @@ class StockQueryResult(tuple[Any, ...]):
         total_pages: int,
         total_matching: int,
         warnings: list[str] | None = None,
-    ) -> "StockQueryResult":
+    ) -> Self:
         instance = super().__new__(cls, (rows, total_pages, total_matching))
         instance.rows = rows
         instance.total_pages = total_pages
@@ -265,6 +271,8 @@ class SQLiteStore:
                     long_term_debt_to_equity REAL,
                     asset_turnover REAL,
                     eps_ttm REAL,
+                    eps_growth_10y_pct REAL,
+                    dcf_discount_rate_pct REAL,
                     net_income REAL,
                     free_cash_flow REAL,
                     fcf_growth_5y_pct REAL,
@@ -296,7 +304,7 @@ class SQLiteStore:
             stock_columns = {
                 row[1] for row in conn.execute("PRAGMA table_info(stocks)")
             }
-            for column in VALUATION_COLUMNS:
+            for column in (*VALUATION_COLUMNS, *DCF_INPUT_COLUMNS):
                 if column not in stock_columns:
                     conn.execute(
                         f"ALTER TABLE stocks ADD COLUMN {column} REAL"  # nosec B608
@@ -713,6 +721,40 @@ class SQLiteStore:
             conn.commit()
         return cursor.rowcount
 
+    def get_buy_opportunities(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Screener stocks near their 52-week low, strongest first.
+
+        "Historically low" here means within 5% of the 52-week low. Stocks below
+        both DCF and Peter Lynch fair value estimates are ranked first.
+        """
+        limit = max(1, min(int(limit), 100))
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                SELECT symbol, description, price, week_52_low,
+                       dcf_fair_value, lynch_fair_value,
+                       dcf_upside_pct, lynch_upside_pct
+                FROM stocks
+                WHERE price > 0 AND week_52_low > 0
+                  AND price <= week_52_low * 1.05
+                ORDER BY
+                    CASE
+                        WHEN dcf_fair_value IS NOT NULL
+                         AND lynch_fair_value IS NOT NULL
+                         AND price <= dcf_fair_value
+                         AND price <= lynch_fair_value
+                        THEN 0 ELSE 1
+                    END,
+                    (price / week_52_low) ASC,
+                    COALESCE(dcf_upside_pct, -999999) DESC,
+                    COALESCE(lynch_upside_pct, -999999) DESC
+                LIMIT ?
+                """,
+                (limit,),
+            )
+            cols = [c[0] for c in cur.description]
+            return [dict(zip(cols, row)) for row in cur.fetchall()]
+
     # ── Stocks ────────────────────────────────────────────────────────
 
     def get_stocks(
@@ -753,6 +795,7 @@ class SQLiteStore:
             "fcf_margin_pct",
             "revenue_growth_5y_pct",
             "eps_growth_5y_pct",
+            *DCF_INPUT_COLUMNS,
             "beta",
             "price",
             "revenue_growth_3y_pct",
@@ -867,6 +910,7 @@ class SQLiteStore:
             "fcf_margin_pct",
             "revenue_growth_5y_pct",
             "eps_growth_5y_pct",
+            *DCF_INPUT_COLUMNS,
             "beta",
             "price",
             "week_52_high",

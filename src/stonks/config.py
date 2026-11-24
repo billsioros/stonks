@@ -13,6 +13,9 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 # ── Worker ───────────────────────────────────────────────────────────
 # The worker refreshes the full screener dataset on this interval.
 WORKER_INTERVAL_MINUTES = 60
+# A sync counts as live for two worker intervals: one missed run is tolerated,
+# two consecutive misses mean the worker is no longer keeping up.
+SYNC_ACTIVE_WINDOW_MINUTES = 2 * WORKER_INTERVAL_MINUTES
 
 # ── Screener defaults ───────────────────────────────────────────────
 DEFAULT_PAGE_SIZE: int = 50
@@ -68,10 +71,10 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "roe_5y_avg_pct": "ROE (5Y) %",
     "roic_5y_avg_pct": "ROIC (5Y) %",
     "shares_insiders_pct": "Shares Insiders (Ratio)",
-    "shares_insiders_percent": "Shares Insiders %",
+    "shares_insiders_percent": "Insider Ownership %",
     "cyclical_peak_risk": "Cyclical Peak Risk",
-    "valuation_triangulation": "Valuation Consensus",
-    "valuation_upside_capped_pct": "Upside (Capped %)",
+    "valuation_triangulation": "Model Agreement",
+    "valuation_upside_capped_pct": "Avg Upside %",
     "industry": "Industry",
     "short_pct": "Short % Shares",
     "rating": "Rating",
@@ -105,9 +108,12 @@ COLUMN_HELP: dict[str, str] = {
     "roa_pct": "Net income divided by total assets, in percent.",
     "roe_pct": "Net income divided by shareholders' equity, in percent.",
     "roic_pct": "Operating profit after tax divided by invested capital, in percent.",
-    "current_ratio": "Current assets divided by current liabilities; below 1 is tight.",
+    "current_ratio": (
+        "Current assets ÷ current liabilities; below 1 means short-term bills "
+        "exceed short-term assets."
+    ),
     "debt_to_equity": "Total debt divided by shareholders' equity.",
-    "fcf_margin_pct": "Free cash flow divided by revenue, in percent.",
+    "fcf_margin_pct": "Free cash flow ÷ revenue, in percent.",
     "revenue_growth_5y_pct": "Compound annual revenue growth over five years, in percent.",
     "eps_growth_5y_pct": "Compound annual earnings-per-share growth over five years.",
     "beta": "Price volatility versus the market; 1.0 moves with the market.",
@@ -138,8 +144,15 @@ COLUMN_HELP: dict[str, str] = {
     "shares_insiders_pct": "Insiders' stake as a fraction, where 0.05 means 5%.",
     "shares_insiders_percent": "Insiders' stake as a percentage, where 5.0 means 5%.",
     "cyclical_peak_risk": "1 when a cyclical stock screens cheap on peak earnings.",
-    "valuation_triangulation": "How far the DCF, Lynch and analyst-target upsides agree.",
-    "valuation_upside_capped_pct": "Average model upside per stock, capped at 150%.",
+    "valuation_triangulation": (
+        "Verdict on how many valuation signals agree: Strong Consensus, Moderate "
+        "Value, Model Divergence / Outlier, Cyclical Distorted, or Unrated / "
+        "Insufficient Data."
+    ),
+    "valuation_upside_capped_pct": (
+        "Average model upside per stock, capped at 150% so one outlier cannot "
+        "dominate a ranking."
+    ),
     "industry": "Provider industry classification.",
     "short_pct": "Shares sold short as a percentage of the float.",
     "rating": "Analyst consensus rating.",
@@ -149,8 +162,10 @@ COLUMN_HELP: dict[str, str] = {
     "lynch_fair_value": "Growth-adjusted fair value per share, in the Lynch style.",
     "lynch_upside_pct": "Lynch fair value versus today's price, in percent.",
     "hedge_fund_buys": (
-        "1 when the stock is in HedgeFollow's largest hedge-fund buys. 13F "
-        "filings lag up to 45 days and crowding is not a signal on its own."
+        "🐋 when the stock is in HedgeFollow's largest hedge-fund buys, ✗ when "
+        "it is in the feed but not on that list, and — when HedgeFollow has no "
+        "data. 13F filings lag up to 45 days and crowding is not a signal on "
+        "its own."
     ),
 }
 
@@ -171,7 +186,6 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "lynch_upside_pct",
         "valuation_triangulation",
         "valuation_upside_capped_pct",
-        "shares_insiders_pct",
         "shares_insiders_percent",
         "cyclical_peak_risk",
         "fcf_margin_pct",
@@ -240,14 +254,15 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "lynch_upside_pct",
         "valuation_triangulation",
         "valuation_upside_capped_pct",
-        "shares_insiders_pct",
         "shares_insiders_percent",
         "cyclical_peak_risk",
         "fcf_margin_pct",
         "current_ratio",
         "hedge_fund_buys",
     ],
-    "All Columns": COLUMN_DISPLAY_NAMES.keys(),
+    # The ratio duplicate stays in the schema and numeric filters, but never in
+    # a display preset: 0.05 and 5.0 describe the same insider stake.
+    "All Columns": [c for c in COLUMN_DISPLAY_NAMES if c != "shares_insiders_pct"],
 }
 
 # ── Numeric filter columns ──────────────────────────────────────────

@@ -16,9 +16,11 @@ def test_masthead_has_no_auto_sync_indicator() -> None:
     assert not [md for md in at.markdown if "Auto-sync" in str(md.value)]
 
 
-def test_masthead_keeps_the_data_source_line() -> None:
+def test_footer_credits_data_sources() -> None:
     at = _app()
-    assert any("data from StockAnalysis.com" in str(md.value) for md in at.markdown)
+    html = " ".join(str(md.value) for md in at.markdown)
+    assert "StockAnalysis.com" in html
+    assert "HedgeFollow" in html
 
 
 def test_html_page_title_is_just_the_brand(monkeypatch: pytest.MonkeyPatch) -> None:
