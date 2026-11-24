@@ -17,6 +17,7 @@ def _app() -> AppTest:
 
 def _seed_alert() -> SQLiteStore:
     store = SQLiteStore()
+    store.add_to_watchlist(TEST_SYMBOL)
     store.add_alert(
         TEST_SYMBOL,
         "off_high",
@@ -31,6 +32,7 @@ def _seed_alert() -> SQLiteStore:
 def _cleanup(store: SQLiteStore) -> None:
     with store._connect() as conn:
         conn.execute("DELETE FROM alerts WHERE dedupe_key = ?", (TEST_KEY,))
+        conn.execute("DELETE FROM watchlist WHERE symbol = ?", (TEST_SYMBOL,))
         conn.commit()
 
 
@@ -53,6 +55,10 @@ def test_banner_lists_alert_and_marks_all_read() -> None:
         next(b for b in at.button if b.label == "Mark all read").click().run()
 
         assert store.count_unread_alerts() == 0
+
+        # AppTest keeps collapsed expander children from the previous run, so
+        # use a fresh run to check that the alert controls are gone.
+        at = _app()
         assert not [b for b in at.button if b.label == "Mark all read"]
     finally:
         _cleanup(store)

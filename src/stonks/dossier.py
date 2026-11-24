@@ -124,14 +124,145 @@ def coverage(gates: Iterable[Gate]) -> float:
     return passed / len(applicable)
 
 
+PORTFOLIO_SECTOR_MAX_PCT = 25.0
+
+
+def fit_gate(
+    symbol: str,
+    row: Mapping[str, Any],
+    watchlist: Iterable[Mapping[str, Any]] | None,
+) -> Gate:
+    """Equal-weight watchlist proxy for exposure and sector concentration."""
+    if watchlist is None:
+        return Gate(
+            "fit",
+            "Portfolio fit",
+            (
+                Check(
+                    "fit.portfolio",
+                    "Holding context",
+                    "not_applicable",
+                    DASH,
+                    "Portfolio supplied",
+                    "No portfolio supplied",
+                ),
+            ),
+            "No portfolio supplied",
+        )
+
+    entries = list(watchlist)
+    if not entries:
+        return Gate(
+            "fit",
+            "Portfolio fit",
+            (
+                Check(
+                    "fit.watchlist_presence",
+                    "Holding context",
+                    "not_applicable",
+                    "empty watchlist",
+                    "Symbol present in watchlist",
+                    "watchlist.symbol",
+                ),
+                Check(
+                    "fit.sector_concentration",
+                    "Watchlist sector concentration",
+                    "not_applicable",
+                    "empty watchlist",
+                    f"<= {PORTFOLIO_SECTOR_MAX_PCT:.0f}% of watchlist",
+                    "equal-weight watchlist proxy, screener.industry",
+                ),
+            ),
+            "No holdings supplied",
+        )
+
+    symbols = {str(entry.get("symbol", "")).upper() for entry in entries}
+    presence_ok = symbol.upper() in symbols
+    raw_sector = row.get("industry")
+    symbol_sector = (
+        str(raw_sector).casefold()
+        if isinstance(raw_sector, str) and raw_sector.strip()
+        else ""
+    )
+    sectors = [
+        str(item).casefold()
+        for entry in entries
+        if (item := entry.get("industry")) and isinstance(item, str) and item.strip()
+    ]
+    sector_ok: bool | None = None
+    if not symbol_sector:
+        concentration_value = "symbol industry unavailable"
+    elif not sectors:
+        concentration_value = "watchlist industries unavailable"
+    else:
+        share = (
+            sum(1 for item in sectors if item == symbol_sector) / len(sectors) * 100.0
+        )
+        sector_ok = share <= PORTFOLIO_SECTOR_MAX_PCT
+        concentration_value = f"{share:.0f}% of watchlist in {raw_sector}"
+    concentration = Check(
+        "fit.sector_concentration",
+        "Watchlist sector concentration",
+        _status_from(sector_ok),
+        concentration_value,
+        f"<= {PORTFOLIO_SECTOR_MAX_PCT:.0f}% of watchlist",
+        "equal-weight watchlist proxy, screener.industry",
+    )
+    presence = Check(
+        "fit.watchlist_presence",
+        "Holding context",
+        _status_from(presence_ok),
+        "on watchlist" if presence_ok else "not on watchlist",
+        "Symbol present in watchlist",
+        "watchlist.symbol",
+    )
+    return Gate(
+        "fit",
+        "Portfolio fit",
+        (presence, concentration),
+        _gate_summary("fit", (presence, concentration)),
+    )
+
+
+DECISION_SUMMARY_LIMIT = 6
+
+
+def decision_summary(dossier: Dossier) -> dict[str, Any]:
+    """Facts a reader would need before treating a dossier as actionable.
+
+    This is deliberately not a verdict: it turns existing checks into the open
+    questions, unresolved evidence and freshness a human has to weigh.
+    """
+    checks = [check for gate in dossier.gates for check in gate.checks]
+    unknown = [check for check in checks if check.status == "unverified"]
+    unresolved = [check for check in checks if check.status in {"fail", "unverified"}]
+    freshness = next(
+        (check.value for check in checks if check.id == "filings.freshness"),
+        "not available",
+    )
+    return {
+        "coverage": dossier.coverage,
+        "freshness": freshness,
+        "unknowns": tuple(
+            f"{check.id}: {check.value}" for check in unknown[:DECISION_SUMMARY_LIMIT]
+        ),
+        "changes": tuple(
+            f"{check.id} — {check.threshold}"
+            for check in unresolved[:DECISION_SUMMARY_LIMIT]
+        ),
+    }
+
+
 # ── Quantitative thresholds ──────────────────────────────────────────
 # Each constant is a judgement call, stated once here so tests pin the trade-off
 # rather than a magic number buried in a comparison.
 ROIC_MIN_PCT = 10.0
+GROSS_MARGIN_LEVEL_MIN_PCT = 30.0
 GROSS_MARGIN_STDEV_MAX_PP = 3.0
 MIN_INDUSTRY_PEERS = 5
 CASH_CONVERSION_MIN = 0.8
 FCF_MARGIN_MIN_PCT = 5.0
+FCF_STABILITY_YEARS = 5
 DILUTION_MAX_CAGR_PCT = 2.0
 LEVERAGE_MAX = 1.0
 DASH = "—"
@@ -157,6 +288,25 @@ def _status_from(ok: bool | None) -> Status:
     if ok is None:
         return "unverified"
     return "pass" if ok else "fail"
+
+
+def _check_status(checks: Sequence[Check], check_id: str) -> Status:
+    """Read a check by stable ID, not by its position in the gate."""
+    return next(
+        (check.status for check in checks if check.id == check_id), "unverified"
+    )
+
+
+def _replace_check(
+    checks: list[Check], check_id: str, *, status: Status, value: str
+) -> None:
+    """Update one check by stable ID, preserving its label and threshold."""
+    for index, check in enumerate(checks):
+        if check.id == check_id:
+            checks[index] = Check(
+                check.id, check.label, status, value, check.threshold, check.evidence
+            )
+            return
 
 
 def _annual_series(
@@ -260,6 +410,22 @@ def quality_gate(
         )
     )
 
+    persistence_ok: bool | None = None
+    if roic_now is not None and roic_5y is not None:
+        persistence_ok = roic_now >= ROIC_MIN_PCT and roic_5y >= ROIC_MIN_PCT
+    checks.append(
+        Check(
+            "quality.roic_persistence",
+            "Returns stay above the quality bar",
+            _status_from(persistence_ok),
+            DASH
+            if roic_now is None or roic_5y is None
+            else f"current {roic_now:.1f}%, 5y {roic_5y:.1f}%",
+            f"current and 5y >= {ROIC_MIN_PCT:.1f}%",
+            "screener.roic_pct, screener.roic_5y_avg_pct",
+        )
+    )
+
     revenue = _annual_series(income, "revenue")
     gross_profit = _annual_series(income, "gp")
     margins = [
@@ -282,6 +448,22 @@ def quality_gate(
             stability_value,
             f"stdev <= {GROSS_MARGIN_STDEV_MAX_PP:.1f}pp",
             "income_annual.gp / income_annual.revenue",
+        )
+    )
+
+    gross_margin = _num(row.get("gross_margin_pct"))
+    checks.append(
+        Check(
+            "quality.gross_margin_level",
+            "Gross margin shows pricing power",
+            _status_from(
+                None
+                if gross_margin is None
+                else gross_margin >= GROSS_MARGIN_LEVEL_MIN_PCT
+            ),
+            DASH if gross_margin is None else f"{gross_margin:.1f}%",
+            f">= {GROSS_MARGIN_LEVEL_MIN_PCT:.1f}%",
+            "screener.gross_margin_pct",
         )
     )
 
@@ -364,6 +546,28 @@ def quality_gate(
             DASH if fcf_margin is None else f"{fcf_margin:.1f}%",
             f">= {FCF_MARGIN_MIN_PCT:.1f}%",
             "screener.fcf_margin_pct",
+        )
+    )
+
+    fcf_series = _annual_series(income, "fcf")[:FCF_STABILITY_YEARS]
+    if len(fcf_series) < FCF_STABILITY_YEARS or any(
+        value is None for value in fcf_series
+    ):
+        fcf_stability_ok: bool | None = None
+        fcf_stability_value = "missing FCF year in five-year window"
+    else:
+        values = [value for value in fcf_series if value is not None]
+        fcf_stability_ok = all(value > 0 for value in values)
+        positive = sum(1 for value in values if value > 0)
+        fcf_stability_value = f"{positive}/{len(values)} positive FCF years"
+    checks.append(
+        Check(
+            "quality.fcf_stability",
+            "Free cash flow stays positive",
+            _status_from(fcf_stability_ok),
+            fcf_stability_value,
+            f"positive in {FCF_STABILITY_YEARS} fiscal years",
+            "income_annual.fcf",
         )
     )
 
@@ -497,6 +701,8 @@ def _gate_summary(name: str, checks: Sequence[Check]) -> str:
 # ── Forward evidence ─────────────────────────────────────────────────
 REVISION_WINDOW_DAYS = 90
 EVENT_RISK_DAYS = 7
+GUIDANCE_FRESH_DAYS = 120
+QUARTERS_FOR_ACCELERATION = 5
 TRAILING_ONLY = "Trailing evidence only"
 
 
@@ -530,6 +736,22 @@ def _isdigit_sign(value: float) -> int:
     return 0
 
 
+def _quarterly_acceleration(
+    statement: Mapping[str, Any] | None, row_id: str, baseline: float | None
+) -> tuple[bool | None, str]:
+    """Compare the latest quarter's YoY growth with a long-run growth average."""
+    values = _annual_series(statement, row_id)
+    if len(values) < QUARTERS_FOR_ACCELERATION:
+        return None, "fewer than five comparable quarters"
+    latest, year_ago = values[0], values[QUARTERS_FOR_ACCELERATION - 1]
+    if latest is None or year_ago is None or latest <= 0 or year_ago <= 0:
+        return None, "no positive quarterly base"
+    if baseline is None:
+        return None, "no five-year growth baseline"
+    yoy = (latest / year_ago - 1.0) * 100.0
+    return yoy > baseline, f"{yoy:+.1f}% YoY vs {baseline:+.1f}% 5y average"
+
+
 def forward_gate(
     row: Mapping[str, Any],
     *,
@@ -543,10 +765,11 @@ def forward_gate(
 
     Trailing growth says where a company has been. This gate only passes checks
     on evidence that points forward: consensus estimates, analyst revisions in
-    the last quarter, the quarterly margin slope, guidance in a filing and the
-    distance to the next earnings date. If none of the three leading indicators
-    is available the gate is an explicit failure labelled "Trailing evidence
-    only", so a memo cannot quietly extrapolate history into a thesis.
+    the last quarter, the quarterly margin slope, quarterly growth acceleration,
+    guidance in a filing and the distance to the next earnings date. If none of
+    the three leading indicators is available the gate is an explicit failure
+    labelled "Trailing evidence only", so a memo cannot quietly extrapolate
+    history into a thesis.
     """
     today_date = _as_date(today) or date.today()
     checks: list[Check] = []
@@ -655,15 +878,39 @@ def forward_gate(
         )
     )
 
+    guidance_dates = [
+        filed
+        for hit in guidance_hits
+        if isinstance(hit, Mapping) and (filed := _as_date(hit.get("filing_date")))
+    ]
+    future_dates = [filed for filed in guidance_dates if filed > today_date]
+    guidance_dates = [filed for filed in guidance_dates if filed <= today_date]
+    if not guidance_hits:
+        guidance_ok: bool | None = None
+        guidance_value = "no filing evidence"
+    elif not guidance_dates:
+        guidance_ok = None
+        guidance_value = (
+            "future filing date"
+            if future_dates
+            else "guidance hits without filing dates"
+        )
+    else:
+        ages = [(today_date - filed).days for filed in guidance_dates]
+        newest = min(ages)
+        if newest <= GUIDANCE_FRESH_DAYS:
+            guidance_ok = True
+            guidance_value = f"{len(guidance_dates)} filing(s) mention guidance, newest {newest}d old"
+        else:
+            guidance_ok = False
+            guidance_value = f"guidance last seen {newest}d ago (stale)"
     checks.append(
         Check(
             "forward.guidance_present",
-            "Management has guided",
-            _status_from(True if guidance_hits else None),
-            f"{len(guidance_hits)} filing(s) mention guidance"
-            if guidance_hits
-            else "no filing evidence",
-            "guidance/outlook found in the latest filing",
+            "Management has guided recently",
+            _status_from(guidance_ok),
+            guidance_value,
+            f"guidance/outlook in a filing within {GUIDANCE_FRESH_DAYS} days",
             "filings.guidance",
         )
     )
@@ -687,15 +934,47 @@ def forward_gate(
         )
     )
 
-    leading = (checks[0].status, checks[1].status, checks[4].status)
+    revenue_ok, revenue_value = _quarterly_acceleration(
+        quarterly, "revenue", _num(row.get("revenue_growth_5y_pct"))
+    )
+    checks.append(
+        Check(
+            "forward.revenue_acceleration",
+            "Recent revenue growth is accelerating",
+            _status_from(revenue_ok),
+            revenue_value,
+            "latest quarter YoY > 5y revenue growth average",
+            "income_quarterly.revenue, screener.revenue_growth_5y_pct",
+        )
+    )
+    eps_ok, eps_value = _quarterly_acceleration(
+        quarterly, "eps", _num(row.get("eps_growth_5y_pct"))
+    )
+    checks.append(
+        Check(
+            "forward.eps_acceleration",
+            "Recent earnings growth is accelerating",
+            _status_from(eps_ok),
+            eps_value,
+            "latest quarter YoY > 5y EPS growth average",
+            "income_quarterly.eps, screener.eps_growth_5y_pct",
+        )
+    )
+
+    leading = tuple(
+        _check_status(checks, check_id)
+        for check_id in (
+            "forward.estimate_growth",
+            "forward.revision_direction",
+            "forward.guidance_present",
+        )
+    )
     if all(status in {"unverified", "fail"} for status in leading):
-        checks[0] = Check(
-            checks[0].id,
-            checks[0].label,
-            "fail",
-            "no forward estimate, revision or guidance",
-            checks[0].threshold,
-            checks[0].evidence,
+        _replace_check(
+            checks,
+            "forward.estimate_growth",
+            status="fail",
+            value="no forward estimate, revision or guidance",
         )
         summary = TRAILING_ONLY
     else:
@@ -725,6 +1004,12 @@ INFORMATIONAL_PHRASES = (
     "regulatory",
     "related party",
     "off-balance sheet",
+    "impairment",
+    "cybersecurity incident",
+    "internal control",
+    "supplier concentration",
+    "competition",
+    "pricing pressure",
 )
 GUIDANCE_PHRASES = ("guidance", "outlook")
 FRESHNESS_MAX_DAYS = {"10-K": 400, "10-Q": 120}
@@ -759,12 +1044,7 @@ def _phrase_check(
     matching = _matching_hits(hits, phrase)
     count = matching[0].get("count", 0) if matching else 0
     value = f"{count} hit(s)" if matching else "no hits"
-    links = ", ".join(
-        f"{hit.get('filing_date') or 'unknown date'} "
-        f"{hit.get('accession') or 'unknown accession'} "
-        f"{hit.get('url') or 'no filing link'}"
-        for hit in matching
-    )
+    links = ", ".join(_hit_line(hit) for hit in matching)
     if informational:
         status: Status = "unverified"
         evidence = f"{phrase}: {PHRASE_NOTE}; {links or 'no hits'}"
@@ -864,11 +1144,18 @@ def filing_gate(
 
 
 def _hit_line(hit: Mapping[str, Any]) -> str:
-    """One dated, linked phrase hit for the dossier's filing list."""
-    phrase = str(hit.get("phrase") or "phrase")
-    filed = str(hit.get("filing_date") or "unknown date")
-    url = str(hit.get("url") or "")
-    return f"{phrase} ({filed}) {url}".strip()
+    """One dated, linked phrase hit with its filing identity and excerpt."""
+    parts = [
+        str(hit.get("phrase") or "phrase"),
+        str(hit.get("form") or "unknown form"),
+        str(hit.get("filing_date") or "unknown date"),
+        str(hit.get("accession") or "unknown accession"),
+        str(hit.get("url") or "no filing link"),
+    ]
+    snippet = str(hit.get("snippet") or "").strip()
+    if snippet:
+        parts.append(f'"{snippet}"')
+    return " ".join(parts)
 
 
 def build_dossier(
@@ -883,12 +1170,14 @@ def build_dossier(
     today: object = None,
     filing_evidence: FilingEvidence | None = None,
     guidance_hits: Sequence[Mapping[str, Any]] = (),
+    watchlist: Iterable[Mapping[str, Any]] | None = None,
 ) -> Dossier:
     """Assemble the gates available today into one deterministic dossier.
 
     Filing evidence is supplied by the caller, together with its guidance hits
-    for the forward gate; portfolio holdings still belong to a later phase and
-    stay explicit unknown/inapplicable. Nothing here performs I/O.
+    for the forward gate. A watchlist, when supplied, is used as a labelled
+    equal-weight exposure proxy; without it the fit gate stays not applicable.
+    Nothing here performs I/O.
     """
     snapshot = row or {}
     evidence = filing_evidence or FilingEvidence.empty()
@@ -905,21 +1194,7 @@ def build_dossier(
             today=today,
         ),
         filings,
-        Gate(
-            key="fit",
-            label="Portfolio fit",
-            checks=(
-                Check(
-                    id="fit.portfolio",
-                    label="Holding context",
-                    status="not_applicable",
-                    value=DASH,
-                    threshold="Portfolio supplied",
-                    evidence="No portfolio supplied",
-                ),
-            ),
-            summary="No portfolio supplied",
-        ),
+        fit_gate(symbol, snapshot, watchlist),
     ]
     stamp = as_of or "unknown"
     provenance: list[tuple[str, str, str]] = [

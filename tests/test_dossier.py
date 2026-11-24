@@ -18,6 +18,7 @@ from stonks.dossier import (
     Dossier,
     FilingEvidence,
     Gate,
+    build_dossier,
     coverage,
     filing_gate,
     forward_gate,
@@ -108,8 +109,10 @@ def _row(**overrides: object) -> dict[str, object]:
         "industry": "Semiconductors",
         "roic_5y_avg_pct": 14.0,
         "roic_pct": 15.0,
+        "gross_margin_pct": 40.0,
         "operating_margin_pct": 30.0,
         "revenue_growth_5y_pct": 20.0,
+        "eps_growth_5y_pct": 15.0,
         "free_cash_flow": 100.0,
         "net_income": 120.0,
         "fcf_margin_pct": 12.0,
@@ -184,11 +187,14 @@ def test_quality_gate_has_the_expected_checks() -> None:
     assert [check.id for check in gate.checks] == [
         "quality.roic_5y",
         "quality.roic_trend",
+        "quality.roic_persistence",
         "quality.gross_margin_stability",
+        "quality.gross_margin_level",
         "quality.margin_vs_industry",
         "quality.growth_vs_industry",
         "quality.cash_conversion",
         "quality.fcf_margin",
+        "quality.fcf_stability",
         "quality.dilution",
         "quality.shareholder_yield",
         "quality.insider_alignment",
@@ -212,23 +218,39 @@ def test_quality_roic_trend_compares_current_with_historical_average() -> None:
     assert _quality(_row(roic_pct=12.0)).checks[1].status == "fail"
 
 
+def test_quality_roic_persistence_requires_both_current_and_5y_above_bar() -> None:
+    gate = _quality(_row(roic_pct=12.0, roic_5y_avg_pct=11.0))
+    check = next(c for c in gate.checks if c.id == "quality.roic_persistence")
+    assert check.status == "pass"
+    fail = _quality(_row(roic_pct=12.0, roic_5y_avg_pct=9.0))
+    assert (
+        next(c for c in fail.checks if c.id == "quality.roic_persistence").status
+        == "fail"
+    )
+    missing = _quality(_row(roic_pct=None, roic_5y_avg_pct=11.0))
+    assert (
+        next(c for c in missing.checks if c.id == "quality.roic_persistence").status
+        == "unverified"
+    )
+
+
 def test_quality_cash_conversion_is_unverified_when_profit_is_negative() -> None:
     gate = _quality(_row(net_income=-5.0))
-    check = gate.checks[5]
+    check = gate.checks[7]
     assert check.status == "unverified"
     assert "not meaningful" in check.value
 
 
 def test_quality_industry_comparison_needs_five_peers() -> None:
     gate = _quality(_row(), peers=4)
-    assert gate.checks[3].status == "unverified"
-    assert "fewer than five" in gate.checks[3].value
+    assert gate.checks[5].status == "unverified"
+    assert "fewer than five" in gate.checks[5].value
 
 
 def test_quality_industry_comparison_uses_the_median() -> None:
     gate = _quality(_row(operating_margin_pct=25.0))
-    assert gate.checks[3].status == "pass"
-    assert _quality(_row(operating_margin_pct=24.9)).checks[3].status == "fail"
+    assert gate.checks[5].status == "pass"
+    assert _quality(_row(operating_margin_pct=24.9)).checks[5].status == "fail"
 
 
 def test_quality_gross_margin_stability_uses_five_fiscal_years() -> None:
@@ -240,7 +262,7 @@ def test_quality_gross_margin_stability_uses_five_fiscal_years() -> None:
             }
         )
     )
-    assert _quality(_row(), stable).checks[2].status == "pass"
+    assert _quality(_row(), stable).checks[3].status == "pass"
 
     volatile = _statements(
         income_annual=_annual_statement(
@@ -250,11 +272,11 @@ def test_quality_gross_margin_stability_uses_five_fiscal_years() -> None:
             }
         )
     )
-    assert _quality(_row(), volatile).checks[2].status == "fail"
+    assert _quality(_row(), volatile).checks[3].status == "fail"
 
 
 def test_quality_gross_margin_stability_needs_statement_history() -> None:
-    assert _quality(_row()).checks[2].status == "unverified"
+    assert _quality(_row()).checks[3].status == "unverified"
 
 
 def test_quality_gross_margin_stability_needs_five_years_not_three() -> None:
@@ -266,12 +288,52 @@ def test_quality_gross_margin_stability_needs_five_years_not_three() -> None:
             }
         )
     )
-    assert _quality(_row(), three_years).checks[2].status == "unverified"
+    assert _quality(_row(), three_years).checks[3].status == "unverified"
+
+
+def test_quality_gross_margin_level_uses_absolute_bar() -> None:
+    gate = _quality(_row(gross_margin_pct=30.0))
+    check = next(c for c in gate.checks if c.id == "quality.gross_margin_level")
+    assert check.status == "pass"
+    low = _quality(_row(gross_margin_pct=29.9))
+    assert (
+        next(c for c in low.checks if c.id == "quality.gross_margin_level").status
+        == "fail"
+    )
+    missing = _quality(_row(gross_margin_pct=None))
+    assert (
+        next(c for c in missing.checks if c.id == "quality.gross_margin_level").status
+        == "unverified"
+    )
+
+
+def test_quality_fcf_stability_requires_five_positive_fcf_years() -> None:
+    stable = _statements(
+        income_annual=_annual_statement({"fcf": [10.0, 9.0, 8.0, 7.0, 6.0, 5.0]})
+    )
+    gate = _quality(_row(), stable)
+    assert (
+        next(c for c in gate.checks if c.id == "quality.fcf_stability").status == "pass"
+    )
+    weak = _statements(
+        income_annual=_annual_statement({"fcf": [10.0, -1.0, 8.0, 7.0, 6.0, 5.0]})
+    )
+    assert (
+        next(
+            c for c in _quality(_row(), weak).checks if c.id == "quality.fcf_stability"
+        ).status
+        == "fail"
+    )
+    missing = _quality(_row())
+    assert (
+        next(c for c in missing.checks if c.id == "quality.fcf_stability").status
+        == "unverified"
+    )
 
 
 def test_quality_dilution_is_unverified_without_share_history() -> None:
     gate = _quality(_row(), {"income_annual": _annual_statement({"revenue": [1.0]})})
-    assert gate.checks[7].status == "unverified"
+    assert gate.checks[10].status == "unverified"
 
 
 def test_quality_dilution_needs_five_years_not_two() -> None:
@@ -280,7 +342,7 @@ def test_quality_dilution_needs_five_years_not_two() -> None:
             {"sharesOutTotalCommon": [100.0, 100.0, 100.0]}
         )
     )
-    assert _quality(_row(), three_years).checks[7].status == "unverified"
+    assert _quality(_row(), three_years).checks[10].status == "unverified"
 
 
 def test_quality_dilution_fails_when_share_count_grows_over_two_percent() -> None:
@@ -289,14 +351,14 @@ def test_quality_dilution_fails_when_share_count_grows_over_two_percent() -> Non
             {"sharesOutTotalCommon": [112.0, 108.0, 105.0, 102.0, 100.0, 98.0]}
         )
     )
-    assert _quality(_row(), growing).checks[7].status == "fail"
+    assert _quality(_row(), growing).checks[10].status == "fail"
 
     flat = _statements(
         balance_annual=_annual_statement(
             {"sharesOutTotalCommon": [100.0, 100.0, 100.0, 100.0, 100.0, 100.0]}
         )
     )
-    assert _quality(_row(), flat).checks[7].status == "pass"
+    assert _quality(_row(), flat).checks[10].status == "pass"
 
 
 def test_quality_shareholder_yield_fails_when_payouts_exceed_free_cash_flow() -> None:
@@ -310,23 +372,25 @@ def test_quality_shareholder_yield_fails_when_payouts_exceed_free_cash_flow() ->
             }
         )
     )
-    assert _quality(_row(), generous).checks[8].status == "fail"
+    assert _quality(_row(), generous).checks[11].status == "fail"
 
 
 def test_quality_insider_alignment_is_pass_or_unverified_only() -> None:
-    assert _quality(_row(shares_insiders_percent=1.0)).checks[9].status == "pass"
-    assert _quality(_row(shares_insiders_percent=None)).checks[9].status == "unverified"
-    assert _quality(_row(shares_insiders_percent=0.0)).checks[9].status == "unverified"
+    assert _quality(_row(shares_insiders_percent=1.0)).checks[12].status == "pass"
+    assert (
+        _quality(_row(shares_insiders_percent=None)).checks[12].status == "unverified"
+    )
+    assert _quality(_row(shares_insiders_percent=0.0)).checks[12].status == "unverified"
 
 
 def test_quality_leverage_threshold_is_inclusive_at_one() -> None:
-    assert _quality(_row(long_term_debt_to_equity=1.0)).checks[10].status == "pass"
-    assert _quality(_row(long_term_debt_to_equity=1.01)).checks[10].status == "fail"
+    assert _quality(_row(long_term_debt_to_equity=1.0)).checks[13].status == "pass"
+    assert _quality(_row(long_term_debt_to_equity=1.01)).checks[13].status == "fail"
 
 
 def test_quality_summary_counts_passes_and_names_the_top_failure() -> None:
     gate = _quality(_row(roic_5y_avg_pct=9.0), _statements())
-    assert gate.summary.startswith("10/11 quality checks passed")
+    assert gate.summary.startswith("12/14 quality checks passed")
     assert "ROIC" in gate.summary
 
 
@@ -378,6 +442,35 @@ def _quarterly_margins(operating: list[float]) -> dict[str, object]:
     }
 
 
+def _quarterly_series(row_id: str, values: list[float]) -> dict[str, object]:
+    periods = [
+        {"key": f"Q{index}", "label": f"Q{index}", "is_ttm": False}
+        for index in range(len(values))
+    ]
+    return {
+        "income_quarterly": {
+            "periods": periods,
+            "rows": [{"id": row_id, "label": row_id, "values": values}],
+        }
+    }
+
+
+def _quarterly_acceleration(revenue: list[float], eps: list[float]) -> object:
+    periods = [
+        {"key": f"Q{index}", "label": f"Q{index}", "is_ttm": False}
+        for index in range(len(revenue))
+    ]
+    return {
+        "income_quarterly": {
+            "periods": periods,
+            "rows": [
+                {"id": "revenue", "label": "Revenue", "values": revenue},
+                {"id": "eps", "label": "EPS", "values": eps},
+            ],
+        }
+    }
+
+
 def _forward(
     forecast: dict[str, object] | None = None,
     statements: object = None,
@@ -395,7 +488,7 @@ def _forward(
     )
 
 
-def test_forward_gate_has_the_six_spec_checks() -> None:
+def test_forward_gate_has_the_eight_spec_checks() -> None:
     gate = _forward()
     assert [check.id for check in gate.checks] == [
         "forward.estimate_growth",
@@ -404,6 +497,8 @@ def test_forward_gate_has_the_six_spec_checks() -> None:
         "forward.revenue_trajectory",
         "forward.guidance_present",
         "forward.event_risk",
+        "forward.revenue_acceleration",
+        "forward.eps_acceleration",
     ]
 
 
@@ -458,9 +553,56 @@ def test_forward_revenue_trajectory_compares_with_the_five_year_average() -> Non
     )
 
 
+def test_forward_quarterly_acceleration_compares_latest_yoy_with_five_year_average() -> (
+    None
+):
+    accelerating = _quarterly_acceleration(
+        [130.0, 120.0, 110.0, 100.0, 100.0], [6.0, 5.5, 5.0, 4.5, 5.0]
+    )
+    gate = _forward(statements=accelerating)
+    assert gate.checks[6].status == "pass"
+    assert gate.checks[7].status == "pass"
+
+    decelerating = _quarterly_acceleration(
+        [110.0, 105.0, 102.0, 100.0, 100.0], [5.5, 5.2, 5.1, 5.0, 5.0]
+    )
+    gate = _forward(statements=decelerating)
+    assert gate.checks[6].status == "fail"
+    assert gate.checks[7].status == "fail"
+
+
+def test_forward_acceleration_is_unverified_without_five_comparable_quarters() -> None:
+    short = _quarterly_acceleration([120.0, 110.0, 100.0, 95.0], [6.0, 5.5, 5.0, 4.5])
+    gate = _forward(statements=short)
+    assert gate.checks[6].status == "unverified"
+    assert gate.checks[7].status == "unverified"
+
+    negative_eps = _forward(
+        statements=_quarterly_series("eps", [-1.0, -2.0, -3.0, -4.0, -5.0])
+    )
+    assert negative_eps.checks[7].status == "unverified"
+
+
 def test_forward_guidance_needs_filing_evidence() -> None:
-    assert _forward(hits=({"phrase": "outlook"},)).checks[4].status == "pass"
+    assert _forward(hits=({"phrase": "outlook"},)).checks[4].status == "unverified"
     assert _forward().checks[4].status == "unverified"
+
+
+def test_forward_guidance_distinguishes_recent_from_stale_filings() -> None:
+    recent = _forward(hits=({"filing_date": "2026-11-01"},))
+    assert recent.checks[4].status == "pass"
+    assert "newest" in recent.checks[4].value
+
+    stale = _forward(hits=({"filing_date": "2025-01-01"},))
+    assert stale.checks[4].status == "fail"
+    assert "stale" in stale.checks[4].value
+
+    undated = _forward(hits=({"phrase": "guidance"},))
+    assert undated.checks[4].status == "unverified"
+
+    future = _forward(hits=({"filing_date": "2026-12-01"},))
+    assert future.checks[4].status == "unverified"
+    assert "future" in future.checks[4].value
 
 
 def test_forward_event_risk_uses_the_earnings_date() -> None:
@@ -511,6 +653,7 @@ def _hit(
     filing_date: str = "2025-10-30",
     accession: str = "0000320193-25-000012",
     count: int = 1,
+    snippet: str = "",
 ) -> dict[str, Any]:
     compact = accession.replace("-", "")
     return {
@@ -519,6 +662,7 @@ def _hit(
         "filing_date": filing_date,
         "accession": accession,
         "form": "10-K",
+        "snippet": snippet,
         "url": (
             "https://www.sec.gov/Archives/edgar/data/320193/"
             f"{compact}/{accession}-index.html"
@@ -574,6 +718,21 @@ def test_material_weakness_hit_fails_the_gate_and_is_a_red_flag() -> None:
     assert hit["filing_date"] in check.evidence
     assert hit["url"] in check.evidence
     assert gate_status(gate.checks) == "fail"
+
+
+def test_phrase_check_carries_the_snippet_and_its_filing_identity() -> None:
+    hit = _hit(
+        "material weakness",
+        snippet="We identified a material weakness in internal control.",
+    )
+    check = _by_id(_fgate(_evidence(hits=(hit,))))["filings.material_weakness"]
+
+    assert check.status == "fail"
+    assert "10-K" in check.evidence
+    assert hit["accession"] in check.evidence
+    assert hit["filing_date"] in check.evidence
+    assert hit["url"] in check.evidence
+    assert hit["snippet"] in check.evidence
 
 
 def test_zero_hits_passes_with_absence_is_not_proof_note() -> None:
@@ -645,6 +804,12 @@ def test_phrase_checks_are_unverified_with_links() -> None:
         "filings.regulatory": "regulatory",
         "filings.related_party": "related party",
         "filings.off-balance_sheet": "off-balance sheet",
+        "filings.impairment": "impairment",
+        "filings.cybersecurity_incident": "cybersecurity incident",
+        "filings.internal_control": "internal control",
+        "filings.supplier_concentration": "supplier concentration",
+        "filings.competition": "competition",
+        "filings.pricing_pressure": "pricing pressure",
     }
     hits = tuple(_hit(phrase) for phrase in phrases.values())
     gate = _fgate(_evidence(hits=hits))
@@ -691,3 +856,37 @@ def test_filing_gate_carries_xbrl_conflicts_on_the_gate() -> None:
         for line in gate.conflicts
     )
     assert gate_status(gate.checks) == "fail"
+
+
+def test_fit_gate_flags_watchlist_sector_concentration() -> None:
+    watchlist = (
+        {"symbol": "AAPL", "industry": "Technology"},
+        {"symbol": "MSFT", "industry": "Technology"},
+        {"symbol": "XOM", "industry": "Energy"},
+        {"symbol": "JPM", "industry": "Financials"},
+    )
+
+    built = build_dossier("AAPL", row={"industry": "Technology"}, watchlist=watchlist)
+    fit = built.gates[-1]
+
+    assert [check.id for check in fit.checks] == [
+        "fit.watchlist_presence",
+        "fit.sector_concentration",
+    ]
+    assert fit.checks[0].status == "pass"
+    assert fit.checks[1].status == "fail"
+    assert "50%" in fit.checks[1].value
+
+
+def test_fit_gate_stays_not_applicable_without_a_watchlist() -> None:
+    fit = build_dossier("AAPL").gates[-1]
+    assert [check.status for check in fit.checks] == ["not_applicable"]
+
+
+def test_fit_gate_stays_not_applicable_with_an_empty_watchlist() -> None:
+    fit = build_dossier("AAPL", watchlist=()).gates[-1]
+    assert [check.status for check in fit.checks] == [
+        "not_applicable",
+        "not_applicable",
+    ]
+    assert fit.checks[1].value == "empty watchlist"

@@ -13,8 +13,9 @@ from typing import Any
 
 import streamlit as st
 
-from stonks.dossier import Dossier, gate_status
+from stonks.dossier import Dossier, decision_summary, gate_status
 from stonks.edgar import USER_AGENT_REASON
+from stonks.report import DEEP_DIVE_NEXT_STEPS, GAP_DISCLAIMER
 
 GLYPHS = {
     "pass": "✅",
@@ -27,6 +28,7 @@ USER_AGENT_HINT = "Set EDGAR_USER_AGENT to verify filings"
 
 __all__ = [
     "render_check_tables",
+    "render_decision_summary",
     "render_deep_dive",
     "render_filings",
     "render_gate_strip",
@@ -50,6 +52,35 @@ def render_gate_strip(dossier: Dossier) -> None:
     )
     st.markdown(f"{badges} · Coverage: {dossier.coverage:.0%}")
     st.caption(f"As of {dossier.as_of}")
+
+
+def render_decision_summary(dossier: Dossier) -> None:
+    """Open questions and evidence limits, before any check tables."""
+    summary = decision_summary(dossier)
+    lines = [
+        "### What would change my mind",
+        f"Evidence coverage: {summary['coverage']:.0%}",
+        f"Filing freshness: {summary['freshness']}",
+    ]
+    changes = summary["changes"]
+    if changes:
+        lines.extend(f"- Resolve: {item}" for item in changes)
+    else:
+        lines.append("- No unresolved checks")
+    unknowns = summary["unknowns"]
+    if unknowns:
+        lines.extend(f"- Unknown: {item}" for item in unknowns)
+    else:
+        lines.append("- No unknown evidence")
+    lines.extend(
+        (
+            "",
+            "### Scope and next steps",
+            GAP_DISCLAIMER,
+            DEEP_DIVE_NEXT_STEPS,
+        )
+    )
+    st.markdown("\n".join(lines))
 
 
 def render_check_tables(dossier: Dossier) -> None:
@@ -137,6 +168,7 @@ def render_deep_dive(store: Any, symbol: str, dossier: Dossier) -> None:
     """Render the whole dossier above the symbol page's existing sections."""
     st.markdown(f"### Deep dive — {symbol}")
     render_gate_strip(dossier)
+    render_decision_summary(dossier)
     if _needs_user_agent_hint(dossier):
         st.caption(USER_AGENT_HINT)
     render_check_tables(dossier)

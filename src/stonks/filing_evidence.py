@@ -30,12 +30,38 @@ COMPANYFACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
 EFTS_URL = "https://efts.sec.gov/LATEST/search-index"
 PHRASE_FORMS = ("10-K", "10-Q")
 GUIDANCE_FORMS = ("8-K", "10-Q")
+SNIPPET_MAX_CHARS = 240
 
 _ACCESSION = re.compile(r"\d{10}-\d{2}-\d{6}\Z")
+_MARKUP = re.compile(r"<[^>]+>")
 
 
 def _text(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
+
+
+def _snippet(value: Any) -> str:
+    """Pull a short plain-text excerpt from an EFTS snippet or highlight."""
+    if isinstance(value, str):
+        text = value
+    elif isinstance(value, Mapping):
+        for item in value.values():
+            text = _snippet(item)
+            if text:
+                break
+        else:
+            return ""
+    elif isinstance(value, Sequence) and not isinstance(value, str | bytes):
+        for item in value:
+            text = _snippet(item)
+            if text:
+                break
+        else:
+            return ""
+    else:
+        return ""
+    text = _MARKUP.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()[:SNIPPET_MAX_CHARS]
 
 
 def _count(total: Any) -> int:
@@ -154,6 +180,11 @@ def search_filings(
                 "accession": accession,
                 "form": form,
                 "url": _filing_url(cik, accession),
+                "snippet": _snippet(
+                    fields.get("snippet")
+                    or fields.get("excerpt")
+                    or fields.get("highlight")
+                ),
             }
         )
     if latest_dates is not None:

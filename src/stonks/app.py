@@ -27,6 +27,7 @@ from stonks.config import (
     ENUM_FILTER_COLUMNS,
     NUMERIC_FILTER_COLUMNS,
     PAGE_SIZE_OPTIONS,
+    SCREENER_TABLE_MAX_HEIGHT,
     VIEW_PRESETS,
 )
 from stonks.detail_view import render_detail_page
@@ -80,6 +81,7 @@ html, body, [class*="css"], .stMarkdown, .stText, p, span, li, label, div {
 
 .main .block-container {
     padding-top: 1.5rem !important;
+    padding-bottom: 3.5rem !important;
     max-width: 100% !important;
 }
 
@@ -91,6 +93,7 @@ section[data-testid="stSidebar"] {
 
 section[data-testid="stSidebar"] .block-container {
     padding-top: 1rem !important;
+    padding-bottom: 3.5rem !important;
 }
 
 /* Headings */
@@ -201,6 +204,38 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     padding: 0 0.5rem;
 }
 
+/* Sidebar cards are narrower than the main column: tighter padding, no
+   wrapping action buttons, and text that can shrink without overflowing. */
+[data-testid="stSidebar"] [class*="st-key-screen-"] {
+    padding: 0.55rem 0.65rem;
+    margin-bottom: 0.45rem;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] [data-testid="stHorizontalBlock"] {
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] [data-testid="stMarkdownContainer"] p {
+    margin: 0;
+    font-size: 0.82rem;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] [data-testid="stCaptionContainer"] {
+    font-size: 0.72rem;
+    line-height: 1.25;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] .stButton > button {
+    min-width: 2.75rem;
+    width: 2.75rem;
+    flex: 0 0 2.75rem;
+    min-height: 2.25rem;
+    padding: 0;
+    white-space: nowrap;
+}
+
 /* Metric cards: flat surfaces with high-contrast values, no glow */
 [data-testid="stMetric"] {
     background: var(--bg-card);
@@ -247,6 +282,16 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+/* Backtest: labelled sections inside the same surfaces */
+.bt-section {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0.2rem 0 0.7rem;
 }
 
 /* Alerts banner: a card above the screener, hidden entirely when empty */
@@ -638,14 +683,20 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     border-radius: 12px !important;
 }
 
-/* Footer */
+/* Footer: pinned to the viewport, with content padded so it never overlaps */
 .app-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
     text-align: center;
     color: var(--text-muted);
     font-size: 0.75rem;
-    padding: 1.5rem 0;
+    padding: 0.55rem 1.25rem;
+    background: var(--bg-primary);
     border-top: 1px solid var(--border-color);
-    margin-top: 2rem;
+    margin: 0;
 }
 
 /* Scrollbar */
@@ -906,6 +957,11 @@ def _describe_screen(screen: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+def _screen_column_ratios(_allow_delete: bool) -> list[int]:
+    """Reserve two square action slots in every screen card so titles align."""
+    return [3, 1, 1]
+
+
 def _screen_card(
     key: str,
     title: str,
@@ -915,8 +971,7 @@ def _screen_card(
 ) -> tuple[bool, bool]:
     """Render one screen as a card and return (load_clicked, delete_clicked)."""
     with st.container(key=f"screen-{key}"):
-        ratios = [5, 1, 1] if allow_delete else [6, 1]
-        cols = st.columns(ratios)
+        cols = st.columns(_screen_column_ratios(allow_delete))
         with cols[0]:
             st.markdown(f"**{title}**")
             if description:
@@ -975,7 +1030,7 @@ def render_sidebar_filters() -> dict[str, Any]:
             if st.button(
                 "💾 Save Current Filters",
                 key="save_screen_btn",
-                use_container_width=True,
+                width="stretch",
             ):
                 if save_name:
                     current_filters = _prune_filters(
@@ -1035,9 +1090,7 @@ def render_top_filters() -> dict[str, Any]:
 
         with ctrl_col3:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button(
-                "🧹 Reset All", key="reset_filters_top", use_container_width=True
-            ):
+            if st.button("🧹 Reset All", key="reset_filters_top", width="stretch"):
                 st.session_state["active_filters"] = {}
                 st.session_state["search_query"] = ""
                 st.session_state["current_page"] = 1
@@ -1138,9 +1191,7 @@ def render_top_filters() -> dict[str, Any]:
         # Apply button & Update session state
         st.session_state["active_filters"] = filters
 
-        if st.button(
-            "Apply", key="apply_top", type="primary", use_container_width=True
-        ):
+        if st.button("Apply", key="apply_top", type="primary", width="stretch"):
             st.session_state["active_filters"] = _prune_filters(filters)
             st.session_state["current_page"] = 1
             st.rerun()
@@ -1166,6 +1217,11 @@ def _sync_time_text(raw: str | None) -> str:
         return datetime.fromtimestamp(float(raw)).strftime("%Y-%m-%d %H:%M")
     except (TypeError, ValueError, OverflowError, OSError):
         return "an unknown time"
+
+
+def _screener_table_height(row_count: int) -> int:
+    """Cap the table so page chrome stays visible in a normal viewport."""
+    return min(44 * row_count + 44, SCREENER_TABLE_MAX_HEIGHT)
 
 
 def render_screener_table() -> None:
@@ -1330,7 +1386,7 @@ def render_screener_table() -> None:
         width="stretch",
         hide_index=True,
         row_height=44,
-        height=min(44 * len(display_df) + 44, 900),
+        height=_screener_table_height(len(display_df)),
         on_select="rerun",
         selection_mode="single-row",
         key=_table_key("screener_table"),
@@ -1395,10 +1451,6 @@ def render_screener_table() -> None:
 def render_watchlist_tab() -> None:
     """Render the watchlist management tab."""
     store = get_store()
-    st.markdown(
-        '<div class="section-header">⭐ Watchlist</div>', unsafe_allow_html=True
-    )
-
     query = st.text_input(
         "Search symbol or company",
         key="watchlist_search",
@@ -1721,13 +1773,20 @@ def render_sanity_banner(store: SQLiteStore) -> None:
         )
 
 
-def render_buy_opportunities_banner() -> None:
+def render_buy_opportunities_banner(
+    store: SQLiteStore | None = None,
+    opportunities: list[dict[str, Any]] | None = None,
+    watchlist_symbols: set[str] | None = None,
+) -> None:
     """Surface screener stocks near 52-week lows, especially below fair value."""
-    store = get_store()
-    opportunities = store.get_buy_opportunities(limit=8)
+    store = store or get_store()
+    if opportunities is None:
+        opportunities = store.get_buy_opportunities(limit=8)
     if not opportunities:
         return
 
+    watched = watchlist_symbols or set()
+    opportunities = sorted(opportunities, key=lambda row: row["symbol"] not in watched)
     below_both = [row for row in opportunities if row.get("below_both_fair_values")]
     if not st.session_state.get("buy_opps_toasted"):
         if below_both:
@@ -1746,9 +1805,13 @@ def render_buy_opportunities_banner() -> None:
             headline += (
                 f" · {len(below_both)} below both DCF and Peter Lynch fair value"
             )
+        watch_count = sum(row["symbol"] in watched for row in opportunities)
+        if watch_count:
+            headline += f" · {watch_count} on your watchlist"
         st.success(headline, icon="📉")
         for row in opportunities:
             symbol = row["symbol"]
+            watch_tag = " · ⭐ on watchlist" if symbol in watched else ""
             symbol_col, text_col = st.columns([1, 7])
             with symbol_col:
                 if st.button(
@@ -1777,14 +1840,18 @@ def render_buy_opportunities_banner() -> None:
                     if lynch is not None:
                         fair_bits.append(f"Lynch {_fmt_number(lynch, 2)}")
                     parts.append("fair value " + ", ".join(fair_bits))
-                st.markdown(f"**{symbol}** · {row.get('description') or ''}")
+                st.markdown(f"**{symbol}** · {row.get('description') or ''}{watch_tag}")
                 st.caption(" · ".join(parts))
 
 
-def render_alerts_banner() -> None:
+def render_alerts_banner(
+    store: SQLiteStore | None = None,
+    alerts: list[dict[str, Any]] | None = None,
+) -> None:
     """Show the unread watchlist alerts; renders nothing when there are none."""
-    store = get_store()
-    alerts = store.get_alerts()
+    store = store or get_store()
+    if alerts is None:
+        alerts = store.get_alerts()
     if not alerts:
         return
 
@@ -1815,6 +1882,45 @@ def render_alerts_banner() -> None:
             st.rerun()
 
 
+def render_notifications(store: SQLiteStore) -> None:
+    """Show current screener and watchlist notifications in one collapsible surface."""
+    watchlist_symbols = set(store.get_watchlist_symbols())
+    visible_symbols = (
+        set(
+            store.get_stock_symbols(
+                filters=st.session_state.get("active_filters") or {},
+                search_query=st.session_state.get("search_query") or "",
+            )
+        )
+        | watchlist_symbols
+    )
+    alerts = [
+        alert for alert in store.get_alerts() if alert["symbol"] in visible_symbols
+    ]
+    opportunities = [
+        row
+        for row in store.get_buy_opportunities(limit=8)
+        if row["symbol"] in visible_symbols
+    ]
+    persisted_buys = {
+        alert["symbol"] for alert in alerts if alert.get("kind") == "buy_opportunity"
+    }
+    snapshot_buys = [
+        row for row in opportunities if row["symbol"] not in persisted_buys
+    ]
+    count = len(alerts) + len(snapshot_buys)
+    if not count:
+        return
+
+    with st.expander(f"🔔 Notifications ({count})", expanded=False):
+        render_buy_opportunities_banner(
+            store,
+            opportunities=snapshot_buys,
+            watchlist_symbols=watchlist_symbols,
+        )
+        render_alerts_banner(store, alerts=alerts)
+
+
 def main() -> None:
     """Main Streamlit app entry point."""
     store = get_store()
@@ -1831,6 +1937,7 @@ def main() -> None:
             screen["sort_ascending"],
         )
 
+    render_notifications(store)
     render_header(store)
     render_sidebar_filters()
 
@@ -1855,9 +1962,6 @@ def main() -> None:
     )
 
     with tab_screener:
-        render_buy_opportunities_banner()
-        render_alerts_banner()
-
         # Render the new top-level filters grid
         render_top_filters()
 

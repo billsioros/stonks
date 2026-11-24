@@ -129,3 +129,58 @@ def test_buy_opportunity_ignores_missing_or_not_low() -> None:
     assert buy_opportunity(_row(price=None, week_52_low=90.0)) is None
     assert buy_opportunity(_row(price=94.0, week_52_low=None)) is None
     assert buy_opportunity(_row(price=94.0, week_52_low=0)) is None
+
+
+def test_buy_opportunity_alerts_select_strong_candidates() -> None:
+    from stonks.alerts import buy_opportunity_alerts
+
+    rows = [
+        _row(
+            symbol="BOTH",
+            price=94.0,
+            week_52_low=90.0,
+            dcf_fair_value=120.0,
+            lynch_fair_value=110.0,
+        ),
+        _row(
+            symbol="NEAR",
+            price=94.0,
+            week_52_low=90.0,
+            dcf_fair_value=None,
+            lynch_fair_value=None,
+        ),
+        _row(
+            symbol="HIGH",
+            price=120.0,
+            week_52_low=90.0,
+            dcf_fair_value=200.0,
+            lynch_fair_value=200.0,
+        ),
+    ]
+
+    alerts = buy_opportunity_alerts(rows, bucket="2026-W48", cap=10)
+
+    assert [a.symbol for a in alerts] == ["BOTH"]
+    assert alerts[0].kind == "buy_opportunity"
+    assert alerts[0].severity == "good"
+    assert alerts[0].dedupe_key == "BOTH:buy_opportunity:2026-W48"
+    assert "below both DCF and Peter Lynch" in alerts[0].title
+
+
+def test_buy_opportunity_alerts_are_capped() -> None:
+    from stonks.alerts import buy_opportunity_alerts
+
+    rows = [
+        _row(
+            symbol=f"S{i}",
+            price=94.0,
+            week_52_low=90.0,
+            dcf_fair_value=120.0,
+            lynch_fair_value=110.0,
+        )
+        for i in range(5)
+    ]
+
+    alerts = buy_opportunity_alerts(rows, bucket="2026-W48", cap=2)
+
+    assert len(alerts) == 2

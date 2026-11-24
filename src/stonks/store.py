@@ -472,6 +472,18 @@ class SQLiteStore:
             rows = conn.execute("SELECT symbol FROM watchlist").fetchall()
         return [r[0] for r in rows]
 
+    def get_watchlist_rows(self) -> list[dict[str, Any]]:
+        """Return watchlist symbols joined to their stored sector and market cap."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT w.symbol, s.industry, s.market_cap
+                   FROM watchlist w LEFT JOIN stocks s ON s.symbol = w.symbol
+                   ORDER BY w.symbol"""
+            ).fetchall()
+        return [
+            {"symbol": row[0], "industry": row[1], "market_cap": row[2]} for row in rows
+        ]
+
     def get_hedge_buy_symbols(self) -> list[str]:
         """Return the symbols currently flagged as a largest hedge fund buy."""
         with self._connect() as conn:
@@ -756,6 +768,24 @@ class SQLiteStore:
             return [dict(zip(cols, row)) for row in cur.fetchall()]
 
     # ── Stocks ────────────────────────────────────────────────────────
+
+    def get_stock_symbols(
+        self,
+        *,
+        filters: dict[str, Any] | None = None,
+        search_query: str = "",
+    ) -> list[str]:
+        """Return symbols in the screener universe, optionally filtered."""
+        if filters or search_query:
+            rows, _, _ = self.get_stocks(
+                filters=filters,
+                search_query=search_query,
+                page_size=100_000,
+            )
+            return sorted({row["symbol"] for row in rows})
+        with self._connect() as conn:
+            rows = conn.execute("SELECT symbol FROM stocks ORDER BY symbol").fetchall()
+        return [row[0] for row in rows]
 
     def get_stocks(
         self,

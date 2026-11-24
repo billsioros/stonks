@@ -13,6 +13,15 @@ from stonks.store import SQLiteStore
 from tests.test_edgar import _facts, _row, _statements
 
 
+@pytest.fixture(autouse=True)
+def _clear_resource_cache_after_each_test() -> None:
+    """Prevent temp-DB AppTests from leaking a cached store into later tests."""
+    yield
+    import streamlit as st
+
+    st.cache_resource.clear()
+
+
 class _FetchResponse:
     def __init__(self, payload: Any) -> None:
         self.status_code = 200
@@ -270,10 +279,24 @@ def test_phrase_hits_keep_their_accession_in_evidence() -> None:
     ) or any("000-2026-01" in check.evidence for check in red_flag_gate.checks)
 
 
-def test_masthead_renders_badges_on_repeated_apptest_runs() -> None:
+def test_masthead_renders_badges_on_repeated_apptest_runs(
+    tmp_path, monkeypatch
+) -> None:
+    import streamlit as st
     from streamlit.testing.v1 import AppTest
 
+    from stonks import app
+
+    db_path = tmp_path / "stonks.db"
+    real_init = SQLiteStore.__init__
+
+    def _init(self, db_path=db_path, *args, **kwargs):
+        return real_init(self, db_path, *args, **kwargs)
+
+    monkeypatch.setattr(SQLiteStore, "__init__", _init)
+    monkeypatch.setattr(app, "get_store", lambda: SQLiteStore(db_path=db_path))
     for _ in range(2):
+        st.cache_resource.clear()
         at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
         at.run()
         assert not at.exception
