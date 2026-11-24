@@ -1721,10 +1721,14 @@ def render_sanity_banner(store: SQLiteStore) -> None:
         )
 
 
-def render_buy_opportunities_banner() -> None:
+def render_buy_opportunities_banner(
+    store: SQLiteStore | None = None,
+    opportunities: list[dict[str, Any]] | None = None,
+) -> None:
     """Surface screener stocks near 52-week lows, especially below fair value."""
-    store = get_store()
-    opportunities = store.get_buy_opportunities(limit=8)
+    store = store or get_store()
+    if opportunities is None:
+        opportunities = store.get_buy_opportunities(limit=8)
     if not opportunities:
         return
 
@@ -1781,10 +1785,14 @@ def render_buy_opportunities_banner() -> None:
                 st.caption(" · ".join(parts))
 
 
-def render_alerts_banner() -> None:
+def render_alerts_banner(
+    store: SQLiteStore | None = None,
+    alerts: list[dict[str, Any]] | None = None,
+) -> None:
     """Show the unread watchlist alerts; renders nothing when there are none."""
-    store = get_store()
-    alerts = store.get_alerts()
+    store = store or get_store()
+    if alerts is None:
+        alerts = store.get_alerts()
     if not alerts:
         return
 
@@ -1815,6 +1823,25 @@ def render_alerts_banner() -> None:
             st.rerun()
 
 
+def render_notifications(store: SQLiteStore) -> None:
+    """Show watchlist alerts and buy opportunities in one collapsible surface."""
+    alerts = store.get_alerts()
+    opportunities = store.get_buy_opportunities(limit=8)
+    persisted_buys = {
+        alert["symbol"] for alert in alerts if alert.get("kind") == "buy_opportunity"
+    }
+    snapshot_buys = [
+        row for row in opportunities if row["symbol"] not in persisted_buys
+    ]
+    count = len(alerts) + len(snapshot_buys)
+    if not count:
+        return
+
+    with st.expander(f"🔔 Notifications ({count})", expanded=False):
+        render_buy_opportunities_banner(store, opportunities=snapshot_buys)
+        render_alerts_banner(store, alerts=alerts)
+
+
 def main() -> None:
     """Main Streamlit app entry point."""
     store = get_store()
@@ -1831,6 +1858,7 @@ def main() -> None:
             screen["sort_ascending"],
         )
 
+    render_notifications(store)
     render_header(store)
     render_sidebar_filters()
 
@@ -1855,9 +1883,6 @@ def main() -> None:
     )
 
     with tab_screener:
-        render_buy_opportunities_banner()
-        render_alerts_banner()
-
         # Render the new top-level filters grid
         render_top_filters()
 

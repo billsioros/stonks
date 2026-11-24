@@ -53,6 +53,10 @@ def test_banner_lists_alert_and_marks_all_read() -> None:
         next(b for b in at.button if b.label == "Mark all read").click().run()
 
         assert store.count_unread_alerts() == 0
+
+        # AppTest keeps collapsed expander children from the previous run, so
+        # use a fresh run to check that the alert controls are gone.
+        at = _app()
         assert not [b for b in at.button if b.label == "Mark all read"]
     finally:
         _cleanup(store)
