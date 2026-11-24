@@ -750,6 +750,7 @@ def test_efts_hit_parsing_yields_count_date_accession_link(store: SQLiteStore) -
         "form": "10-K",
         "url": "https://www.sec.gov/Archives/edgar/data/320193/"
         "000032019325000012/0000320193-25-000012-index.html",
+        "snippet": "",
     }
     assert hits[1]["filing_date"] == "2026-02-02"
     assert hits[1]["accession"] == "0000320193-26-000003"
@@ -759,6 +760,46 @@ def test_efts_hit_parsing_yields_count_date_accession_link(store: SQLiteStore) -
     assert calls[0][1] == {"User-Agent": USER_AGENT}
     # The same cache contract as every other EDGAR entry, for seven days.
     assert store.cache_get(f"edgar:{CIK}:efts:material weakness:10-K,10-Q") == EFTS_HITS
+
+
+def test_efts_highlights_become_short_accession_linked_snippets(
+    store: SQLiteStore,
+) -> None:
+    payload = {
+        "hits": {
+            "total": {"value": 1},
+            "hits": [
+                {
+                    "_id": "0000320193-26-000004",
+                    "_source": {
+                        "form": "10-K",
+                        "file_date": "2026-02-15",
+                        "adsh": "0000320193-26-000004",
+                        "highlight": {
+                            "attachment.parts": [
+                                (
+                                    "We identified a <em>material weakness</em> in "
+                                    "our internal control over financial reporting."
+                                )
+                            ]
+                        },
+                    },
+                }
+            ],
+        }
+    }
+    fetch, _ = fetch_recorder(FakeResponse(payload))
+
+    hits = filing_evidence.search_filings(
+        "material weakness", CIK, forms=("10-K",), store=store, fetch=fetch
+    )
+
+    assert hits[0]["snippet"] == (
+        "We identified a material weakness in our internal control over "
+        "financial reporting."
+    )
+    assert hits[0]["accession"] == "0000320193-26-000004"
+    assert hits[0]["form"] == "10-K"
 
 
 def test_efts_hits_are_limited_to_the_latest_10k_and_10q(

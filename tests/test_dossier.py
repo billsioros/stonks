@@ -648,6 +648,7 @@ def _hit(
     filing_date: str = "2025-10-30",
     accession: str = "0000320193-25-000012",
     count: int = 1,
+    snippet: str = "",
 ) -> dict[str, Any]:
     compact = accession.replace("-", "")
     return {
@@ -656,6 +657,7 @@ def _hit(
         "filing_date": filing_date,
         "accession": accession,
         "form": "10-K",
+        "snippet": snippet,
         "url": (
             "https://www.sec.gov/Archives/edgar/data/320193/"
             f"{compact}/{accession}-index.html"
@@ -711,6 +713,21 @@ def test_material_weakness_hit_fails_the_gate_and_is_a_red_flag() -> None:
     assert hit["filing_date"] in check.evidence
     assert hit["url"] in check.evidence
     assert gate_status(gate.checks) == "fail"
+
+
+def test_phrase_check_carries_the_snippet_and_its_filing_identity() -> None:
+    hit = _hit(
+        "material weakness",
+        snippet="We identified a material weakness in internal control.",
+    )
+    check = _by_id(_fgate(_evidence(hits=(hit,))))["filings.material_weakness"]
+
+    assert check.status == "fail"
+    assert "10-K" in check.evidence
+    assert hit["accession"] in check.evidence
+    assert hit["filing_date"] in check.evidence
+    assert hit["url"] in check.evidence
+    assert hit["snippet"] in check.evidence
 
 
 def test_zero_hits_passes_with_absence_is_not_proof_note() -> None:

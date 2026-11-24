@@ -883,12 +883,7 @@ def _phrase_check(
     matching = _matching_hits(hits, phrase)
     count = matching[0].get("count", 0) if matching else 0
     value = f"{count} hit(s)" if matching else "no hits"
-    links = ", ".join(
-        f"{hit.get('filing_date') or 'unknown date'} "
-        f"{hit.get('accession') or 'unknown accession'} "
-        f"{hit.get('url') or 'no filing link'}"
-        for hit in matching
-    )
+    links = ", ".join(_hit_line(hit) for hit in matching)
     if informational:
         status: Status = "unverified"
         evidence = f"{phrase}: {PHRASE_NOTE}; {links or 'no hits'}"
@@ -988,11 +983,18 @@ def filing_gate(
 
 
 def _hit_line(hit: Mapping[str, Any]) -> str:
-    """One dated, linked phrase hit for the dossier's filing list."""
-    phrase = str(hit.get("phrase") or "phrase")
-    filed = str(hit.get("filing_date") or "unknown date")
-    url = str(hit.get("url") or "")
-    return f"{phrase} ({filed}) {url}".strip()
+    """One dated, linked phrase hit with its filing identity and excerpt."""
+    parts = [
+        str(hit.get("phrase") or "phrase"),
+        str(hit.get("form") or "unknown form"),
+        str(hit.get("filing_date") or "unknown date"),
+        str(hit.get("accession") or "unknown accession"),
+        str(hit.get("url") or "no filing link"),
+    ]
+    snippet = str(hit.get("snippet") or "").strip()
+    if snippet:
+        parts.append(f'"{snippet}"')
+    return " ".join(parts)
 
 
 def build_dossier(

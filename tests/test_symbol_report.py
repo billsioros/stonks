@@ -382,6 +382,15 @@ def test_cache_failure_still_produces_a_memo(monkeypatch: Any) -> None:
     )
 
 
+def test_symbol_prompt_requires_accession_linked_filing_snippets() -> None:
+    instruction = (
+        report.SYMBOL_SYSTEM_INSTRUCTION + report.SYMBOL_REPORT_SECTIONS
+    ).lower()
+    assert "snippet" in instruction
+    assert "accession" in instruction
+    assert "filing date" in instruction
+
+
 def test_symbol_prompt_requires_guidance_freshness_and_event_clarity() -> None:
     instruction = (
         report.SYMBOL_SYSTEM_INSTRUCTION + report.SYMBOL_REPORT_SECTIONS
