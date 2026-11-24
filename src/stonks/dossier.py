@@ -782,6 +782,9 @@ INFORMATIONAL_PHRASES = (
     "impairment",
     "cybersecurity incident",
     "internal control",
+    "supplier concentration",
+    "competition",
+    "pricing pressure",
 )
 GUIDANCE_PHRASES = ("guidance", "outlook")
 FRESHNESS_MAX_DAYS = {"10-K": 400, "10-Q": 120}

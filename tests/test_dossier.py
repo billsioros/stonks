@@ -710,6 +710,9 @@ def test_phrase_checks_are_unverified_with_links() -> None:
         "filings.impairment": "impairment",
         "filings.cybersecurity_incident": "cybersecurity incident",
         "filings.internal_control": "internal control",
+        "filings.supplier_concentration": "supplier concentration",
+        "filings.competition": "competition",
+        "filings.pricing_pressure": "pricing pressure",
     }
     hits = tuple(_hit(phrase) for phrase in phrases.values())
     gate = _fgate(_evidence(hits=hits))
