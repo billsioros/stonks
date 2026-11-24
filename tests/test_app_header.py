@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
 
+import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from stonks import app, config, sanity
@@ -14,11 +16,26 @@ STALE_SECONDS = config.SYNC_ACTIVE_WINDOW_MINUTES * 60 + 1
 FRESH_SECONDS = config.SYNC_ACTIVE_WINDOW_MINUTES * 60 - 1
 
 
+def _app(tmp_path: Path, monkeypatch) -> AppTest:
+    db_path = tmp_path / "stonks.db"
+    real_init = SQLiteStore.__init__
+
+    def _init(self, db_path=db_path, *args, **kwargs):
+        return real_init(self, db_path, *args, **kwargs)
+
+    monkeypatch.setattr(SQLiteStore, "__init__", _init)
+    monkeypatch.setattr(app, "get_store", lambda: SQLiteStore(db_path=db_path))
+    st.cache_resource.clear()
+    at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
+    at.run()
+    return at
+
+
 def _report(results: list[dict[str, Any]], checked_at: float) -> dict[str, Any]:
     return {"checked_at": checked_at, "results": results}
 
 
-def _sync(status: str | None, success_age: float) -> dict[str, Any]:
+def _sync(status: str | None, success_age: float | None) -> dict[str, Any]:
     now = time.time()
     info: dict[str, Any] = {}
     if status is not None:
@@ -54,9 +71,10 @@ def test_no_sync_is_unknown() -> None:
     assert badge.label == "Live Sync"
 
 
-def test_masthead_shows_both_badges_and_no_hardcoded_sync_claim() -> None:
-    at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
-    at.run()
+def test_masthead_shows_both_badges_and_no_hardcoded_sync_claim(
+    tmp_path: Path, monkeypatch
+) -> None:
+    at = _app(tmp_path, monkeypatch)
     assert not at.exception
     html = " ".join(str(md.value) for md in at.markdown)
     assert 'class="sk-badge sk-badge-unknown"' in html
@@ -65,8 +83,9 @@ def test_masthead_shows_both_badges_and_no_hardcoded_sync_claim() -> None:
     assert "Live Sync Active" not in html
 
 
-def test_masthead_badges_reflect_a_seeded_report() -> None:
-    store = SQLiteStore()
+def test_masthead_badges_reflect_a_seeded_report(tmp_path: Path, monkeypatch) -> None:
+    at = _app(tmp_path, monkeypatch)
+    store = SQLiteStore(db_path=tmp_path / "stonks.db")
     store.save_metadata(
         sanity.REPORT_KEY,
         sanity.json.dumps(
@@ -76,12 +95,9 @@ def test_masthead_badges_reflect_a_seeded_report() -> None:
             )
         ),
     )
-    try:
-        at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
-        at.run()
-        assert not at.exception
-        html = " ".join(str(md.value) for md in at.markdown)
-        assert 'class="sk-badge sk-badge-fail"' in html
-        assert "StockAnalysis" in html
-    finally:
-        store.save_metadata(sanity.REPORT_KEY, "")
+    st.cache_resource.clear()
+    at.run()
+    assert not at.exception
+    html = " ".join(str(md.value) for md in at.markdown)
+    assert 'class="sk-badge sk-badge-fail"' in html
+    assert "StockAnalysis" in html
