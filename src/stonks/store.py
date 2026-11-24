@@ -769,8 +769,20 @@ class SQLiteStore:
 
     # ── Stocks ────────────────────────────────────────────────────────
 
-    def get_stock_symbols(self) -> list[str]:
-        """Return every symbol currently in the screener universe."""
+    def get_stock_symbols(
+        self,
+        *,
+        filters: dict[str, Any] | None = None,
+        search_query: str = "",
+    ) -> list[str]:
+        """Return symbols in the screener universe, optionally filtered."""
+        if filters or search_query:
+            rows, _, _ = self.get_stocks(
+                filters=filters,
+                search_query=search_query,
+                page_size=100_000,
+            )
+            return sorted({row["symbol"] for row in rows})
         with self._connect() as conn:
             rows = conn.execute("SELECT symbol FROM stocks ORDER BY symbol").fetchall()
         return [row[0] for row in rows]

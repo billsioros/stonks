@@ -41,6 +41,7 @@ def _app_with_db(db_path: Path, monkeypatch) -> AppTest:
     monkeypatch.setattr(app, "get_store", lambda: SQLiteStore(db_path=db_path))
     st.cache_resource.clear()
     at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
+    at.session_state["active_filters"] = {}
     at.run()
     return at
 
@@ -94,8 +95,8 @@ def test_screener_table_height_never_exceeds_the_viewport_cap() -> None:
 
 
 def test_popular_and_saved_screen_cards_share_one_compact_grid() -> None:
-    assert app._screen_column_ratios(False) == [4, 1, 1]
-    assert app._screen_column_ratios(True) == [4, 1, 1]
+    assert app._screen_column_ratios(False) == [3, 1, 1]
+    assert app._screen_column_ratios(True) == [3, 1, 1]
 
 
 def test_sidebar_screen_cards_get_narrow_width_styling() -> None:
@@ -113,8 +114,10 @@ def test_sidebar_screen_buttons_have_a_full_width_tap_target() -> None:
         css,
     )
     assert rules
-    assert "min-width: 2.25rem" in rules[0]
-    assert "width: 100%" in rules[0]
+    assert "min-width: 2.75rem" in rules[0]
+    assert "width: 2.75rem" in rules[0]
+    assert "flex: 0 0 2.75rem" in rules[0]
+    assert "white-space: nowrap" in rules[0]
 
 
 def test_footer_is_pinned_to_the_viewport_bottom() -> None:

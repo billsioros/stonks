@@ -89,9 +89,11 @@ class TestSQLiteStore:
             ]
         )
 
-        getter = getattr(store, "get_stock_symbols", None)
-        assert getter is not None
-        assert getter() == ["AAA", "ZZZ"]
+        assert store.get_stock_symbols() == ["AAA", "ZZZ"]
+        assert store.get_stock_symbols(filters={"symbol": {"values": ["AAA"]}}) == [
+            "AAA"
+        ]
+        assert store.get_stock_symbols(search_query="zeta") == ["ZZZ"]
 
     # ── Sync Status ──────────────────────────────────────────────
 

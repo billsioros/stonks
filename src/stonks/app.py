@@ -228,10 +228,12 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
 }
 
 [data-testid="stSidebar"] [class*="st-key-screen-"] .stButton > button {
-    min-width: 2.25rem;
-    width: 100%;
-    min-height: 2rem;
+    min-width: 2.75rem;
+    width: 2.75rem;
+    flex: 0 0 2.75rem;
+    min-height: 2.25rem;
     padding: 0;
+    white-space: nowrap;
 }
 
 /* Metric cards: flat surfaces with high-contrast values, no glow */
@@ -981,8 +983,8 @@ def _describe_screen(screen: dict[str, Any]) -> str:
 
 
 def _screen_column_ratios(_allow_delete: bool) -> list[int]:
-    """Reserve two action slots in every screen card so titles align."""
-    return [4, 1, 1]
+    """Reserve two square action slots in every screen card so titles align."""
+    return [3, 1, 1]
 
 
 def _screen_card(
@@ -1912,7 +1914,15 @@ def render_alerts_banner(
 def render_notifications(store: SQLiteStore) -> None:
     """Show current screener and watchlist notifications in one collapsible surface."""
     watchlist_symbols = set(store.get_watchlist_symbols())
-    visible_symbols = set(store.get_stock_symbols()) | watchlist_symbols
+    visible_symbols = (
+        set(
+            store.get_stock_symbols(
+                filters=st.session_state.get("active_filters") or {},
+                search_query=st.session_state.get("search_query") or "",
+            )
+        )
+        | watchlist_symbols
+    )
     alerts = [
         alert for alert in store.get_alerts() if alert["symbol"] in visible_symbols
     ]

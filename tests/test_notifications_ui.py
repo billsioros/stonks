@@ -19,7 +19,9 @@ def _clear_resource_cache_after_each_test() -> None:
     st.cache_resource.clear()
 
 
-def _run_app(db_path: Path, monkeypatch) -> AppTest:
+def _run_app(
+    db_path: Path, monkeypatch, *, session_state: dict[str, object] | None = None
+) -> AppTest:
     real_init = SQLiteStore.__init__
 
     def _init(self, *args, **kwargs):
@@ -30,6 +32,11 @@ def _run_app(db_path: Path, monkeypatch) -> AppTest:
     monkeypatch.setattr(app, "get_store", lambda: SQLiteStore(db_path=db_path))
     st.cache_resource.clear()
     at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
+    # Most notification tests seed only a few rows, so bypass the default
+    # quality screen that would otherwise filter them all out.
+    initial_state = {"active_filters": {}, **(session_state or {})}
+    for key, value in initial_state.items():
+        at.session_state[key] = value
     at.run()
     return at
 
@@ -119,7 +126,12 @@ def test_notifications_hide_non_screener_symbols_unless_watchlisted(
 ) -> None:
     db_path = tmp_path / "stonks.db"
     seeded = SQLiteStore(db_path=db_path)
-    seeded.replace_stocks([{"symbol": "SCREEN", "description": "In the screener"}])
+    seeded.replace_stocks(
+        [
+            {"symbol": "SCREEN", "description": "In the active screen"},
+            {"symbol": "OUT", "description": "In the database, outside the screen"},
+        ]
+    )
     seeded.add_alert(
         "SCREEN",
         "off_high",
@@ -129,11 +141,19 @@ def test_notifications_hide_non_screener_symbols_unless_watchlisted(
         "SCREEN:off_high:test",
     )
     seeded.add_alert(
+        "OUT",
+        "off_high",
+        "good",
+        "Filtered-out alert",
+        "In the database, not the active screen",
+        "OUT:off_high:test",
+    )
+    seeded.add_alert(
         "GHOST",
         "off_high",
         "good",
         "Stale alert",
-        "No longer in the screener",
+        "No longer in the database",
         "GHOST:off_high:test",
     )
     seeded.add_alert(
@@ -146,7 +166,11 @@ def test_notifications_hide_non_screener_symbols_unless_watchlisted(
     )
     seeded.add_to_watchlist("WATCHONLY")
 
-    at = _run_app(db_path, monkeypatch)
+    at = _run_app(
+        db_path,
+        monkeypatch,
+        session_state={"active_filters": {"symbol": {"values": ["SCREEN"]}}},
+    )
 
     assert not at.exception
     notification = next(item for item in at.expander if "Notifications" in item.label)
@@ -158,6 +182,8 @@ def test_notifications_hide_non_screener_symbols_unless_watchlisted(
 
     assert "SCREEN ▸" in labels
     assert "WATCHONLY ▸" in labels
+    assert "OUT ▸" not in labels
+    assert "OUT" not in text
     assert "GHOST ▸" not in labels
     assert "GHOST" not in text
     assert "Notifications (2)" in notification.label

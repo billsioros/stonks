@@ -28,7 +28,9 @@ _SETTINGS_KEY = "backtest_settings"
 _PENDING_LOAD_KEY = "backtest_pending_load"
 _SAVE_NAME_KEY = "backtest_save_name"
 _WIDGET_KEYS = (
-    "bt_editor",
+    "bt_symbol_ticker",
+    "bt_symbol_allocation",
+    "bt_edit_index",
     "bt_allocation_mode",
     "bt_contribution",
     "bt_contribution_frequency",
@@ -408,6 +410,143 @@ def _render_saved(store: SQLiteStore) -> None:
                 st.rerun()
 
 
+def _clear_symbol_editor_state() -> None:
+    """Forget the add/edit form so the next open starts clean."""
+    for key in ("bt_symbol_ticker", "bt_symbol_allocation", "bt_edit_index"):
+        st.session_state.pop(key, None)
+
+
+def _commit_symbol(
+    settings: dict[str, Any],
+    rows: list[dict[str, Any]],
+    current_mode: str,
+    editing: int | None,
+) -> None:
+    """Validate the editor form, then write the portfolio back to session state."""
+    ticker = parse_symbols(str(st.session_state.get("bt_symbol_ticker") or ""))
+    if len(ticker) != 1:
+        st.warning("Enter one ticker symbol.")
+        return
+
+    allocation = float(st.session_state.get("bt_symbol_allocation") or 0.0)
+    if current_mode == "percent" and allocation == 0:
+        allocation = None  # type: ignore[assignment]
+    candidate = list(rows)
+    new_row = {"Symbol": ticker[0], "Allocation": allocation}
+    if editing is None:
+        candidate.append(new_row)
+    else:
+        candidate[editing] = new_row
+
+    try:
+        symbols, weights = parse_portfolio(candidate, mode=current_mode)
+    except ValueError as exc:
+        st.warning(str(exc))
+        return
+
+    settings["symbols"] = symbols
+    settings["weights"] = weights
+    settings["allocation_mode"] = current_mode
+    st.session_state[_SETTINGS_KEY] = settings
+    _clear_symbol_editor_state()
+    st.rerun()
+
+
+def _render_symbol_editor(
+    settings: dict[str, Any], current_mode: str
+) -> list[dict[str, Any]]:
+    """Render a roomies-style symbol list with inline edit/delete and add panel."""
+    rows = _portfolio_rows(settings)
+    amount_mode = current_mode == "amount"
+    st.caption(
+        f"{len(rows)} symbols"
+        + (
+            " · 0 means equal weight when every weight is blank"
+            if not amount_mode
+            else " · amount added at every contribution"
+        )
+    )
+    if not rows:
+        st.caption("No symbols yet. Add one below.")
+
+    for index, row in enumerate(rows):
+        allocation = row["Allocation"]
+        if allocation is None:
+            display = "equal weight" if not amount_mode else "set amount"
+        elif amount_mode:
+            display = f"${allocation:g}"
+        else:
+            display = f"{allocation:g}%"
+        cols = st.columns([3, 2, 1, 1])
+        cols[0].markdown(f"**{row['Symbol']}**")
+        cols[1].caption(display)
+        if cols[2].button("✏️", key=f"bt_edit_symbol_{index}", help="Edit this symbol"):
+            st.session_state["bt_symbol_ticker"] = row["Symbol"]
+            st.session_state["bt_symbol_allocation"] = (
+                0.0 if allocation is None else float(allocation)
+            )
+            st.session_state["bt_edit_index"] = index
+            st.rerun()
+        if cols[3].button(
+            "🗑", key=f"bt_delete_symbol_{index}", help="Remove this symbol"
+        ):
+            remaining = [item for i, item in enumerate(rows) if i != index]
+            symbols, weights = (
+                parse_portfolio(remaining, mode=current_mode)
+                if remaining
+                else ([], None)
+            )
+            settings["symbols"] = symbols
+            settings["weights"] = weights
+            settings["allocation_mode"] = current_mode
+            st.session_state[_SETTINGS_KEY] = settings
+            _clear_symbol_editor_state()
+            st.rerun()
+
+    editing = st.session_state.get("bt_edit_index")
+    editing = int(editing) if editing is not None else None
+    if editing is not None and not 0 <= editing < len(rows):
+        editing = None
+    label = "Edit symbol" if editing is not None else "Add symbol"
+
+    with st.expander(label, expanded=editing is not None):
+        st.text_input(
+            "Ticker",
+            value=rows[editing]["Symbol"] if editing is not None else "",
+            key="bt_symbol_ticker",
+            placeholder="VUAA",
+        )
+        current_allocation = (
+            rows[editing]["Allocation"] if editing is not None else None
+        )
+        st.number_input(
+            "Amount per contribution" if amount_mode else "Weight %",
+            min_value=0.0,
+            value=0.0 if current_allocation is None else float(current_allocation),
+            step=100.0 if amount_mode else 5.0,
+            key="bt_symbol_allocation",
+            help=(
+                "Positive amount added at every contribution"
+                if amount_mode
+                else "Leave 0 to split the contribution equally"
+            ),
+        )
+        action_col, cancel_col = st.columns([1, 1])
+        with action_col:
+            if st.button(
+                "Save changes" if editing is not None else "Add",
+                key="bt_symbol_save",
+            ):
+                _commit_symbol(settings, rows, current_mode, editing)
+        if editing is not None:
+            with cancel_col:
+                if st.button("Cancel", key="bt_symbol_cancel"):
+                    _clear_symbol_editor_state()
+                    st.rerun()
+
+    return rows
+
+
 def render_backtest_tab(store: SQLiteStore) -> None:
     """Render the backtest tab: portfolio inputs on top, results below."""
     st.markdown(
@@ -447,35 +586,10 @@ def render_backtest_tab(store: SQLiteStore) -> None:
     )
     current_mode = mode_options[mode_labels.index(mode_label)]
     amount_mode = current_mode == "amount"
+    settings["allocation_mode"] = current_mode
 
-    rows = pd.DataFrame(
-        _portfolio_rows(settings),
-        columns=["Symbol", "Allocation"],
-    )
+    rows = _render_symbol_editor(settings, current_mode)
     with st.form("backtest_form"):
-        edited = st.data_editor(
-            rows,
-            key="bt_editor",
-            num_rows="dynamic",
-            hide_index=True,
-            width="stretch",
-            column_config={
-                "Symbol": st.column_config.TextColumn(
-                    "Symbol", help="Ticker, e.g. VUAA", required=True
-                ),
-                "Allocation": st.column_config.NumberColumn(
-                    "Amount per contribution" if amount_mode else "Weight %",
-                    help=(
-                        "Positive sum added at every contribution"
-                        if amount_mode
-                        else "Optional; blank means equal weight"
-                    ),
-                    min_value=0.0,
-                    step=100.0 if amount_mode else 5.0,
-                    format="%g",
-                ),
-            },
-        )
         contribution_col, frequency_col = st.columns(2)
         contribution = contribution_col.number_input(
             "Contribution per period",
@@ -527,7 +641,7 @@ def render_backtest_tab(store: SQLiteStore) -> None:
     if submitted:
         try:
             current = _settings_from_widgets(
-                edited.to_dict("records"),
+                rows,
                 benchmark,
                 float(initial),
                 start,
