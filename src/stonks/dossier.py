@@ -124,6 +124,70 @@ def coverage(gates: Iterable[Gate]) -> float:
     return passed / len(applicable)
 
 
+PORTFOLIO_SECTOR_MAX_PCT = 25.0
+
+
+def fit_gate(
+    symbol: str,
+    row: Mapping[str, Any],
+    watchlist: Iterable[Mapping[str, Any]] | None,
+) -> Gate:
+    """Equal-weight watchlist proxy for exposure and sector concentration."""
+    if watchlist is None:
+        return Gate(
+            "fit",
+            "Portfolio fit",
+            (
+                Check(
+                    "fit.portfolio",
+                    "Holding context",
+                    "not_applicable",
+                    DASH,
+                    "Portfolio supplied",
+                    "No portfolio supplied",
+                ),
+            ),
+            "No portfolio supplied",
+        )
+
+    entries = list(watchlist)
+    symbols = {str(entry.get("symbol", "")).upper() for entry in entries}
+    presence_ok = symbol.upper() in symbols
+    sector = row.get("industry")
+    sectors = [entry.get("industry") for entry in entries if entry.get("industry")]
+    sector_ok: bool | None = None
+    if not entries:
+        concentration_value = "empty watchlist"
+    elif not sector or not sectors:
+        concentration_value = "no industry data"
+    else:
+        share = sum(1 for item in sectors if item == sector) / len(sectors) * 100.0
+        sector_ok = share <= PORTFOLIO_SECTOR_MAX_PCT
+        concentration_value = f"{share:.0f}% of watchlist in {sector}"
+    concentration = Check(
+        "fit.sector_concentration",
+        "Watchlist sector concentration",
+        _status_from(sector_ok),
+        concentration_value,
+        f"<= {PORTFOLIO_SECTOR_MAX_PCT:.0f}% of watchlist",
+        "equal-weight watchlist proxy, screener.industry",
+    )
+    presence = Check(
+        "fit.watchlist_presence",
+        "Holding context",
+        _status_from(presence_ok),
+        "on watchlist" if presence_ok else "not on watchlist",
+        "Symbol present in watchlist",
+        "watchlist.symbol",
+    )
+    return Gate(
+        "fit",
+        "Portfolio fit",
+        (presence, concentration),
+        _gate_summary("fit", (presence, concentration)),
+    )
+
+
 DECISION_SUMMARY_LIMIT = 6
 
 
@@ -1038,12 +1102,14 @@ def build_dossier(
     today: object = None,
     filing_evidence: FilingEvidence | None = None,
     guidance_hits: Sequence[Mapping[str, Any]] = (),
+    watchlist: Iterable[Mapping[str, Any]] | None = None,
 ) -> Dossier:
     """Assemble the gates available today into one deterministic dossier.
 
     Filing evidence is supplied by the caller, together with its guidance hits
-    for the forward gate; portfolio holdings still belong to a later phase and
-    stay explicit unknown/inapplicable. Nothing here performs I/O.
+    for the forward gate. A watchlist, when supplied, is used as a labelled
+    equal-weight exposure proxy; without it the fit gate stays not applicable.
+    Nothing here performs I/O.
     """
     snapshot = row or {}
     evidence = filing_evidence or FilingEvidence.empty()
@@ -1060,21 +1126,7 @@ def build_dossier(
             today=today,
         ),
         filings,
-        Gate(
-            key="fit",
-            label="Portfolio fit",
-            checks=(
-                Check(
-                    id="fit.portfolio",
-                    label="Holding context",
-                    status="not_applicable",
-                    value=DASH,
-                    threshold="Portfolio supplied",
-                    evidence="No portfolio supplied",
-                ),
-            ),
-            summary="No portfolio supplied",
-        ),
+        fit_gate(symbol, snapshot, watchlist),
     ]
     stamp = as_of or "unknown"
     provenance: list[tuple[str, str, str]] = [

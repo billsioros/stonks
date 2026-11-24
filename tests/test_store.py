@@ -63,6 +63,22 @@ class TestSQLiteStore:
         assert "MSFT" in symbols
         assert "AAPL" in symbols
 
+    def test_get_watchlist_rows_joins_stored_metrics(self, store: SQLiteStore) -> None:
+        store.replace_stocks(
+            [
+                {"symbol": "AAPL", "industry": "Technology", "market_cap": 100.0},
+                {"symbol": "XOM", "industry": "Energy", "market_cap": 300.0},
+            ]
+        )
+        store.add_to_watchlist("AAPL")
+        store.add_to_watchlist("XOM")
+
+        rows = store.get_watchlist_rows()
+
+        assert [row["symbol"] for row in rows] == ["AAPL", "XOM"]
+        assert rows[0]["industry"] == "Technology"
+        assert rows[1]["market_cap"] == 300.0
+
     # ── Sync Status ──────────────────────────────────────────────
 
     def test_sync_status(self, store: SQLiteStore) -> None:

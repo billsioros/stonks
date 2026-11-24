@@ -18,6 +18,7 @@ from stonks.dossier import (
     Dossier,
     FilingEvidence,
     Gate,
+    build_dossier,
     coverage,
     filing_gate,
     forward_gate,
@@ -851,3 +852,28 @@ def test_filing_gate_carries_xbrl_conflicts_on_the_gate() -> None:
         for line in gate.conflicts
     )
     assert gate_status(gate.checks) == "fail"
+
+
+def test_fit_gate_flags_watchlist_sector_concentration() -> None:
+    watchlist = (
+        {"symbol": "AAPL", "industry": "Technology"},
+        {"symbol": "MSFT", "industry": "Technology"},
+        {"symbol": "XOM", "industry": "Energy"},
+        {"symbol": "JPM", "industry": "Financials"},
+    )
+
+    built = build_dossier("AAPL", row={"industry": "Technology"}, watchlist=watchlist)
+    fit = built.gates[-1]
+
+    assert [check.id for check in fit.checks] == [
+        "fit.watchlist_presence",
+        "fit.sector_concentration",
+    ]
+    assert fit.checks[0].status == "pass"
+    assert fit.checks[1].status == "fail"
+    assert "50%" in fit.checks[1].value
+
+
+def test_fit_gate_stays_not_applicable_without_a_watchlist() -> None:
+    fit = build_dossier("AAPL").gates[-1]
+    assert [check.status for check in fit.checks] == ["not_applicable"]
