@@ -18,8 +18,11 @@ WORKER_INTERVAL_MINUTES = 60
 SYNC_ACTIVE_WINDOW_MINUTES = 2 * WORKER_INTERVAL_MINUTES
 
 # ── Screener defaults ───────────────────────────────────────────────
-DEFAULT_PAGE_SIZE: int = 50
+DEFAULT_PAGE_SIZE: int = 25
 PAGE_SIZE_OPTIONS: list[int] = [10, 25, 50, 100]
+# Keep the screener grid inside a typical browser viewport; larger pages scroll
+# inside the table instead of pushing the footer off screen.
+SCREENER_TABLE_MAX_HEIGHT: int = 480
 
 # ── Column display names ────────────────────────────────────────────
 COLUMN_DISPLAY_NAMES: dict[str, str] = {

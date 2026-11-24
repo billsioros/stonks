@@ -360,7 +360,8 @@ def _render_result(result: dict[str, Any]) -> None:
                     round(bench_value, 2) if bench_value is not None else None
                 )
             rows.append(entry)
-        st.dataframe(rows, hide_index=True, use_container_width=True)
+        st.caption("Annual returns")
+        st.dataframe(rows, hide_index=True, width="stretch")
 
     st.caption(
         "Dividends are reinvested and prices are adjusted closes. Returns are "
@@ -394,7 +395,7 @@ def _render_saved(store: SQLiteStore) -> None:
         name = st.text_input(
             "Portfolio name", key=_SAVE_NAME_KEY, placeholder="My Portfolio"
         )
-        if st.button("💾 Save Current Settings", use_container_width=True):
+        if st.button("💾 Save Current Settings", width="stretch"):
             settings = st.session_state.get(_SETTINGS_KEY)
             if not name.strip():
                 st.warning("Please enter a name.")
@@ -454,7 +455,7 @@ def render_backtest_tab(store: SQLiteStore) -> None:
             key="bt_editor",
             num_rows="dynamic",
             hide_index=True,
-            use_container_width=True,
+            width="stretch",
             column_config={
                 "Symbol": st.column_config.TextColumn(
                     "Symbol", help="Ticker, e.g. VUAA", required=True

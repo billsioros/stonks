@@ -27,6 +27,7 @@ from stonks.config import (
     ENUM_FILTER_COLUMNS,
     NUMERIC_FILTER_COLUMNS,
     PAGE_SIZE_OPTIONS,
+    SCREENER_TABLE_MAX_HEIGHT,
     VIEW_PRESETS,
 )
 from stonks.detail_view import render_detail_page
@@ -199,6 +200,34 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     background: transparent;
     min-height: 2rem;
     padding: 0 0.5rem;
+}
+
+/* Sidebar cards are narrower than the main column: tighter padding, no
+   wrapping action buttons, and text that can shrink without overflowing. */
+[data-testid="stSidebar"] [class*="st-key-screen-"] {
+    padding: 0.55rem 0.65rem;
+    margin-bottom: 0.45rem;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] [data-testid="stHorizontalBlock"] {
+    gap: 0.35rem;
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] [data-testid="stMarkdownContainer"] p {
+    margin: 0;
+    font-size: 0.82rem;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] [data-testid="stCaptionContainer"] {
+    font-size: 0.72rem;
+    line-height: 1.25;
+}
+
+[data-testid="stSidebar"] [class*="st-key-screen-"] .stButton > button {
+    min-height: 1.8rem;
+    padding: 0 0.35rem;
 }
 
 /* Metric cards: flat surfaces with high-contrast values, no glow */
@@ -906,6 +935,11 @@ def _describe_screen(screen: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+def _screen_column_ratios(_allow_delete: bool) -> list[int]:
+    """Reserve one action slot in every screen card so titles align."""
+    return [6, 1, 1]
+
+
 def _screen_card(
     key: str,
     title: str,
@@ -915,8 +949,7 @@ def _screen_card(
 ) -> tuple[bool, bool]:
     """Render one screen as a card and return (load_clicked, delete_clicked)."""
     with st.container(key=f"screen-{key}"):
-        ratios = [5, 1, 1] if allow_delete else [6, 1]
-        cols = st.columns(ratios)
+        cols = st.columns(_screen_column_ratios(allow_delete))
         with cols[0]:
             st.markdown(f"**{title}**")
             if description:
@@ -975,7 +1008,7 @@ def render_sidebar_filters() -> dict[str, Any]:
             if st.button(
                 "💾 Save Current Filters",
                 key="save_screen_btn",
-                use_container_width=True,
+                width="stretch",
             ):
                 if save_name:
                     current_filters = _prune_filters(
@@ -1035,9 +1068,7 @@ def render_top_filters() -> dict[str, Any]:
 
         with ctrl_col3:
             st.markdown("<br>", unsafe_allow_html=True)
-            if st.button(
-                "🧹 Reset All", key="reset_filters_top", use_container_width=True
-            ):
+            if st.button("🧹 Reset All", key="reset_filters_top", width="stretch"):
                 st.session_state["active_filters"] = {}
                 st.session_state["search_query"] = ""
                 st.session_state["current_page"] = 1
@@ -1138,9 +1169,7 @@ def render_top_filters() -> dict[str, Any]:
         # Apply button & Update session state
         st.session_state["active_filters"] = filters
 
-        if st.button(
-            "Apply", key="apply_top", type="primary", use_container_width=True
-        ):
+        if st.button("Apply", key="apply_top", type="primary", width="stretch"):
             st.session_state["active_filters"] = _prune_filters(filters)
             st.session_state["current_page"] = 1
             st.rerun()
@@ -1166,6 +1195,11 @@ def _sync_time_text(raw: str | None) -> str:
         return datetime.fromtimestamp(float(raw)).strftime("%Y-%m-%d %H:%M")
     except (TypeError, ValueError, OverflowError, OSError):
         return "an unknown time"
+
+
+def _screener_table_height(row_count: int) -> int:
+    """Cap the table so page chrome stays visible in a normal viewport."""
+    return min(44 * row_count + 44, SCREENER_TABLE_MAX_HEIGHT)
 
 
 def render_screener_table() -> None:
@@ -1330,7 +1364,7 @@ def render_screener_table() -> None:
         width="stretch",
         hide_index=True,
         row_height=44,
-        height=min(44 * len(display_df) + 44, 900),
+        height=_screener_table_height(len(display_df)),
         on_select="rerun",
         selection_mode="single-row",
         key=_table_key("screener_table"),
@@ -1724,6 +1758,7 @@ def render_sanity_banner(store: SQLiteStore) -> None:
 def render_buy_opportunities_banner(
     store: SQLiteStore | None = None,
     opportunities: list[dict[str, Any]] | None = None,
+    watchlist_symbols: set[str] | None = None,
 ) -> None:
     """Surface screener stocks near 52-week lows, especially below fair value."""
     store = store or get_store()
@@ -1732,6 +1767,8 @@ def render_buy_opportunities_banner(
     if not opportunities:
         return
 
+    watched = watchlist_symbols or set()
+    opportunities = sorted(opportunities, key=lambda row: row["symbol"] not in watched)
     below_both = [row for row in opportunities if row.get("below_both_fair_values")]
     if not st.session_state.get("buy_opps_toasted"):
         if below_both:
@@ -1750,9 +1787,13 @@ def render_buy_opportunities_banner(
             headline += (
                 f" · {len(below_both)} below both DCF and Peter Lynch fair value"
             )
+        watch_count = sum(row["symbol"] in watched for row in opportunities)
+        if watch_count:
+            headline += f" · {watch_count} on your watchlist"
         st.success(headline, icon="📉")
         for row in opportunities:
             symbol = row["symbol"]
+            watch_tag = " · ⭐ on watchlist" if symbol in watched else ""
             symbol_col, text_col = st.columns([1, 7])
             with symbol_col:
                 if st.button(
@@ -1781,7 +1822,7 @@ def render_buy_opportunities_banner(
                     if lynch is not None:
                         fair_bits.append(f"Lynch {_fmt_number(lynch, 2)}")
                     parts.append("fair value " + ", ".join(fair_bits))
-                st.markdown(f"**{symbol}** · {row.get('description') or ''}")
+                st.markdown(f"**{symbol}** · {row.get('description') or ''}{watch_tag}")
                 st.caption(" · ".join(parts))
 
 
@@ -1837,8 +1878,13 @@ def render_notifications(store: SQLiteStore) -> None:
     if not count:
         return
 
+    watchlist_symbols = set(store.get_watchlist_symbols())
     with st.expander(f"🔔 Notifications ({count})", expanded=False):
-        render_buy_opportunities_banner(store, opportunities=snapshot_buys)
+        render_buy_opportunities_banner(
+            store,
+            opportunities=snapshot_buys,
+            watchlist_symbols=watchlist_symbols,
+        )
         render_alerts_banner(store, alerts=alerts)
 
 
