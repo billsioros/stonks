@@ -284,32 +284,7 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     gap: 0.5rem;
 }
 
-/* Backtest: a quiet lab header and labelled sections inside the same surfaces */
-.bt-head {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: 14px;
-    padding: 1rem 1.2rem;
-    margin-bottom: 1.35rem;
-}
-
-.bt-eyebrow {
-    display: block;
-    color: var(--accent-primary);
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    margin-bottom: 0.35rem;
-}
-
-.bt-head h2 {
-    border: 0 !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    font-size: 1.35rem;
-}
-
+/* Backtest: labelled sections inside the same surfaces */
 .bt-section {
     color: var(--text-secondary);
     font-size: 0.72rem;
@@ -1476,10 +1451,6 @@ def render_screener_table() -> None:
 def render_watchlist_tab() -> None:
     """Render the watchlist management tab."""
     store = get_store()
-    st.markdown(
-        '<div class="section-header">⭐ Watchlist</div>', unsafe_allow_html=True
-    )
-
     query = st.text_input(
         "Search symbol or company",
         key="watchlist_search",

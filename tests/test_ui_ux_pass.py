@@ -144,18 +144,28 @@ def test_backtest_results_label_the_yearly_table() -> None:
     assert any("Annual returns" in str(item.value) for item in at.caption)
 
 
-def test_backtest_gets_a_header_and_setup_section() -> None:
+def test_backtest_keeps_setup_sections_without_decorative_header() -> None:
     at = _app()
     at.session_state[_RESULT_KEY] = _simulated_backtest_result()
     at.run()
 
     assert not at.exception
     markdown = _visible_markdown(at)
-    assert "bt-head" in markdown
-    assert "Portfolio lab" in markdown
+    assert "bt-head" not in markdown
+    assert "Portfolio lab" not in markdown
+    assert "🧪 Portfolio Backtest" not in markdown
     assert "bt-section" in markdown
     assert "Setup" in markdown
     assert "Key metrics" in markdown
+
+
+def test_watchlist_card_has_no_section_header_separator() -> None:
+    at = _app()
+
+    assert not at.exception
+    markdown = _visible_markdown(at)
+    assert '<div class="section-header">⭐ Watchlist</div>' not in markdown
+    assert any(tab.label.startswith("⭐ Watchlist") for tab in at.tabs)
 
 
 def test_layout_widgets_use_the_current_streamlit_width_api() -> None:

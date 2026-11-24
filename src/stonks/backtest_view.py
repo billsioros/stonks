@@ -549,11 +549,6 @@ def _render_symbol_editor(
 
 def render_backtest_tab(store: SQLiteStore) -> None:
     """Render the backtest tab: portfolio inputs on top, results below."""
-    st.markdown(
-        '<div class="bt-head"><span class="bt-eyebrow">Portfolio lab</span>'
-        "<h2>🧪 Portfolio Backtest</h2></div>",
-        unsafe_allow_html=True,
-    )
     st.caption(
         "Total-return backtest over StockAnalysis adjusted monthly closes — "
         "at most ten years of history."
