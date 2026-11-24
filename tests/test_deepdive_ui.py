@@ -20,6 +20,14 @@ dossier = Dossier(
         Gate("filings", "Filings", (
             Check("filings.cik", "CIK", "pass", "320193", "resolved", "map"),
             Check("filings.revenue", "Revenue", "fail", "1.0 vs 1.2", "<= 1%", "acc 123"),
+            Check(
+                "filings.freshness",
+                "Freshness",
+                "pass",
+                "10-K filed 2026-02-15 (281d old)",
+                "10-K <= 400 days",
+                "companyfacts",
+            ),
         ), "Revenue differs"),
         Gate("forward", "Forward", (
             Check("forward.growth", "Growth", "unverified", "n/a", "> 0", "no forecast"),
@@ -107,9 +115,23 @@ def test_gate_strip_has_one_badge_per_gate_with_the_right_glyph() -> None:
     assert any("50%" in value for value in values)
 
 
+def test_decision_summary_card_names_unknowns_coverage_and_freshness() -> None:
+    values = _values()
+
+    assert any("### What would change my mind" in value for value in values)
+    assert any("Evidence coverage: 50%" in value for value in values)
+    assert any("10-K filed 2026-02-15" in value for value in values)
+    assert any("forward.growth" in value for value in values)
+    assert any("filings.revenue" in value for value in values)
+
+
 def test_failing_checks_come_first_in_their_table() -> None:
     values = _values()
-    tables = [value for value in values if "filings.revenue" in value]
+    tables = [
+        value
+        for value in values
+        if "filings.revenue" in value and "| id | check |" in value
+    ]
     assert tables
     table = tables[0]
     assert table.index("filings.revenue") < table.index("filings.cik")

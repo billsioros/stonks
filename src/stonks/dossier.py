@@ -124,6 +124,35 @@ def coverage(gates: Iterable[Gate]) -> float:
     return passed / len(applicable)
 
 
+DECISION_SUMMARY_LIMIT = 6
+
+
+def decision_summary(dossier: Dossier) -> dict[str, Any]:
+    """Facts a reader would need before treating a dossier as actionable.
+
+    This is deliberately not a verdict: it turns existing checks into the open
+    questions, unresolved evidence and freshness a human has to weigh.
+    """
+    checks = [check for gate in dossier.gates for check in gate.checks]
+    unknown = [check for check in checks if check.status == "unverified"]
+    unresolved = [check for check in checks if check.status in {"fail", "unverified"}]
+    freshness = next(
+        (check.value for check in checks if check.id == "filings.freshness"),
+        "not available",
+    )
+    return {
+        "coverage": dossier.coverage,
+        "freshness": freshness,
+        "unknowns": tuple(
+            f"{check.id}: {check.value}" for check in unknown[:DECISION_SUMMARY_LIMIT]
+        ),
+        "changes": tuple(
+            f"{check.id} — {check.threshold}"
+            for check in unresolved[:DECISION_SUMMARY_LIMIT]
+        ),
+    }
+
+
 # ── Quantitative thresholds ──────────────────────────────────────────
 # Each constant is a judgement call, stated once here so tests pin the trade-off
 # rather than a magic number buried in a comparison.
