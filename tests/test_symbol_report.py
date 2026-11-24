@@ -128,6 +128,7 @@ def test_symbol_prompt_has_the_full_decision_skeleton() -> None:
         "## Valuation at today's price",
         "## Risks",
         "## What would change the answer",
+        "## Evidence gaps and next steps",
         "## TL;DR",
     ):
         assert heading in prompt

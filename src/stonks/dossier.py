@@ -178,15 +178,28 @@ def fit_gate(
 
     symbols = {str(entry.get("symbol", "")).upper() for entry in entries}
     presence_ok = symbol.upper() in symbols
-    sector = row.get("industry")
-    sectors = [entry.get("industry") for entry in entries if entry.get("industry")]
+    raw_sector = row.get("industry")
+    symbol_sector = (
+        str(raw_sector).casefold()
+        if isinstance(raw_sector, str) and raw_sector.strip()
+        else ""
+    )
+    sectors = [
+        str(item).casefold()
+        for entry in entries
+        if (item := entry.get("industry")) and isinstance(item, str) and item.strip()
+    ]
     sector_ok: bool | None = None
-    if not sector or not sectors:
-        concentration_value = "no industry data"
+    if not symbol_sector:
+        concentration_value = "symbol industry unavailable"
+    elif not sectors:
+        concentration_value = "watchlist industries unavailable"
     else:
-        share = sum(1 for item in sectors if item == sector) / len(sectors) * 100.0
+        share = (
+            sum(1 for item in sectors if item == symbol_sector) / len(sectors) * 100.0
+        )
         sector_ok = share <= PORTFOLIO_SECTOR_MAX_PCT
-        concentration_value = f"{share:.0f}% of watchlist in {sector}"
+        concentration_value = f"{share:.0f}% of watchlist in {raw_sector}"
     concentration = Check(
         "fit.sector_concentration",
         "Watchlist sector concentration",
@@ -275,6 +288,25 @@ def _status_from(ok: bool | None) -> Status:
     if ok is None:
         return "unverified"
     return "pass" if ok else "fail"
+
+
+def _check_status(checks: Sequence[Check], check_id: str) -> Status:
+    """Read a check by stable ID, not by its position in the gate."""
+    return next(
+        (check.status for check in checks if check.id == check_id), "unverified"
+    )
+
+
+def _replace_check(
+    checks: list[Check], check_id: str, *, status: Status, value: str
+) -> None:
+    """Update one check by stable ID, preserving its label and threshold."""
+    for index, check in enumerate(checks):
+        if check.id == check_id:
+            checks[index] = Check(
+                check.id, check.label, status, value, check.threshold, check.evidence
+            )
+            return
 
 
 def _annual_series(
@@ -517,15 +549,17 @@ def quality_gate(
         )
     )
 
-    fcf_series = [value for value in _annual_series(income, "fcf") if value is not None]
-    if len(fcf_series) < FCF_STABILITY_YEARS:
+    fcf_series = _annual_series(income, "fcf")[:FCF_STABILITY_YEARS]
+    if len(fcf_series) < FCF_STABILITY_YEARS or any(
+        value is None for value in fcf_series
+    ):
         fcf_stability_ok: bool | None = None
-        fcf_stability_value = "no five-year free-cash-flow history"
+        fcf_stability_value = "missing FCF year in five-year window"
     else:
-        window = fcf_series[:FCF_STABILITY_YEARS]
-        fcf_stability_ok = all(value > 0 for value in window)
-        positive = sum(1 for value in window if value > 0)
-        fcf_stability_value = f"{positive}/{len(window)} positive FCF years"
+        values = [value for value in fcf_series if value is not None]
+        fcf_stability_ok = all(value > 0 for value in values)
+        positive = sum(1 for value in values if value > 0)
+        fcf_stability_value = f"{positive}/{len(values)} positive FCF years"
     checks.append(
         Check(
             "quality.fcf_stability",
@@ -927,15 +961,20 @@ def forward_gate(
         )
     )
 
-    leading = (checks[0].status, checks[1].status, checks[4].status)
+    leading = tuple(
+        _check_status(checks, check_id)
+        for check_id in (
+            "forward.estimate_growth",
+            "forward.revision_direction",
+            "forward.guidance_present",
+        )
+    )
     if all(status in {"unverified", "fail"} for status in leading):
-        checks[0] = Check(
-            checks[0].id,
-            checks[0].label,
-            "fail",
-            "no forward estimate, revision or guidance",
-            checks[0].threshold,
-            checks[0].evidence,
+        _replace_check(
+            checks,
+            "forward.estimate_growth",
+            status="fail",
+            value="no forward estimate, revision or guidance",
         )
         summary = TRAILING_ONLY
     else:

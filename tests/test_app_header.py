@@ -21,8 +21,9 @@ def _app(tmp_path: Path, monkeypatch) -> AppTest:
     db_path = tmp_path / "stonks.db"
     real_init = SQLiteStore.__init__
 
-    def _init(self, db_path=db_path, *args, **kwargs):
-        return real_init(self, db_path, *args, **kwargs)
+    def _init(self, *args, **kwargs):
+        kwargs.setdefault("db_path", db_path)
+        return real_init(self, *args, **kwargs)
 
     monkeypatch.setattr(SQLiteStore, "__init__", _init)
     monkeypatch.setattr(app, "get_store", lambda: SQLiteStore(db_path=db_path))

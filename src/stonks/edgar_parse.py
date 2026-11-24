@@ -30,6 +30,8 @@ _NET_INCOME_TAGS = ("NetIncomeLoss",)
 _OPERATING_CASH_FLOW_TAGS = ("NetCashProvidedByUsedInOperatingActivities",)
 _CAPEX_TAGS = ("PaymentsToAcquirePropertyPlantAndEquipment",)
 _SHARES_TAGS = ("dei:EntityCommonStockSharesOutstanding",)
+# Total debt intentionally includes the current portion; `filings.current_debt`
+# reuses the same XBRL fact as a dedicated short-term liquidity check.
 _TOTAL_DEBT_TAGS = ("LongTermDebt", "DebtCurrent")
 _CASH_TAGS = ("CashAndCashEquivalentsAtCarryingValue",)
 _SBC_TAGS = ("ShareBasedCompensation",)
@@ -540,15 +542,6 @@ def _share_dilution_check(facts: Mapping[str, Any]) -> Check:
             "XBRL EntityCommonStockSharesOutstanding 10-K history",
         )
     prior, latest = annual[-2], annual[-1]
-    if prior.value <= 0:
-        return Check(
-            "filings.share_dilution",
-            "Share count dilution is controlled",
-            "unverified",
-            "prior share count is not positive",
-            f"< {SHARE_DILUTION_MAX_PCT:.1f}% YoY increase",
-            f"{prior.detail} -> {latest.detail}",
-        )
     growth_pct = (latest.value / prior.value - 1.0) * 100.0
     ok = growth_pct < SHARE_DILUTION_MAX_PCT
     status: Literal["pass", "fail"] = "pass" if ok else "fail"

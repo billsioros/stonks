@@ -15,6 +15,7 @@ import streamlit as st
 
 from stonks.dossier import Dossier, decision_summary, gate_status
 from stonks.edgar import USER_AGENT_REASON
+from stonks.report import DEEP_DIVE_NEXT_STEPS, GAP_DISCLAIMER
 
 GLYPHS = {
     "pass": "✅",
@@ -71,6 +72,14 @@ def render_decision_summary(dossier: Dossier) -> None:
         lines.extend(f"- Unknown: {item}" for item in unknowns)
     else:
         lines.append("- No unknown evidence")
+    lines.extend(
+        (
+            "",
+            "### Scope and next steps",
+            GAP_DISCLAIMER,
+            DEEP_DIVE_NEXT_STEPS,
+        )
+    )
     st.markdown("\n".join(lines))
 
 
