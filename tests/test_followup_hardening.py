@@ -13,6 +13,15 @@ from stonks.store import SQLiteStore
 from tests.test_edgar import _facts, _row, _statements
 
 
+@pytest.fixture(autouse=True)
+def _clear_resource_cache_after_each_test() -> None:
+    """Prevent temp-DB AppTests from leaking a cached store into later tests."""
+    yield
+    import streamlit as st
+
+    st.cache_resource.clear()
+
+
 class _FetchResponse:
     def __init__(self, payload: Any) -> None:
         self.status_code = 200

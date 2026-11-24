@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
@@ -29,6 +30,13 @@ def _app(tmp_path: Path, monkeypatch) -> AppTest:
     at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
     at.run()
     return at
+
+
+@pytest.fixture(autouse=True)
+def _clear_resource_cache_after_each_test() -> None:
+    """Prevent a temp-DB AppTest from leaking its cached store into later tests."""
+    yield
+    st.cache_resource.clear()
 
 
 def _report(results: list[dict[str, Any]], checked_at: float) -> dict[str, Any]:

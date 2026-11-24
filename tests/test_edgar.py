@@ -314,6 +314,9 @@ CHECK_IDS = (
     "filings.shares_out",
     "filings.total_debt",
     "filings.cash",
+    "filings.sbc",
+    "filings.current_debt",
+    "filings.share_dilution",
     "filings.debt_coverage",
 )
 
@@ -580,6 +583,65 @@ def test_debt_coverage_boundary() -> None:
     assert _check_map(pass_checks)["filings.debt_coverage"].status == "pass"
     assert "0.90" in _check_map(fail_checks)["filings.debt_coverage"].value
     assert "1.10" in _check_map(pass_checks)["filings.debt_coverage"].value
+
+
+def test_sbc_cross_check_is_unverified_when_missing_and_passes_when_aligned() -> None:
+    checks, _ = edgar_parse.filing_checks(_row(), _statements(), _facts())
+    assert _check_map(checks)["filings.sbc"].status == "unverified"
+
+    facts = _facts()
+    facts["facts"]["us-gaap"]["ShareBasedCompensation"] = {
+        "label": "Share-based compensation",
+        "units": {
+            "USD": [
+                {
+                    "end": "2025-12-31",
+                    "val": 10_000_000.0,
+                    "accn": "000-2025-01",
+                    "form": "10-K",
+                    "filed": "2026-02-15",
+                }
+            ]
+        },
+    }
+    statements = _statements()
+    statements["cash_annual"]["rows"].append(
+        {"id": "sbc", "label": "Share-based compensation", "values": [10_000_000.0]}
+    )
+    checks, _ = edgar_parse.filing_checks(_row(), statements, facts)
+    assert _check_map(checks)["filings.sbc"].status == "pass"
+
+
+def test_current_debt_cross_check_uses_debt_current() -> None:
+    checks, _ = edgar_parse.filing_checks(
+        _row(short_term_debt=100_000_000.0), _statements(), _facts()
+    )
+    assert _check_map(checks)["filings.current_debt"].status == "pass"
+
+    checks, _ = edgar_parse.filing_checks(_row(), _statements(), _facts())
+    assert _check_map(checks)["filings.current_debt"].status == "unverified"
+
+
+def test_share_dilution_is_unverified_without_history_and_flags_growth() -> None:
+    checks, _ = edgar_parse.filing_checks(_row(), _statements(), _facts())
+    assert _check_map(checks)["filings.share_dilution"].status == "unverified"
+
+    facts = _facts()
+    facts["facts"]["dei"]["EntityCommonStockSharesOutstanding"]["units"][
+        "shares"
+    ].append(
+        {
+            "end": "2024-12-31",
+            "val": 200_000_000.0,
+            "accn": "000-2024-01",
+            "form": "10-K",
+            "filed": "2025-02-15",
+        }
+    )
+    checks, _ = edgar_parse.filing_checks(_row(), _statements(), facts)
+    dilution = _check_map(checks)["filings.share_dilution"]
+    assert dilution.status == "fail"
+    assert "dilut" in dilution.label.lower() or "dilut" in dilution.value.lower()
 
 
 def test_maturity_ladder_sums_five_buckets() -> None:
