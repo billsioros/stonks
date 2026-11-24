@@ -112,3 +112,52 @@ def test_notifications_deduplicate_persisted_buy_opportunity_alerts(
 
     assert labels.count("BOTH ▸") == 1
     assert labels.count("LOW ▸") == 1
+
+
+def test_notifications_hide_non_screener_symbols_unless_watchlisted(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks([{"symbol": "SCREEN", "description": "In the screener"}])
+    seeded.add_alert(
+        "SCREEN",
+        "off_high",
+        "good",
+        "Screener alert",
+        "In the current universe",
+        "SCREEN:off_high:test",
+    )
+    seeded.add_alert(
+        "GHOST",
+        "off_high",
+        "good",
+        "Stale alert",
+        "No longer in the screener",
+        "GHOST:off_high:test",
+    )
+    seeded.add_alert(
+        "WATCHONLY",
+        "off_high",
+        "good",
+        "Watchlist alert",
+        "Tracked outside the screener",
+        "WATCHONLY:off_high:test",
+    )
+    seeded.add_to_watchlist("WATCHONLY")
+
+    at = _run_app(db_path, monkeypatch)
+
+    assert not at.exception
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    labels = [button.label for button in notification.button]
+    text = " ".join(
+        str(getattr(value, "value", value))
+        for value in [*notification.markdown, *notification.caption]
+    )
+
+    assert "SCREEN ▸" in labels
+    assert "WATCHONLY ▸" in labels
+    assert "GHOST ▸" not in labels
+    assert "GHOST" not in text
+    assert "Notifications (2)" in notification.label

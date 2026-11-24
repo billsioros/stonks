@@ -289,6 +289,7 @@ def _render_result(result: dict[str, Any]) -> None:
 
     yearly = result["yearly"]
     prefix = "Time-weighted " if active else ""
+    st.markdown('<div class="bt-section">Key metrics</div>', unsafe_allow_html=True)
     pills = (
         _pill(
             f"{prefix}CAGR",
@@ -410,7 +411,8 @@ def _render_saved(store: SQLiteStore) -> None:
 def render_backtest_tab(store: SQLiteStore) -> None:
     """Render the backtest tab: portfolio inputs on top, results below."""
     st.markdown(
-        '<div class="section-header">🧪 Portfolio Backtest</div>',
+        '<div class="bt-head"><span class="bt-eyebrow">Portfolio lab</span>'
+        "<h2>🧪 Portfolio Backtest</h2></div>",
         unsafe_allow_html=True,
     )
     st.caption(
@@ -432,6 +434,7 @@ def render_backtest_tab(store: SQLiteStore) -> None:
     if settings.get("allocation_mode") not in _ALLOCATION_MODES:
         settings["allocation_mode"] = "percent"
 
+    st.markdown('<div class="bt-section">Setup</div>', unsafe_allow_html=True)
     _render_saved(store)
 
     mode_options = list(_ALLOCATION_MODES)

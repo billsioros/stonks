@@ -769,6 +769,12 @@ class SQLiteStore:
 
     # ── Stocks ────────────────────────────────────────────────────────
 
+    def get_stock_symbols(self) -> list[str]:
+        """Return every symbol currently in the screener universe."""
+        with self._connect() as conn:
+            rows = conn.execute("SELECT symbol FROM stocks ORDER BY symbol").fetchall()
+        return [row[0] for row in rows]
+
     def get_stocks(
         self,
         filters: dict[str, Any] | None = None,

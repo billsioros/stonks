@@ -79,6 +79,20 @@ class TestSQLiteStore:
         assert rows[0]["industry"] == "Technology"
         assert rows[1]["market_cap"] == 300.0
 
+    def test_get_stock_symbols_lists_the_current_screener_universe(
+        self, store: SQLiteStore
+    ) -> None:
+        store.replace_stocks(
+            [
+                {"symbol": "ZZZ", "description": "Zeta"},
+                {"symbol": "AAA", "description": "Alpha"},
+            ]
+        )
+
+        getter = getattr(store, "get_stock_symbols", None)
+        assert getter is not None
+        assert getter() == ["AAA", "ZZZ"]
+
     # ── Sync Status ──────────────────────────────────────────────
 
     def test_sync_status(self, store: SQLiteStore) -> None:

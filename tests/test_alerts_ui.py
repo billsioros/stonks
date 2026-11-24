@@ -17,6 +17,7 @@ def _app() -> AppTest:
 
 def _seed_alert() -> SQLiteStore:
     store = SQLiteStore()
+    store.add_to_watchlist(TEST_SYMBOL)
     store.add_alert(
         TEST_SYMBOL,
         "off_high",
@@ -31,6 +32,7 @@ def _seed_alert() -> SQLiteStore:
 def _cleanup(store: SQLiteStore) -> None:
     with store._connect() as conn:
         conn.execute("DELETE FROM alerts WHERE dedupe_key = ?", (TEST_KEY,))
+        conn.execute("DELETE FROM watchlist WHERE symbol = ?", (TEST_SYMBOL,))
         conn.commit()
 
 

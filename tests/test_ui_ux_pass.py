@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 import streamlit as st
@@ -43,32 +45,7 @@ def _app_with_db(db_path: Path, monkeypatch) -> AppTest:
     return at
 
 
-def test_screener_defaults_to_a_viewport_sized_page() -> None:
-    assert config.DEFAULT_PAGE_SIZE == 25
-    assert config.DEFAULT_PAGE_SIZE in config.PAGE_SIZE_OPTIONS
-    assert config.SCREENER_TABLE_MAX_HEIGHT == 480
-
-
-def test_screener_table_height_never_exceeds_the_viewport_cap() -> None:
-    assert app._screener_table_height(5) == 264
-    assert app._screener_table_height(10) == config.SCREENER_TABLE_MAX_HEIGHT
-    assert app._screener_table_height(100) == config.SCREENER_TABLE_MAX_HEIGHT
-
-
-def test_popular_and_saved_screen_cards_share_one_compact_grid() -> None:
-    assert app._screen_column_ratios(False) == [6, 1, 1]
-    assert app._screen_column_ratios(True) == [6, 1, 1]
-
-
-def test_sidebar_screen_cards_get_narrow_width_styling() -> None:
-    at = _app()
-    css = "\n".join(
-        str(item.value) for item in at.markdown if "<style>" in str(item.value)
-    )
-    assert '[data-testid="stSidebar"] [class*="st-key-screen-"]' in css
-
-
-def test_backtest_results_label_the_yearly_table() -> None:
+def _simulated_backtest_result() -> dict[str, Any]:
     result = simulate(
         {
             "AAA": {
@@ -89,12 +66,93 @@ def test_backtest_results_label_the_yearly_table() -> None:
             "allocation_mode": "percent",
         }
     )
+    return result
+
+
+def _app_css(at: AppTest) -> str:
+    return "\n".join(
+        str(item.value) for item in at.markdown if "<style>" in str(item.value)
+    )
+
+
+def _visible_markdown(at: AppTest) -> str:
+    return " ".join(
+        str(item.value) for item in at.markdown if "<style>" not in str(item.value)
+    )
+
+
+def test_screener_defaults_to_a_viewport_sized_page() -> None:
+    assert config.DEFAULT_PAGE_SIZE == 25
+    assert config.DEFAULT_PAGE_SIZE in config.PAGE_SIZE_OPTIONS
+    assert config.SCREENER_TABLE_MAX_HEIGHT == 480
+
+
+def test_screener_table_height_never_exceeds_the_viewport_cap() -> None:
+    assert app._screener_table_height(5) == 264
+    assert app._screener_table_height(10) == config.SCREENER_TABLE_MAX_HEIGHT
+    assert app._screener_table_height(100) == config.SCREENER_TABLE_MAX_HEIGHT
+
+
+def test_popular_and_saved_screen_cards_share_one_compact_grid() -> None:
+    assert app._screen_column_ratios(False) == [4, 1, 1]
+    assert app._screen_column_ratios(True) == [4, 1, 1]
+
+
+def test_sidebar_screen_cards_get_narrow_width_styling() -> None:
     at = _app()
-    at.session_state[_RESULT_KEY] = result
+    css = _app_css(at)
+    assert '[data-testid="stSidebar"] [class*="st-key-screen-"]' in css
+
+
+def test_sidebar_screen_buttons_have_a_full_width_tap_target() -> None:
+    at = _app()
+    css = _app_css(at)
+    rules = re.findall(
+        r'\[data-testid="stSidebar"\] \[class\*="st-key-screen-"\] '
+        r"\.stButton > button\s*\{[^}]*\}",
+        css,
+    )
+    assert rules
+    assert "min-width: 2.25rem" in rules[0]
+    assert "width: 100%" in rules[0]
+
+
+def test_footer_is_pinned_to_the_viewport_bottom() -> None:
+    at = _app()
+    css = _app_css(at)
+    footer_rules = [
+        rule
+        for rule in re.findall(r"\.app-footer\s*\{[^}]*\}", css)
+        if "position: fixed" in rule
+    ]
+    assert footer_rules
+    assert "bottom: 0" in footer_rules[0]
+    assert re.search(
+        r"\.main \.block-container\s*\{[^}]*padding-bottom:\s*3\.5rem", css
+    )
+
+
+def test_backtest_results_label_the_yearly_table() -> None:
+    at = _app()
+    at.session_state[_RESULT_KEY] = _simulated_backtest_result()
     at.run()
 
     assert not at.exception
     assert any("Annual returns" in str(item.value) for item in at.caption)
+
+
+def test_backtest_gets_a_header_and_setup_section() -> None:
+    at = _app()
+    at.session_state[_RESULT_KEY] = _simulated_backtest_result()
+    at.run()
+
+    assert not at.exception
+    markdown = _visible_markdown(at)
+    assert "bt-head" in markdown
+    assert "Portfolio lab" in markdown
+    assert "bt-section" in markdown
+    assert "Setup" in markdown
+    assert "Key metrics" in markdown
 
 
 def test_layout_widgets_use_the_current_streamlit_width_api() -> None:

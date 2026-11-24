@@ -81,6 +81,7 @@ html, body, [class*="css"], .stMarkdown, .stText, p, span, li, label, div {
 
 .main .block-container {
     padding-top: 1.5rem !important;
+    padding-bottom: 3.5rem !important;
     max-width: 100% !important;
 }
 
@@ -92,6 +93,7 @@ section[data-testid="stSidebar"] {
 
 section[data-testid="stSidebar"] .block-container {
     padding-top: 1rem !important;
+    padding-bottom: 3.5rem !important;
 }
 
 /* Headings */
@@ -226,8 +228,10 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
 }
 
 [data-testid="stSidebar"] [class*="st-key-screen-"] .stButton > button {
-    min-height: 1.8rem;
-    padding: 0 0.35rem;
+    min-width: 2.25rem;
+    width: 100%;
+    min-height: 2rem;
+    padding: 0;
 }
 
 /* Metric cards: flat surfaces with high-contrast values, no glow */
@@ -276,6 +280,41 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     display: flex;
     align-items: center;
     gap: 0.5rem;
+}
+
+/* Backtest: a quiet lab header and labelled sections inside the same surfaces */
+.bt-head {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    padding: 1rem 1.2rem;
+    margin-bottom: 1.35rem;
+}
+
+.bt-eyebrow {
+    display: block;
+    color: var(--accent-primary);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-bottom: 0.35rem;
+}
+
+.bt-head h2 {
+    border: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 1.35rem;
+}
+
+.bt-section {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin: 0.2rem 0 0.7rem;
 }
 
 /* Alerts banner: a card above the screener, hidden entirely when empty */
@@ -667,14 +706,20 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     border-radius: 12px !important;
 }
 
-/* Footer */
+/* Footer: pinned to the viewport, with content padded so it never overlaps */
 .app-footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 100;
     text-align: center;
     color: var(--text-muted);
     font-size: 0.75rem;
-    padding: 1.5rem 0;
+    padding: 0.55rem 1.25rem;
+    background: var(--bg-primary);
     border-top: 1px solid var(--border-color);
-    margin-top: 2rem;
+    margin: 0;
 }
 
 /* Scrollbar */
@@ -936,8 +981,8 @@ def _describe_screen(screen: dict[str, Any]) -> str:
 
 
 def _screen_column_ratios(_allow_delete: bool) -> list[int]:
-    """Reserve one action slot in every screen card so titles align."""
-    return [6, 1, 1]
+    """Reserve two action slots in every screen card so titles align."""
+    return [4, 1, 1]
 
 
 def _screen_card(
@@ -1865,9 +1910,17 @@ def render_alerts_banner(
 
 
 def render_notifications(store: SQLiteStore) -> None:
-    """Show watchlist alerts and buy opportunities in one collapsible surface."""
-    alerts = store.get_alerts()
-    opportunities = store.get_buy_opportunities(limit=8)
+    """Show current screener and watchlist notifications in one collapsible surface."""
+    watchlist_symbols = set(store.get_watchlist_symbols())
+    visible_symbols = set(store.get_stock_symbols()) | watchlist_symbols
+    alerts = [
+        alert for alert in store.get_alerts() if alert["symbol"] in visible_symbols
+    ]
+    opportunities = [
+        row
+        for row in store.get_buy_opportunities(limit=8)
+        if row["symbol"] in visible_symbols
+    ]
     persisted_buys = {
         alert["symbol"] for alert in alerts if alert.get("kind") == "buy_opportunity"
     }
@@ -1878,7 +1931,6 @@ def render_notifications(store: SQLiteStore) -> None:
     if not count:
         return
 
-    watchlist_symbols = set(store.get_watchlist_symbols())
     with st.expander(f"🔔 Notifications ({count})", expanded=False):
         render_buy_opportunities_banner(
             store,
