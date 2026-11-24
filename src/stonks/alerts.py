@@ -23,6 +23,7 @@ TARGET_UPSIDE_PCT = 25.0
 # Short interest is a percentage of float, so this is percentage points.
 SHORT_RISE_POINTS = 2.0
 BIG_MOVE_RATIO = 0.05
+BUY_OPPORTUNITY_ALERTS_PER_SYNC = 5
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,52 @@ def buy_opportunity(row: dict[str, Any] | None) -> dict[str, Any] | None:
         "below_both_fair_values": below_both,
         "above_low_pct": above_low_pct,
     }
+
+
+def buy_opportunity_alerts(
+    rows: list[dict[str, Any]],
+    *,
+    bucket: str | None = None,
+    cap: int = BUY_OPPORTUNITY_ALERTS_PER_SYNC,
+) -> list[Alert]:
+    """Alerts for strong buy opportunities: near 52w low and below both fair values.
+
+    Dedupe is weekly via the dedupe key; callers should still cap per sync.
+    """
+    stamp = bucket or week_bucket()
+    ranked: list[tuple[float, dict[str, Any]]] = []
+    for row in rows:
+        opportunity = buy_opportunity(row)
+        if opportunity is None or not opportunity["below_both_fair_values"]:
+            continue
+        ranked.append((opportunity["above_low_pct"], opportunity))
+
+    ranked.sort(key=lambda item: item[0])
+    alerts: list[Alert] = []
+    for _, opportunity in ranked[: max(0, int(cap))]:
+        symbol = str(opportunity["symbol"])
+        alerts.append(
+            _alert(
+                symbol,
+                "buy_opportunity",
+                "good",
+                f"{symbol} is near its 52-week low and below both DCF and Peter Lynch fair value",
+                (
+                    f"Price {_fmt_alert_number(opportunity['price'])} vs 52w low "
+                    f"{_fmt_alert_number(opportunity['week_52_low'])}; DCF "
+                    f"{_fmt_alert_number(opportunity['dcf_fair_value'])}, Lynch "
+                    f"{_fmt_alert_number(opportunity['lynch_fair_value'])}"
+                ),
+                stamp,
+            )
+        )
+    return alerts
+
+
+def _fmt_alert_number(value: float | None) -> str:
+    if value is None:
+        return "—"
+    return f"{value:.2f}"
 
 
 def _alert(

@@ -7,7 +7,7 @@ from typing import Any
 import schedule
 
 from stonks import sanity
-from stonks.alerts import evaluate_alerts
+from stonks.alerts import buy_opportunity_alerts, evaluate_alerts
 from stonks.config import DATA_DIR, WORKER_INTERVAL_MINUTES
 from stonks.detail import load_page
 from stonks.detail_parse import parse_overview
@@ -177,8 +177,24 @@ def job() -> None:
 
         changed = _record_change_alerts(store, watched, previous, rows)
         news = fetch_watched_news(store, sorted(watched))
-        if changed or news:
-            logger.info("🔔 %s change alerts, %s news alerts", changed, news)
+        buy_opps = 0
+        for alert in buy_opportunity_alerts(rows):
+            if store.add_alert(
+                alert.symbol,
+                alert.kind,
+                alert.severity,
+                alert.title,
+                alert.detail,
+                alert.dedupe_key,
+            ):
+                buy_opps += 1
+        if changed or news or buy_opps:
+            logger.info(
+                "🔔 %s change alerts, %s news alerts, %s buy-opportunity alerts",
+                changed,
+                news,
+                buy_opps,
+            )
 
         logger.info("✅ Synced %s symbols", len(rows))
     except Exception as exc:

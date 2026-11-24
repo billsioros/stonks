@@ -331,3 +331,40 @@ def test_sanity_checks_skip_a_fresh_report(monkeypatch) -> None:
     monkeypatch.setattr(sanity, "run_sanity_checks", fail)
 
     worker._maybe_run_sanity_checks(store)
+
+
+def test_job_persists_buy_opportunity_alerts(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "fetch_rows",
+        lambda *a, **k: [
+            {
+                "symbol": "BOTH",
+                "description": "Cheap and below models",
+                "price": 94.0,
+                "week_52_low": 90.0,
+                "dcf_fair_value": 120.0,
+                "lynch_fair_value": 110.0,
+            },
+            {
+                "symbol": "NEAR",
+                "description": "Near low only",
+                "price": 94.0,
+                "week_52_low": 90.0,
+                "dcf_fair_value": None,
+                "lynch_fair_value": None,
+            },
+        ],
+    )
+
+    job()
+    job()
+
+    alerts = store.get_alerts(unread_only=False)
+    buy_alerts = [a for a in alerts if a["kind"] == "buy_opportunity"]
+    assert len(buy_alerts) == 1
+    assert buy_alerts[0]["symbol"] == "BOTH"
