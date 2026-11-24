@@ -151,14 +151,37 @@ def fit_gate(
         )
 
     entries = list(watchlist)
+    if not entries:
+        return Gate(
+            "fit",
+            "Portfolio fit",
+            (
+                Check(
+                    "fit.watchlist_presence",
+                    "Holding context",
+                    "not_applicable",
+                    "empty watchlist",
+                    "Symbol present in watchlist",
+                    "watchlist.symbol",
+                ),
+                Check(
+                    "fit.sector_concentration",
+                    "Watchlist sector concentration",
+                    "not_applicable",
+                    "empty watchlist",
+                    f"<= {PORTFOLIO_SECTOR_MAX_PCT:.0f}% of watchlist",
+                    "equal-weight watchlist proxy, screener.industry",
+                ),
+            ),
+            "No holdings supplied",
+        )
+
     symbols = {str(entry.get("symbol", "")).upper() for entry in entries}
     presence_ok = symbol.upper() in symbols
     sector = row.get("industry")
     sectors = [entry.get("industry") for entry in entries if entry.get("industry")]
     sector_ok: bool | None = None
-    if not entries:
-        concentration_value = "empty watchlist"
-    elif not sector or not sectors:
+    if not sector or not sectors:
         concentration_value = "no industry data"
     else:
         share = sum(1 for item in sectors if item == sector) / len(sectors) * 100.0
@@ -826,12 +849,18 @@ def forward_gate(
         for hit in guidance_hits
         if isinstance(hit, Mapping) and (filed := _as_date(hit.get("filing_date")))
     ]
+    future_dates = [filed for filed in guidance_dates if filed > today_date]
+    guidance_dates = [filed for filed in guidance_dates if filed <= today_date]
     if not guidance_hits:
         guidance_ok: bool | None = None
         guidance_value = "no filing evidence"
     elif not guidance_dates:
         guidance_ok = None
-        guidance_value = "guidance hits without filing dates"
+        guidance_value = (
+            "future filing date"
+            if future_dates
+            else "guidance hits without filing dates"
+        )
     else:
         ages = [(today_date - filed).days for filed in guidance_dates]
         newest = min(ages)

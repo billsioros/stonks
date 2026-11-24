@@ -600,6 +600,10 @@ def test_forward_guidance_distinguishes_recent_from_stale_filings() -> None:
     undated = _forward(hits=({"phrase": "guidance"},))
     assert undated.checks[4].status == "unverified"
 
+    future = _forward(hits=({"filing_date": "2026-12-01"},))
+    assert future.checks[4].status == "unverified"
+    assert "future" in future.checks[4].value
+
 
 def test_forward_event_risk_uses_the_earnings_date() -> None:
     soon = {"earnings_date": "2026-11-26"}
@@ -877,3 +881,12 @@ def test_fit_gate_flags_watchlist_sector_concentration() -> None:
 def test_fit_gate_stays_not_applicable_without_a_watchlist() -> None:
     fit = build_dossier("AAPL").gates[-1]
     assert [check.status for check in fit.checks] == ["not_applicable"]
+
+
+def test_fit_gate_stays_not_applicable_with_an_empty_watchlist() -> None:
+    fit = build_dossier("AAPL", watchlist=()).gates[-1]
+    assert [check.status for check in fit.checks] == [
+        "not_applicable",
+        "not_applicable",
+    ]
+    assert fit.checks[1].value == "empty watchlist"
