@@ -779,6 +779,9 @@ INFORMATIONAL_PHRASES = (
     "regulatory",
     "related party",
     "off-balance sheet",
+    "impairment",
+    "cybersecurity incident",
+    "internal control",
 )
 GUIDANCE_PHRASES = ("guidance", "outlook")
 FRESHNESS_MAX_DAYS = {"10-K": 400, "10-Q": 120}
