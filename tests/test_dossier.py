@@ -583,8 +583,21 @@ def test_forward_acceleration_is_unverified_without_five_comparable_quarters() -
 
 
 def test_forward_guidance_needs_filing_evidence() -> None:
-    assert _forward(hits=({"phrase": "outlook"},)).checks[4].status == "pass"
+    assert _forward(hits=({"phrase": "outlook"},)).checks[4].status == "unverified"
     assert _forward().checks[4].status == "unverified"
+
+
+def test_forward_guidance_distinguishes_recent_from_stale_filings() -> None:
+    recent = _forward(hits=({"filing_date": "2026-11-01"},))
+    assert recent.checks[4].status == "pass"
+    assert "newest" in recent.checks[4].value
+
+    stale = _forward(hits=({"filing_date": "2025-01-01"},))
+    assert stale.checks[4].status == "fail"
+    assert "stale" in stale.checks[4].value
+
+    undated = _forward(hits=({"phrase": "guidance"},))
+    assert undated.checks[4].status == "unverified"
 
 
 def test_forward_event_risk_uses_the_earnings_date() -> None:

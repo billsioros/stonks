@@ -382,6 +382,15 @@ def test_cache_failure_still_produces_a_memo(monkeypatch: Any) -> None:
     )
 
 
+def test_symbol_prompt_requires_guidance_freshness_and_event_clarity() -> None:
+    instruction = (
+        report.SYMBOL_SYSTEM_INSTRUCTION + report.SYMBOL_REPORT_SECTIONS
+    ).lower()
+    assert "forward.guidance_present" in instruction
+    assert "forward.event_risk" in instruction
+    assert "earnings" in instruction
+
+
 def test_guidance_hits_reach_the_forward_gate(monkeypatch: Any) -> None:
     _stub_pages(monkeypatch)
     hit = {

@@ -551,6 +551,7 @@ def _gate_summary(name: str, checks: Sequence[Check]) -> str:
 # ── Forward evidence ─────────────────────────────────────────────────
 REVISION_WINDOW_DAYS = 90
 EVENT_RISK_DAYS = 7
+GUIDANCE_FRESH_DAYS = 120
 QUARTERS_FOR_ACCELERATION = 5
 TRAILING_ONLY = "Trailing evidence only"
 
@@ -727,15 +728,33 @@ def forward_gate(
         )
     )
 
+    guidance_dates = [
+        filed
+        for hit in guidance_hits
+        if isinstance(hit, Mapping) and (filed := _as_date(hit.get("filing_date")))
+    ]
+    if not guidance_hits:
+        guidance_ok: bool | None = None
+        guidance_value = "no filing evidence"
+    elif not guidance_dates:
+        guidance_ok = None
+        guidance_value = "guidance hits without filing dates"
+    else:
+        ages = [(today_date - filed).days for filed in guidance_dates]
+        newest = min(ages)
+        if newest <= GUIDANCE_FRESH_DAYS:
+            guidance_ok = True
+            guidance_value = f"{len(guidance_dates)} filing(s) mention guidance, newest {newest}d old"
+        else:
+            guidance_ok = False
+            guidance_value = f"guidance last seen {newest}d ago (stale)"
     checks.append(
         Check(
             "forward.guidance_present",
-            "Management has guided",
-            _status_from(True if guidance_hits else None),
-            f"{len(guidance_hits)} filing(s) mention guidance"
-            if guidance_hits
-            else "no filing evidence",
-            "guidance/outlook found in the latest filing",
+            "Management has guided recently",
+            _status_from(guidance_ok),
+            guidance_value,
+            f"guidance/outlook in a filing within {GUIDANCE_FRESH_DAYS} days",
             "filings.guidance",
         )
     )
