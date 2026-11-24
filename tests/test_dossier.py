@@ -111,6 +111,7 @@ def _row(**overrides: object) -> dict[str, object]:
         "gross_margin_pct": 40.0,
         "operating_margin_pct": 30.0,
         "revenue_growth_5y_pct": 20.0,
+        "eps_growth_5y_pct": 15.0,
         "free_cash_flow": 100.0,
         "net_income": 120.0,
         "fcf_margin_pct": 12.0,
@@ -440,6 +441,35 @@ def _quarterly_margins(operating: list[float]) -> dict[str, object]:
     }
 
 
+def _quarterly_series(row_id: str, values: list[float]) -> dict[str, object]:
+    periods = [
+        {"key": f"Q{index}", "label": f"Q{index}", "is_ttm": False}
+        for index in range(len(values))
+    ]
+    return {
+        "income_quarterly": {
+            "periods": periods,
+            "rows": [{"id": row_id, "label": row_id, "values": values}],
+        }
+    }
+
+
+def _quarterly_acceleration(revenue: list[float], eps: list[float]) -> object:
+    periods = [
+        {"key": f"Q{index}", "label": f"Q{index}", "is_ttm": False}
+        for index in range(len(revenue))
+    ]
+    return {
+        "income_quarterly": {
+            "periods": periods,
+            "rows": [
+                {"id": "revenue", "label": "Revenue", "values": revenue},
+                {"id": "eps", "label": "EPS", "values": eps},
+            ],
+        }
+    }
+
+
 def _forward(
     forecast: dict[str, object] | None = None,
     statements: object = None,
@@ -457,7 +487,7 @@ def _forward(
     )
 
 
-def test_forward_gate_has_the_six_spec_checks() -> None:
+def test_forward_gate_has_the_eight_spec_checks() -> None:
     gate = _forward()
     assert [check.id for check in gate.checks] == [
         "forward.estimate_growth",
@@ -466,6 +496,8 @@ def test_forward_gate_has_the_six_spec_checks() -> None:
         "forward.revenue_trajectory",
         "forward.guidance_present",
         "forward.event_risk",
+        "forward.revenue_acceleration",
+        "forward.eps_acceleration",
     ]
 
 
@@ -518,6 +550,36 @@ def test_forward_revenue_trajectory_compares_with_the_five_year_average() -> Non
     assert (
         _forward(statements={"income_annual": slower_income}).checks[3].status == "fail"
     )
+
+
+def test_forward_quarterly_acceleration_compares_latest_yoy_with_five_year_average() -> (
+    None
+):
+    accelerating = _quarterly_acceleration(
+        [130.0, 120.0, 110.0, 100.0, 100.0], [6.0, 5.5, 5.0, 4.5, 5.0]
+    )
+    gate = _forward(statements=accelerating)
+    assert gate.checks[6].status == "pass"
+    assert gate.checks[7].status == "pass"
+
+    decelerating = _quarterly_acceleration(
+        [110.0, 105.0, 102.0, 100.0, 100.0], [5.5, 5.2, 5.1, 5.0, 5.0]
+    )
+    gate = _forward(statements=decelerating)
+    assert gate.checks[6].status == "fail"
+    assert gate.checks[7].status == "fail"
+
+
+def test_forward_acceleration_is_unverified_without_five_comparable_quarters() -> None:
+    short = _quarterly_acceleration([120.0, 110.0, 100.0, 95.0], [6.0, 5.5, 5.0, 4.5])
+    gate = _forward(statements=short)
+    assert gate.checks[6].status == "unverified"
+    assert gate.checks[7].status == "unverified"
+
+    negative_eps = _forward(
+        statements=_quarterly_series("eps", [-1.0, -2.0, -3.0, -4.0, -5.0])
+    )
+    assert negative_eps.checks[7].status == "unverified"
 
 
 def test_forward_guidance_needs_filing_evidence() -> None:

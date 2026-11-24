@@ -551,6 +551,7 @@ def _gate_summary(name: str, checks: Sequence[Check]) -> str:
 # ── Forward evidence ─────────────────────────────────────────────────
 REVISION_WINDOW_DAYS = 90
 EVENT_RISK_DAYS = 7
+QUARTERS_FOR_ACCELERATION = 5
 TRAILING_ONLY = "Trailing evidence only"
 
 
@@ -584,6 +585,22 @@ def _isdigit_sign(value: float) -> int:
     return 0
 
 
+def _quarterly_acceleration(
+    statement: Mapping[str, Any] | None, row_id: str, baseline: float | None
+) -> tuple[bool | None, str]:
+    """Compare the latest quarter's YoY growth with a long-run growth average."""
+    values = _annual_series(statement, row_id)
+    if len(values) < QUARTERS_FOR_ACCELERATION:
+        return None, "fewer than five comparable quarters"
+    latest, year_ago = values[0], values[QUARTERS_FOR_ACCELERATION - 1]
+    if latest is None or year_ago is None or latest <= 0 or year_ago <= 0:
+        return None, "no positive quarterly base"
+    if baseline is None:
+        return None, "no five-year growth baseline"
+    yoy = (latest / year_ago - 1.0) * 100.0
+    return yoy > baseline, f"{yoy:+.1f}% YoY vs {baseline:+.1f}% 5y average"
+
+
 def forward_gate(
     row: Mapping[str, Any],
     *,
@@ -597,10 +614,11 @@ def forward_gate(
 
     Trailing growth says where a company has been. This gate only passes checks
     on evidence that points forward: consensus estimates, analyst revisions in
-    the last quarter, the quarterly margin slope, guidance in a filing and the
-    distance to the next earnings date. If none of the three leading indicators
-    is available the gate is an explicit failure labelled "Trailing evidence
-    only", so a memo cannot quietly extrapolate history into a thesis.
+    the last quarter, the quarterly margin slope, quarterly growth acceleration,
+    guidance in a filing and the distance to the next earnings date. If none of
+    the three leading indicators is available the gate is an explicit failure
+    labelled "Trailing evidence only", so a memo cannot quietly extrapolate
+    history into a thesis.
     """
     today_date = _as_date(today) or date.today()
     checks: list[Check] = []
@@ -738,6 +756,33 @@ def forward_gate(
             event_value,
             f"earnings > {EVENT_RISK_DAYS} days away",
             "overview.earnings_date",
+        )
+    )
+
+    revenue_ok, revenue_value = _quarterly_acceleration(
+        quarterly, "revenue", _num(row.get("revenue_growth_5y_pct"))
+    )
+    checks.append(
+        Check(
+            "forward.revenue_acceleration",
+            "Recent revenue growth is accelerating",
+            _status_from(revenue_ok),
+            revenue_value,
+            "latest quarter YoY > 5y revenue growth average",
+            "income_quarterly.revenue, screener.revenue_growth_5y_pct",
+        )
+    )
+    eps_ok, eps_value = _quarterly_acceleration(
+        quarterly, "eps", _num(row.get("eps_growth_5y_pct"))
+    )
+    checks.append(
+        Check(
+            "forward.eps_acceleration",
+            "Recent earnings growth is accelerating",
+            _status_from(eps_ok),
+            eps_value,
+            "latest quarter YoY > 5y EPS growth average",
+            "income_quarterly.eps, screener.eps_growth_5y_pct",
         )
     )
 
