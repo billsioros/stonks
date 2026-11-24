@@ -54,6 +54,7 @@ def test_prompt_uses_the_shared_report_skeleton() -> None:
         "## Key numbers",
         "## Observations",
         "## What to look at",
+        "## Evidence gaps and next steps",
         "## TL;DR",
     ):
         assert heading in prompt

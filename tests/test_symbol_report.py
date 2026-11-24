@@ -128,6 +128,7 @@ def test_symbol_prompt_has_the_full_decision_skeleton() -> None:
         "## Valuation at today's price",
         "## Risks",
         "## What would change the answer",
+        "## Evidence gaps and next steps",
         "## TL;DR",
     ):
         assert heading in prompt
@@ -382,6 +383,24 @@ def test_cache_failure_still_produces_a_memo(monkeypatch: Any) -> None:
     )
 
 
+def test_symbol_prompt_requires_accession_linked_filing_snippets() -> None:
+    instruction = (
+        report.SYMBOL_SYSTEM_INSTRUCTION + report.SYMBOL_REPORT_SECTIONS
+    ).lower()
+    assert "snippet" in instruction
+    assert "accession" in instruction
+    assert "filing date" in instruction
+
+
+def test_symbol_prompt_requires_guidance_freshness_and_event_clarity() -> None:
+    instruction = (
+        report.SYMBOL_SYSTEM_INSTRUCTION + report.SYMBOL_REPORT_SECTIONS
+    ).lower()
+    assert "forward.guidance_present" in instruction
+    assert "forward.event_risk" in instruction
+    assert "earnings" in instruction
+
+
 def test_guidance_hits_reach_the_forward_gate(monkeypatch: Any) -> None:
     _stub_pages(monkeypatch)
     hit = {
@@ -539,6 +558,15 @@ def test_symbol_system_instruction_forbids_unsupported_claims() -> None:
     assert "moat" in instruction and "catalyst" in instruction
     assert "unverified" in instruction
     assert "check id" in instruction
+
+
+def test_symbol_prompt_requires_moat_proxy_citations_and_no_moat_proof() -> None:
+    instruction = report.SYMBOL_SYSTEM_INSTRUCTION.lower()
+    sections = report.SYMBOL_REPORT_SECTIONS.lower()
+    assert "moat-proxy" in instruction or "quality." in instruction
+    assert "not proven" in instruction
+    assert "quality" in sections
+    assert "not proven" in sections
 
 
 def test_dossier_block_omits_passing_evidence_and_changes_with_the_dossier() -> None:

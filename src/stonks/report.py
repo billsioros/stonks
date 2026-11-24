@@ -38,12 +38,26 @@ REPORT_MODEL: str = "openrouter/free"
 SYMBOL_MAX_TOKENS = 4000
 UNVERIFIED_HEADING = "## What this dossier could not verify"
 
+GAP_DISCLAIMER = (
+    "Scope disclaimer: this is a deterministic evidence snapshot, not a complete "
+    "investment decision engine. It cannot prove a moat, forecast catalysts or "
+    "replace primary-filing review; it does not cover portfolio sizing, "
+    "correlations, tax or liquidity."
+)
+DEEP_DIVE_NEXT_STEPS = (
+    "Suggested deep-dive next steps: open the symbol dossier, verify the cited "
+    "quality.* and forward.* checks, read the accession-linked filing snippets, "
+    "check the watchlist fit proxy, and state what evidence would change the "
+    "answer. Do not trade on this summary alone."
+)
+
 SYSTEM_INSTRUCTION: str = (
     "You are a stock-screening assistant. Be concise and informative: short, "
     "scannable markdown with no filler. Use only the figures provided -- do not "
     "invent data or make price predictions. Cite every figure with its source "
-    "row and field from the data below. This is research support, not "
-    "financial advice."
+    "row and field from the data below. "
+    f"{GAP_DISCLAIMER} "
+    "This is research support, not financial advice."
 )
 
 # The report skeleton, held to the same shape as the roomies report so the two
@@ -69,6 +83,10 @@ REPORT_SECTIONS: str = (
     "name the exact symbols and figures that warrant a closer look, and say what "
     "would confirm or rule each out. Do not recommend trades.\n"
     "\n"
+    "## Evidence gaps and next steps\n"
+    f"{GAP_DISCLAIMER}\n"
+    f"{DEEP_DIVE_NEXT_STEPS}\n"
+    "\n"
     "## TL;DR\n"
     "Three or four short, plain sentences condensing the report: the most telling "
     "figures and the 1-2 names worth researching further -- every claim backed by "
@@ -92,12 +110,20 @@ SYMBOL_SYSTEM_INSTRUCTION: str = (
     "rather than guessing. Today's price is the decision price: judge valuation "
     "against it. Cite the check id behind every dossier claim. For filing facts, "
     "cite the accession number and filing date too, e.g. `[Source: "
-    "filings.material_weakness, 0000320193-26-000001, 2026-02-01]`. Never assert "
-    "a moat, catalyst or filing fact that is absent from the dossier. Treat an "
+    "filings.material_weakness, 0000320193-26-000001, 2026-02-01]`. When a filing "
+    "snippet is supplied, quote it with its accession, filing date, form and link; "
+    "a missing snippet is unknown, not a clean filing. Never assert "
+    "a moat, catalyst or filing fact that is absent from the dossier. Cite moat-proxy "
+    "quality check IDs (quality.*) and state explicitly when a moat is not proven "
+    "by the evidence. Treat an "
     "unverified check as unknown, never as favourable evidence, and keep trailing "
-    "results separate from forward estimates. Name the dossier's check coverage "
+    "results separate from forward estimates. Cite forward.guidance_present with "
+    "its filing date and say when guidance is stale; guidance is evidence, not "
+    "proof. Cite forward.event_risk and state the next earnings date when the "
+    "dossier provides one. Name the dossier's check coverage "
     "and the single most important unknown in the TL;DR. If the filings gate "
     "fails, lead the memo with that failure rather than the valuation case. "
+    f"{GAP_DISCLAIMER} "
     "This is research support, not financial advice."
 )
 
@@ -109,7 +135,8 @@ SYMBOL_REPORT_SECTIONS: str = (
     "\n"
     "## Business and moat\n"
     "What the company does, its industry, and the durable advantages or "
-    "weaknesses the data actually supports.\n"
+    "weaknesses the data actually supports. Cite moat-proxy quality check IDs "
+    "(quality.*) and state explicitly when a moat is not proven by the evidence.\n"
     "\n"
     "## Growth and profitability\n"
     "Revenue and earnings trends, margins, returns on capital, and whether "
@@ -131,6 +158,10 @@ SYMBOL_REPORT_SECTIONS: str = (
     "\n"
     "## What would change the answer\n"
     "Concrete figures or events that would flip the verdict either way.\n"
+    "\n"
+    "## Evidence gaps and next steps\n"
+    f"{GAP_DISCLAIMER}\n"
+    f"{DEEP_DIVE_NEXT_STEPS}\n"
     "\n"
     "## TL;DR\n"
     "Start with a single word, YES or NO, meaning whether to buy at today's "

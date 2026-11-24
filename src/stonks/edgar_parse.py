@@ -30,8 +30,13 @@ _NET_INCOME_TAGS = ("NetIncomeLoss",)
 _OPERATING_CASH_FLOW_TAGS = ("NetCashProvidedByUsedInOperatingActivities",)
 _CAPEX_TAGS = ("PaymentsToAcquirePropertyPlantAndEquipment",)
 _SHARES_TAGS = ("dei:EntityCommonStockSharesOutstanding",)
+# Total debt intentionally includes the current portion; `filings.current_debt`
+# reuses the same XBRL fact as a dedicated short-term liquidity check.
 _TOTAL_DEBT_TAGS = ("LongTermDebt", "DebtCurrent")
 _CASH_TAGS = ("CashAndCashEquivalentsAtCarryingValue",)
+_SBC_TAGS = ("ShareBasedCompensation",)
+_CURRENT_DEBT_TAGS = ("DebtCurrent",)
+SHARE_DILUTION_MAX_PCT = 5.0
 
 _MATURITY_TAGS = (
     ("0-1y", "LongTermDebtMaturitiesRepaymentsOfPrincipalInNextTwelveMonths"),
@@ -216,6 +221,47 @@ _CHECKS = (
         combine=True,
     ),
     _CheckSpec("filings.cash", "Cash matches XBRL", _CASH_TAGS, "USD", _CASH_VENDOR),
+    _CheckSpec(
+        "filings.sbc",
+        "Stock-based compensation matches XBRL",
+        _SBC_TAGS,
+        "USD",
+        _VendorSpec(
+            row_keys=("sbc", "stock_based_compensation"),
+            statements=(
+                (
+                    "cash_annual",
+                    (
+                        "sbc",
+                        "share-based compensation",
+                        "stock based compensation",
+                        "stock-based compensation",
+                        "share based compensation expense",
+                    ),
+                ),
+            ),
+        ),
+    ),
+    _CheckSpec(
+        "filings.current_debt",
+        "Current debt matches XBRL",
+        _CURRENT_DEBT_TAGS,
+        "USD",
+        _VendorSpec(
+            row_keys=("short_term_debt", "current_debt", "debt_current"),
+            statements=(
+                (
+                    "balance_annual",
+                    (
+                        "debtcurrent",
+                        "short term debt",
+                        "current debt",
+                        "current portion of long-term debt",
+                    ),
+                ),
+            ),
+        ),
+    ),
 )
 
 
@@ -445,6 +491,70 @@ def _cross_check(
     return check, conflict
 
 
+def _annual_share_facts(facts: Mapping[str, Any]) -> list[_Fact]:
+    """Return 10-K share facts sorted by end date, newest last."""
+    prefix, bare = "dei", "EntityCommonStockSharesOutstanding"
+    namespaces = (prefix,)
+    found: list[tuple[str, str, str, float, str]] = []
+    for namespace in namespaces:
+        payload = _fact_namespaces(facts).get(namespace)
+        if not isinstance(payload, Mapping):
+            continue
+        tag_data = payload.get(bare)
+        if not isinstance(tag_data, Mapping):
+            continue
+        units = tag_data.get("units")
+        if not isinstance(units, Mapping):
+            continue
+        for entry in _sequence(units.get("shares")):
+            if not isinstance(entry, Mapping) or entry.get("form") != "10-K":
+                continue
+            end, filed = entry.get("end"), entry.get("filed")
+            if not isinstance(end, str) or not isinstance(filed, str):
+                continue
+            value = _number(entry.get("val"))
+            if value is None or value <= 0:
+                continue
+            raw_accn = entry.get("accn")
+            accn = raw_accn if isinstance(raw_accn, str) else ""
+            detail = f"{namespace}:{bare} 10-K filed {filed} accn {accn or 'unknown'}"
+            found.append((end, filed, accn, value, detail))
+    # Keep newest fact per end date, then sort chronologically.
+    by_end: dict[str, tuple[str, str, str, float, str]] = {}
+    for item in found:
+        end = item[0]
+        current = by_end.get(end)
+        if current is None or (item[1], item[2]) > (current[1], current[2]):
+            by_end[end] = item
+    ordered = [by_end[k] for k in sorted(by_end)]
+    return [_Fact(value=v, accn=a, detail=d) for _, _, a, v, d in ordered]
+
+
+def _share_dilution_check(facts: Mapping[str, Any]) -> Check:
+    annual = _annual_share_facts(facts)
+    if len(annual) < 2:
+        return Check(
+            "filings.share_dilution",
+            "Share count dilution is controlled",
+            "unverified",
+            "fewer than two annual 10-K share facts",
+            f"< {SHARE_DILUTION_MAX_PCT:.1f}% YoY increase",
+            "XBRL EntityCommonStockSharesOutstanding 10-K history",
+        )
+    prior, latest = annual[-2], annual[-1]
+    growth_pct = (latest.value / prior.value - 1.0) * 100.0
+    ok = growth_pct < SHARE_DILUTION_MAX_PCT
+    status: Literal["pass", "fail"] = "pass" if ok else "fail"
+    return Check(
+        "filings.share_dilution",
+        "Share count dilution is controlled",
+        status,
+        f"{growth_pct:+.1f}% shares YoY ({_money(prior.value)} -> {_money(latest.value)})",
+        f"< {SHARE_DILUTION_MAX_PCT:.1f}% YoY increase",
+        f"{prior.detail} -> {latest.detail}",
+    )
+
+
 def maturity_ladder(facts: Mapping[str, Any]) -> list[tuple[str, float]] | None:
     """Return six dated debt buckets, or ``None`` if any required fact is absent."""
     ladder: list[tuple[str, float]] = []
@@ -521,5 +631,6 @@ def filing_checks(
         checks.append(check)
         if conflict is not None:
             conflicts.append(conflict)
+    checks.append(_share_dilution_check(facts))
     checks.append(_debt_coverage_check(row, statements, facts))
     return checks, conflicts

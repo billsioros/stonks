@@ -203,6 +203,9 @@ def symbol_report_prompt_parts(store: SQLiteStore, symbol: str) -> tuple[str, Do
         today=datetime.fromisoformat(stamp).date() if stamp else None,
         filing_evidence=evidence,
         guidance_hits=evidence.guidance_hits,
+        watchlist=(
+            store.get_watchlist_rows() if hasattr(store, "get_watchlist_rows") else None
+        ),
     )
     prompt = report.symbol_report_prompt(
         symbol,
