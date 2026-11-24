@@ -541,6 +541,15 @@ def test_symbol_system_instruction_forbids_unsupported_claims() -> None:
     assert "check id" in instruction
 
 
+def test_symbol_prompt_requires_moat_proxy_citations_and_no_moat_proof() -> None:
+    instruction = report.SYMBOL_SYSTEM_INSTRUCTION.lower()
+    sections = report.SYMBOL_REPORT_SECTIONS.lower()
+    assert "moat-proxy" in instruction or "quality." in instruction
+    assert "not proven" in instruction
+    assert "quality" in sections
+    assert "not proven" in sections
+
+
 def test_dossier_block_omits_passing_evidence_and_changes_with_the_dossier() -> None:
     first = report.dossier_block(_dossier())
     second = report.dossier_block(_dossier("1.0 vs 1.9"))
