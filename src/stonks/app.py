@@ -2253,9 +2253,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    # A Streamlit script run has its own globals. When the importable app module
-    # is already loaded, use its entry point so patched view helpers are honoured.
-    import sys
-
-    _app_module = sys.modules.get("stonks.app") or sys.modules[__name__]
-    _app_module.main()
+    main()

@@ -29,21 +29,6 @@ _RESULT_KEY = "backtest_result"
 _SETTINGS_KEY = "backtest_settings"
 _PENDING_LOAD_KEY = "backtest_pending_load"
 _SAVE_NAME_KEY = "backtest_save_name"
-_RESULT_FIELDS = (
-    "start",
-    "end",
-    "rebalance",
-    "invested",
-    "curve",
-    "yearly",
-    "cagr_pct",
-    "total_return_pct",
-    "final",
-    "stdev_pct",
-    "max_drawdown_pct",
-    "best_year_pct",
-    "worst_year_pct",
-)
 _WIDGET_KEYS = (
     "bt_symbol_ticker",
     "bt_symbol_allocation",
@@ -338,9 +323,6 @@ def _render_result(result: dict[str, Any]) -> None:
     """Metrics, growth curve and yearly returns for one finished backtest."""
     if "error" in result:
         st.warning(result["error"])
-        return
-    if any(field not in result for field in _RESULT_FIELDS):
-        st.warning("Backtest result is incomplete; run the backtest again.")
         return
 
     allocation = format_allocation(result)
