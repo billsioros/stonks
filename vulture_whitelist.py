@@ -95,6 +95,10 @@ week_bucket  # noqa: B018
 evaluate_alerts  # noqa: B018
 format_pct  # noqa: B018
 SQLiteStore.unread_alert_counts  # noqa: B018
+SQLiteStore.add_position  # noqa: B018
+SQLiteStore.delete_position  # noqa: B018
+SQLiteStore.get_positions  # noqa: B018
+SQLiteStore.get_monitored_symbols  # noqa: B018
 fetch_watched_news  # noqa: B018
 NEWS_ALERTS_PER_SYNC  # noqa: B018
 parse_symbols  # noqa: B018
