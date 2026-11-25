@@ -1806,113 +1806,63 @@ def render_sanity_banner(store: SQLiteStore) -> None:
         )
 
 
-def render_buy_opportunities_banner(
-    store: SQLiteStore | None = None,
-    opportunities: list[dict[str, Any]] | None = None,
-    watchlist_symbols: set[str] | None = None,
-) -> None:
-    """Surface screener stocks near 52-week lows, especially below fair value."""
-    store = store or get_store()
-    if opportunities is None:
-        opportunities = store.get_buy_opportunities(limit=8)
-    if not opportunities:
-        return
-
-    watched = watchlist_symbols or set()
-    opportunities = sorted(opportunities, key=lambda row: row["symbol"] not in watched)
-    below_both = [row for row in opportunities if row.get("below_both_fair_values")]
-    if not st.session_state.get("buy_opps_toasted"):
-        if below_both:
-            symbols = ", ".join(row["symbol"] for row in below_both[:3])
-            st.toast(f"Buy opportunities below DCF and Lynch: {symbols}", icon="📉")
-        else:
-            st.toast(
-                f"{len(opportunities)} screener stocks near 52-week lows",
-                icon="📉",
-            )
-        st.session_state["buy_opps_toasted"] = True
-
-    with st.container(key="buy-opportunities-banner"):
-        headline = f"{len(opportunities)} buy opportunities near 52-week lows"
-        if below_both:
-            headline += (
-                f" · {len(below_both)} below both DCF and Peter Lynch fair value"
-            )
-        watch_count = sum(row["symbol"] in watched for row in opportunities)
-        if watch_count:
-            headline += f" · {watch_count} on your watchlist"
-        st.success(headline, icon="📉")
-        for row in opportunities:
-            symbol = row["symbol"]
-            watch_tag = " · ⭐ on watchlist" if symbol in watched else ""
-            symbol_col, text_col = st.columns([1, 7])
-            with symbol_col:
-                if st.button(
-                    f"{symbol} ▸",
-                    key=f"buy_opp_open_{symbol}",
-                    help=f"Open {symbol}",
-                ):
-                    open_symbol(symbol)
-                    st.rerun()
-            with text_col:
-                price = row.get("price")
-                low = row.get("week_52_low")
-                dcf = row.get("dcf_fair_value")
-                lynch = row.get("lynch_fair_value")
-                parts = [
-                    f"Price {_fmt_number(price, 2)} vs 52w low {_fmt_number(low, 2)}"
-                ]
-                if row.get("below_both_fair_values"):
-                    parts.append(
-                        f"below DCF {_fmt_number(dcf, 2)} and Lynch {_fmt_number(lynch, 2)}"
-                    )
-                elif dcf is not None or lynch is not None:
-                    fair_bits = []
-                    if dcf is not None:
-                        fair_bits.append(f"DCF {_fmt_number(dcf, 2)}")
-                    if lynch is not None:
-                        fair_bits.append(f"Lynch {_fmt_number(lynch, 2)}")
-                    parts.append("fair value " + ", ".join(fair_bits))
-                st.markdown(f"**{symbol}** · {row.get('description') or ''}{watch_tag}")
-                st.caption(" · ".join(parts))
-
-
-def render_alerts_banner(
-    store: SQLiteStore | None = None,
-    alerts: list[dict[str, Any]] | None = None,
-) -> None:
-    """Show the unread watchlist alerts; renders nothing when there are none."""
-    store = store or get_store()
-    if alerts is None:
-        alerts = store.get_alerts()
-    if not alerts:
-        return
-
-    severity_icons = {"good": "🟢", "warn": "🟠", "info": "🔵"}
-    with st.container(key="alerts-banner"):
-        count = len(alerts)
-        st.info(
-            f"{count} unread alert{'s' if count != 1 else ''} for your watchlist",
-            icon="🔔",
+def _buy_opportunity_lines(row: dict[str, Any]) -> list[str]:
+    """The price and fair-value lines shown for a screener buy signal."""
+    price = row.get("price")
+    low = row.get("week_52_low")
+    dcf = row.get("dcf_fair_value")
+    lynch = row.get("lynch_fair_value")
+    parts = [f"Price {_fmt_number(price, 2)} vs 52w low {_fmt_number(low, 2)}"]
+    if row.get("below_both_fair_values"):
+        parts.append(
+            f"below DCF {_fmt_number(dcf, 2)} and Lynch {_fmt_number(lynch, 2)}"
         )
-        for alert in alerts:
-            symbol_col, text_col = st.columns([1, 7])
-            with symbol_col:
-                if st.button(
-                    f"{alert['symbol']} ▸",
-                    key=f"alert_open_{alert['id']}",
-                    help=f"Open {alert['symbol']}",
-                ):
-                    open_symbol(alert["symbol"])
-                    st.rerun()
-            with text_col:
-                icon = severity_icons.get(alert["severity"], "•")
-                st.markdown(f"{icon} **{alert['title']}**")
-                meta = [alert.get("detail") or "", _ago(alert.get("created_at"))]
-                st.caption(" · ".join(part for part in meta if part))
-        if st.button("Mark all read", key="alerts_mark_read"):
-            store.mark_alerts_seen([alert["id"] for alert in alerts])
-            st.rerun()
+    elif dcf is not None or lynch is not None:
+        fair_bits = []
+        if dcf is not None:
+            fair_bits.append(f"DCF {_fmt_number(dcf, 2)}")
+        if lynch is not None:
+            fair_bits.append(f"Lynch {_fmt_number(lynch, 2)}")
+        parts.append("fair value " + ", ".join(fair_bits))
+    return parts
+
+
+def _notification_groups(
+    alerts: list[dict[str, Any]],
+    opportunities: list[dict[str, Any]],
+    watchlist_symbols: set[str],
+) -> list[tuple[str, dict[str, list[dict[str, Any]]]]]:
+    """Collect every notification under its symbol; watchlisted tickers come first."""
+    groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for alert in alerts:
+        groups.setdefault(alert["symbol"], {"alerts": [], "opportunities": []})[
+            "alerts"
+        ].append(alert)
+    for row in opportunities:
+        groups.setdefault(row["symbol"], {"alerts": [], "opportunities": []})[
+            "opportunities"
+        ].append(row)
+    return sorted(
+        groups.items(),
+        key=lambda item: (
+            item[0] not in watchlist_symbols,
+            not item[1]["opportunities"],
+            -max((alert["created_at"] for alert in item[1]["alerts"]), default=0),
+        ),
+    )
+
+
+def _group_severity_icon(group: dict[str, list[dict[str, Any]]]) -> str:
+    """Summarise a ticker's notifications with its strongest severity icon."""
+    icons = {"good": "🟢", "warn": "🟠", "info": "🔵"}
+    priority = {"warn": 0, "good": 1, "info": 2}
+    severities = [alert["severity"] for alert in group["alerts"]]
+    if group["opportunities"]:
+        severities.append("good")
+    if not severities:
+        return "•"
+    strongest = min(severities, key=lambda severity: priority.get(severity, 3))
+    return icons.get(strongest, "•")
 
 
 def render_notifications(store: SQLiteStore) -> None:
@@ -1941,17 +1891,79 @@ def render_notifications(store: SQLiteStore) -> None:
     snapshot_buys = [
         row for row in opportunities if row["symbol"] not in persisted_buys
     ]
-    count = len(alerts) + len(snapshot_buys)
+    count = len(
+        {alert["symbol"] for alert in alerts} | {row["symbol"] for row in snapshot_buys}
+    )
     if not count:
         return
 
     with st.expander(f"🔔 Notifications ({count})", expanded=False):
-        render_buy_opportunities_banner(
-            store,
-            opportunities=snapshot_buys,
-            watchlist_symbols=watchlist_symbols,
-        )
-        render_alerts_banner(store, alerts=alerts)
+        below_both = [row for row in snapshot_buys if row.get("below_both_fair_values")]
+        if snapshot_buys:
+            if not st.session_state.get("buy_opps_toasted"):
+                if below_both:
+                    symbols = ", ".join(row["symbol"] for row in below_both[:3])
+                    st.toast(
+                        f"Buy opportunities below DCF and Lynch: {symbols}", icon="📉"
+                    )
+                else:
+                    st.toast(
+                        f"{len(snapshot_buys)} screener stocks near 52-week lows",
+                        icon="📉",
+                    )
+                st.session_state["buy_opps_toasted"] = True
+            headline = f"{len(snapshot_buys)} buy opportunities near 52-week lows"
+            if below_both:
+                headline += (
+                    f" · {len(below_both)} below both DCF and Peter Lynch fair value"
+                )
+            watch_count = sum(
+                row["symbol"] in watchlist_symbols for row in snapshot_buys
+            )
+            if watch_count:
+                headline += f" · {watch_count} on your watchlist"
+            st.success(headline, icon="📉")
+
+        if alerts:
+            st.info(
+                f"{len(alerts)} unread alert{'s' if len(alerts) != 1 else ''} "
+                f"across {count} ticker{'s' if count != 1 else ''}",
+                icon="🔔",
+            )
+
+        severity_icons = {"good": "🟢", "warn": "🟠", "info": "🔵"}
+        for symbol, group in _notification_groups(
+            alerts, snapshot_buys, watchlist_symbols
+        ):
+            symbol_col, text_col = st.columns([1, 7])
+            with symbol_col:
+                if st.button(
+                    f"{symbol} ▸",
+                    key=f"notification_open_{symbol}",
+                    help=f"Open {symbol}",
+                ):
+                    open_symbol(symbol)
+                    st.rerun()
+            with text_col:
+                header = f"{_group_severity_icon(group)} **{symbol}**"
+                if group["opportunities"]:
+                    description = group["opportunities"][0].get("description") or ""
+                    if description:
+                        header += f" · {description}"
+                    if symbol in watchlist_symbols:
+                        header += " · ⭐ on watchlist"
+                st.markdown(header)
+                for row in group["opportunities"]:
+                    st.caption(" · ".join(_buy_opportunity_lines(row)))
+                for alert in group["alerts"]:
+                    icon = severity_icons.get(alert["severity"], "•")
+                    st.markdown(f"{icon} **{alert['title']}**")
+                    meta = [alert.get("detail") or "", _ago(alert.get("created_at"))]
+                    st.caption(" · ".join(part for part in meta if part))
+
+        if alerts and st.button("Mark all read", key="alerts_mark_read"):
+            store.mark_alerts_seen([alert["id"] for alert in alerts])
+            st.rerun()
 
 
 def main() -> None:
