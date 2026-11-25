@@ -33,7 +33,12 @@ from stonks.config import (
     SCREENER_TABLE_MAX_HEIGHT,
     VIEW_PRESETS,
 )
-from stonks.correlation import portfolio_correlation_factor
+from stonks.correlation import (
+    HIGH_CORRELATION_THRESHOLD,
+    is_high_correlation,
+    portfolio_correlation,
+    portfolio_correlation_factor,
+)
 from stonks.detail_view import render_detail_page
 from stonks.portfolio import (
     CONVERTIBLE_CURRENCIES,
@@ -833,6 +838,19 @@ def _fmt_cyclical_risk(val: object) -> str:
     return "⚠️ Peak" if val else ""
 
 
+def _fmt_correlation(value: object) -> str:
+    """Render a coefficient, flagging values at or above the high-correlation cutoff."""
+    if (
+        _is_missing(value)
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+    ):
+        return "—"
+    number = float(value)
+    prefix = "⚠️ " if is_high_correlation(number) else ""
+    return f"{prefix}{number:+.2f}"
+
+
 def _format_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Return a formatted copy; sorting and filtering stay on the raw values."""
     display = frame.copy()
@@ -847,6 +865,8 @@ def _format_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
             display[col] = display[col].apply(_fmt_upside)
         elif col == "Current Ratio":
             display[col] = display[col].apply(_fmt_current_ratio)
+        elif col == "Portfolio Correlation":
+            display[col] = display[col].apply(_fmt_correlation)
         elif "%" in col or "Upside" in col or "Short" in col:
             display[col] = display[col].apply(_fmt_pct)
         elif col in (
@@ -1375,6 +1395,22 @@ def render_screener_table() -> None:
         hf_mask = pd.Series(False, index=page_df.index)
 
     raw_symbols = [row.get("symbol") for row in page_rows]
+
+    # Correlation is a per-page virtual column: never a SQL filter or a sort key.
+    if "portfolio_correlation" in visible_cols:
+        positions = store.get_positions()
+        if positions:
+            st.caption(
+                f"⚠️ marks correlation at or above {HIGH_CORRELATION_THRESHOLD:.2f} "
+                "with the portfolio."
+            )
+            summary, _ = portfolio_snapshot(store, include_history=False)
+            correlations = {
+                symbol: portfolio_correlation(store, symbol, summary, positions)
+                for symbol in raw_symbols
+                if symbol
+            }
+            page_df["portfolio_correlation"] = page_df["symbol"].map(correlations)
 
     watchlist_symbols = set(store.get_watchlist_symbols())
     if "symbol" in page_df.columns:

@@ -25,6 +25,10 @@ PAGE_SIZE_OPTIONS: list[int] = [10, 25, 50, 100]
 SCREENER_TABLE_MAX_HEIGHT: int = 480
 
 # ── Column display names ────────────────────────────────────────────
+# Columns computed for the displayed page rather than read from the stocks
+# table: they must stay out of SQL filters, sorting and schema checks.
+VIRTUAL_COLUMNS: frozenset[str] = frozenset({"portfolio_correlation"})
+
 COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "symbol": "Symbol",
     "description": "Company",
@@ -87,6 +91,7 @@ COLUMN_DISPLAY_NAMES: dict[str, str] = {
     "lynch_fair_value": "Lynch Fair Value",
     "lynch_upside_pct": "Lynch Upside %",
     "hedge_fund_buys": "13F Whale",
+    "portfolio_correlation": "Portfolio Correlation",
 }
 
 # ── Column help texts ──────────────────────────────────────────────
@@ -170,6 +175,13 @@ COLUMN_HELP: dict[str, str] = {
         "data. 13F filings lag up to 45 days and crowding is not a signal on "
         "its own."
     ),
+    "portfolio_correlation": (
+        "Pearson correlation of monthly adjusted returns over the last 36 months "
+        "against the weighted portfolio; at least 12 months must overlap. "
+        "Returns use each instrument's native currency (VUAA is proxied by VOO). "
+        "⚠️ marks the 0.70 high-correlation threshold; blank means insufficient "
+        "history."
+    ),
 }
 
 # ── View presets ─────────────────────────────────────────────────────
@@ -195,6 +207,7 @@ VIEW_PRESETS: dict[str, list[str]] = {
         "current_ratio",
         "short_pct",
         "hedge_fund_buys",
+        "portfolio_correlation",
     ],
     "Valuation": [
         "symbol",
