@@ -193,3 +193,120 @@ def test_notifications_hide_non_screener_symbols_unless_watchlisted(
     assert "OUT ▸" not in all_labels
     assert "GHOST ▸" not in all_labels
     assert not any("Watchlist (" in tab.label for tab in at.tabs)
+
+
+def test_notifications_group_alerts_by_symbol(tmp_path: Path, monkeypatch) -> None:
+    """Alerts for one ticker share a card, so the badge counts tickers."""
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks(
+        [
+            {"symbol": "NVDA", "description": "Nvidia"},
+            {"symbol": "AMD", "description": "AMD"},
+        ]
+    )
+    for index, title in enumerate(
+        [
+            "AI Buildout Echoes the 1990s",
+            "Why Nvidia, Micron, and SpaceX Stocks Keep Tumbling",
+            "Chip Stocks Pull Back Again",
+        ]
+    ):
+        seeded.add_alert(
+            "NVDA",
+            "news",
+            "info",
+            title,
+            "ETF Trends" if index == 0 else "TipRanks",
+            f"NVDA:news:{index}",
+        )
+    seeded.add_alert(
+        "AMD",
+        "off_high",
+        "warn",
+        "AMD pulled back",
+        "10% off high",
+        "AMD:off_high:test",
+    )
+
+    at = _run_app(db_path, monkeypatch)
+
+    assert not at.exception
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    assert notification.label == "🔔 Notifications (2)"
+    labels = [button.label for button in notification.button]
+    assert labels.count("NVDA ▸") == 1
+    assert labels.count("AMD ▸") == 1
+
+
+def test_notifications_merge_a_screener_buy_with_alerts_for_the_same_symbol(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A live buy signal and its alerts belong to one ticker card."""
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks(
+        [
+            {
+                "symbol": "BOTH",
+                "description": "Below both estimates",
+                "price": 101.0,
+                "week_52_low": 100.0,
+                "dcf_fair_value": 120.0,
+                "lynch_fair_value": 130.0,
+            }
+        ]
+    )
+    seeded.add_alert(
+        "BOTH", "news", "info", "First headline", "TipRanks", "BOTH:news:1"
+    )
+    seeded.add_alert(
+        "BOTH", "news", "info", "Second headline", "ETF Trends", "BOTH:news:2"
+    )
+
+    at = _run_app(db_path, monkeypatch)
+
+    assert not at.exception
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    assert notification.label == "🔔 Notifications (1)"
+    labels = [button.label for button in notification.button]
+    assert labels.count("BOTH ▸") == 1
+
+
+def test_notifications_group_header_shows_the_strongest_severity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A warning in a group is visible before reading its individual lines."""
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks([{"symbol": "NVDA", "description": "Nvidia"}])
+    seeded.add_alert("NVDA", "news", "info", "A headline", "TipRanks", "NVDA:news:1")
+    seeded.add_alert(
+        "NVDA", "daily_move", "warn", "Down 8.3%", "155.38 → 142.46", "NVDA:move:1"
+    )
+
+    at = _run_app(db_path, monkeypatch)
+
+    assert not at.exception
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    header = str(notification.markdown[0].value)
+    assert "🟠" in header
+    assert "NVDA" in header
+
+
+def test_notifications_group_header_tolerates_unknown_severity(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """An unfamiliar severity still renders the ticker card."""
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks([{"symbol": "NVDA", "description": "Nvidia"}])
+    seeded.add_alert(
+        "NVDA", "custom", "mystery", "A headline", "TipRanks", "NVDA:custom:1"
+    )
+
+    at = _run_app(db_path, monkeypatch)
+
+    assert not at.exception
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    assert "NVDA" in str(notification.markdown[0].value)
