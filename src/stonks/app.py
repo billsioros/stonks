@@ -16,7 +16,13 @@ import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
 from stonks import config, report, report_view, sanity
-from stonks.backtest_view import render_backtest_tab
+from stonks.backtest_view import (
+    _RESULT_KEY,
+    _SETTINGS_KEY,
+    holdings_settings_from_summary,
+    render_backtest_tab,
+    run_configured_backtest,
+)
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
     COLUMN_HELP,
@@ -27,7 +33,14 @@ from stonks.config import (
     SCREENER_TABLE_MAX_HEIGHT,
     VIEW_PRESETS,
 )
+from stonks.correlation import portfolio_correlation_factor
 from stonks.detail_view import render_detail_page
+from stonks.portfolio import (
+    CONVERTIBLE_CURRENCIES,
+    backtest_allocation,
+    portfolio_snapshot,
+    validate_lot,
+)
 from stonks.presets import POPULAR_SCREENS, default_screen
 from stonks.store import SQLiteStore, is_stock_row
 
@@ -799,6 +812,18 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
     if _is_missing(val):
         return "—"
     return f"{val:,.{decimals}f}"
+
+
+def _money(val: float | None, currency: str) -> str:
+    """Format an amount in its own currency, or a dash when unavailable."""
+    return "—" if val is None or _is_missing(val) else f"{val:,.2f} {currency}"
+
+
+def _signed_money(val: float | None) -> str:
+    """Format a USD gain or loss with an explicit sign."""
+    if val is None or _is_missing(val):
+        return "—"
+    return f"{'-' if val < 0 else '+'}${abs(val):,.2f}"
 
 
 def _fmt_cyclical_risk(val: object) -> str:
@@ -1623,6 +1648,187 @@ def render_watchlist_tab() -> None:
     _render_watchlist_editor(store, watchlist_symbols)
 
 
+def _portfolio_instrument(store: SQLiteStore, ticker: str) -> dict[str, Any] | None:
+    """Look up a typed ticker in the stored universe, ETFs included."""
+    rows, _, _ = store.get_stocks(
+        filters={"symbol": {"values": [ticker]}},
+        page=1,
+        page_size=10,
+    )
+    return next((row for row in rows if row["symbol"] == ticker), None)
+
+
+def _clear_portfolio_editor_state() -> None:
+    for key in (
+        "pf_symbol_ticker",
+        "pf_quantity",
+        "pf_price",
+        "pf_currency",
+        "pf_notes",
+    ):
+        st.session_state.pop(key, None)
+
+
+def render_portfolio_tab() -> None:
+    """Show USD holdings totals, manual lots and a one-click holdings backtest."""
+    store = get_store()
+    summary, stale = portfolio_snapshot(store)
+    for currency in stale:
+        st.warning(f"⚠️ Stale {currency}→USD rate; values may be out of date.")
+    if summary.excluded_symbols:
+        count = len(summary.excluded_symbols)
+        st.warning(
+            f"{count} holding{'s' if count != 1 else ''} excluded from USD totals: "
+            f"{', '.join(summary.excluded_symbols)} — price or FX rate unavailable."
+        )
+
+    symbols, weights = backtest_allocation(summary)
+    factor = portfolio_correlation_factor(store, symbols, weights)
+    value_col, pnl_col, daily_col, cost_col, corr_col = st.columns(5)
+    value_col.metric(
+        "Total value (USD)",
+        f"${summary.total_value_usd:,.2f}"
+        if summary.total_value_usd is not None
+        else "—",
+    )
+    pnl_col.metric(
+        "Unrealized P&L (USD)",
+        _signed_money(summary.unrealized_pnl_usd),
+        delta=(
+            f"{summary.unrealized_pct:+.2f}%"
+            if summary.unrealized_pct is not None
+            else None
+        ),
+    )
+    daily_col.metric("Daily P&L (USD)", _signed_money(summary.daily_pnl_usd))
+    cost_col.metric(
+        "Cost basis (USD)",
+        f"${summary.total_cost_usd:,.2f}"
+        if summary.total_cost_usd is not None
+        else "—",
+    )
+    corr_col.metric(
+        "Portfolio correlation",
+        f"{factor:+.2f}" if factor is not None else "—",
+        help=(
+            "Weighted average pairwise correlation of monthly returns; "
+            "higher means holdings move together."
+        ),
+    )
+
+    rows: list[dict[str, Any]] = []
+    for holding in summary.holdings:
+        rows.append(
+            {
+                "Instrument": f"{holding.symbol} — {holding.description}",
+                "Position": holding.quantity,
+                "Last": _money(holding.last, holding.currency),
+                "Change %": _fmt_pct(holding.change_pct),
+                "Cost Basis": _money(holding.cost_native, holding.currency),
+                "Market Value": _money(holding.market_native, holding.currency),
+                "Avg Price": _money(holding.avg_price, holding.currency),
+                "Daily P&L": _money(holding.daily_pnl_native, holding.currency),
+                "Unrealized P&L": _money(holding.unrealized_native, holding.currency),
+                "Currency": holding.currency,
+                "USD Value": _money(holding.market_usd, "USD"),
+            }
+        )
+    if rows:
+        frame = pd.DataFrame(rows)
+        selection = st.dataframe(
+            frame,
+            width="stretch",
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=_table_key("portfolio_table"),
+        )
+        picked = getattr(getattr(selection, "selection", None), "rows", None) or []
+        if picked and 0 <= picked[0] < len(rows):
+            open_symbol(summary.holdings[picked[0]].symbol)
+            st.rerun()
+        st.download_button(
+            "📥 Download Portfolio CSV",
+            data=frame.to_csv(index=False).encode("utf-8"),
+            file_name=f"stonks_portfolio_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            key="download_portfolio",
+        )
+    else:
+        st.caption("No holdings yet. Add a lot below.")
+
+    if st.button("⚡ Backtest my portfolio", key="pf_backtest"):
+        settings = holdings_settings_from_summary(summary)
+        if settings is None:
+            st.warning("No priced holdings to backtest yet.")
+        else:
+            try:
+                result = run_configured_backtest(store, settings)
+            except (OSError, ValueError) as exc:
+                st.error(f"Backtest failed: {exc}")
+            else:
+                st.session_state[_RESULT_KEY] = result
+                st.session_state[_SETTINGS_KEY] = settings
+                st.session_state["page"] = "backtest"
+                st.rerun()
+
+    positions = store.get_positions()
+    with st.expander("💼 Lots", expanded=False):
+        if not positions:
+            st.caption("No lots yet. Add one below.")
+        for lot in positions:
+            info_col, action_col = st.columns([5, 1])
+            added = datetime.fromtimestamp(float(lot["added_at"])).strftime("%Y-%m-%d")
+            info_col.markdown(
+                f"**{lot['symbol']}** · {lot['quantity']:g} × "
+                f"{_money(lot['price'], lot['currency'])} · {added}"
+            )
+            if lot["notes"]:
+                info_col.caption(lot["notes"])
+            if action_col.button(
+                "🗑", key=f"pf_delete_{lot['id']}", help="Delete this lot"
+            ):
+                store.delete_position(lot["id"])
+                st.rerun()
+
+    with st.expander("Add lot", expanded=False):
+        st.text_input("Ticker", key="pf_symbol_ticker", placeholder="MSFT")
+        st.number_input(
+            "Quantity", min_value=0.0, value=1.0, step=1.0, key="pf_quantity"
+        )
+        st.number_input(
+            "Price paid",
+            min_value=0.0,
+            value=0.0,
+            step=0.01,
+            format="%.2f",
+            key="pf_price",
+        )
+        st.selectbox(
+            "Trade currency",
+            ["USD", *sorted(CONVERTIBLE_CURRENCIES - {"USD"})],
+            key="pf_currency",
+        )
+        st.text_input("Notes (optional)", key="pf_notes")
+        if st.button("Add lot", key="pf_add_lot"):
+            ticker = str(st.session_state.get("pf_symbol_ticker") or "").strip().upper()
+            quantity = float(st.session_state.get("pf_quantity") or 0.0)
+            price = float(st.session_state.get("pf_price") or 0.0)
+            currency = str(st.session_state.get("pf_currency") or "USD").strip().upper()
+            notes = str(st.session_state.get("pf_notes") or "").strip()
+            try:
+                validate_lot(ticker, quantity, price, currency)
+            except ValueError as exc:
+                st.warning(str(exc))
+            else:
+                if _portfolio_instrument(store, ticker) is None:
+                    st.warning(f"{ticker} is not in the stored universe.")
+                else:
+                    store.add_position(ticker, quantity, price, currency, notes)
+                    _clear_portfolio_editor_state()
+                    st.rerun()
+
+
 # ── Main App ─────────────────────────────────────────────────────────
 
 
@@ -2003,10 +2209,17 @@ def main() -> None:
         render_detail_page(store, st.session_state["detail_symbol"])
         return
 
+    if st.session_state.get("page") == "backtest":
+        if st.button("← Back to screener", key="backtest_back"):
+            st.session_state["page"] = "screener"
+            st.rerun()
+        render_backtest_tab(store)
+        return
+
     # Main content tabs; alerts live in the collapsed Notifications surface
-    # and only for symbols in the active screener or the watchlist.
-    tab_screener, tab_watchlist, tab_backtest = st.tabs(
-        ["📊 Screener", "⭐ Watchlist", "🧪 Backtest"]
+    # and cover the active screen, the watchlist and portfolio holdings.
+    tab_screener, tab_watchlist, tab_portfolio, tab_backtest = st.tabs(
+        ["📊 Screener", "⭐ Watchlist", "💼 Portfolio", "🧪 Backtest"]
     )
 
     with tab_screener:
@@ -2019,6 +2232,9 @@ def main() -> None:
 
     with tab_watchlist:
         render_watchlist_tab()
+
+    with tab_portfolio:
+        render_portfolio_tab()
 
     with tab_backtest:
         render_backtest_tab(store)
@@ -2037,4 +2253,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    # A Streamlit script run has its own globals. When the importable app module
+    # is already loaded, use its entry point so patched view helpers are honoured.
+    import sys
+
+    _app_module = sys.modules.get("stonks.app") or sys.modules[__name__]
+    _app_module.main()
