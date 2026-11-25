@@ -35,6 +35,13 @@ from stonks.dossier import (
 from stonks.edgar import EdgarUnavailable, edgar_json, resolve_cik, user_agent
 from stonks.edgar_parse import filing_checks, latest_fact, maturity_ladder
 from stonks.filing_evidence import build_filing_evidence, search_filings
+from stonks.portfolio import (
+    Holding,
+    PortfolioSummary,
+    backtest_allocation,
+    portfolio_snapshot,
+    validate_lot,
+)
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 from stonks.worker import NEWS_ALERTS_PER_SYNC, fetch_watched_news
@@ -110,6 +117,16 @@ user_agent  # noqa: B018
 filing_checks  # noqa: B018
 latest_fact  # noqa: B018
 maturity_ladder  # noqa: B018
+Holding.avg_price  # noqa: B018
+Holding.daily_pnl_native  # noqa: B018
+PortfolioSummary.total_cost_usd  # noqa: B018
+PortfolioSummary.total_value_usd  # noqa: B018
+PortfolioSummary.unrealized_pnl_usd  # noqa: B018
+PortfolioSummary.unrealized_pct  # noqa: B018
+PortfolioSummary.excluded_symbols  # noqa: B018
+validate_lot  # noqa: B018
+backtest_allocation  # noqa: B018
+portfolio_snapshot  # noqa: B018
 
 buy_opportunity  # noqa: B018, F821
 get_buy_opportunities  # noqa: B018, F821
