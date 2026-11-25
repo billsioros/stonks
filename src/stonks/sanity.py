@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from stonks.backtest import run_backtest
+from stonks.config import WORKER_INTERVAL_MINUTES
 from stonks.hedgefollow import fetch_largest_buys
 from stonks.presets import default_screen
 from stonks.stockanalysis import fetch_rows
@@ -38,8 +39,8 @@ from stonks.valuation import dcf_fair_value, lynch_fair_value, upside_pct
 # when the screen was last verified against the site by hand.
 DEFAULT_SCREEN_SIZE = 36
 
-# A report older than this is replaced; the worker syncs hourly.
-SANITY_TTL_SECONDS = 12 * 3600.0
+# A report is only trusted until the worker's next scheduled run.
+SANITY_TTL_SECONDS = WORKER_INTERVAL_MINUTES * 60.0
 REPORT_KEY = "sanity_report"
 
 # Bounds. Market values move daily; these are wide enough for that and narrow
@@ -477,13 +478,18 @@ def save_report(
     results: list[CheckResult],
     *,
     checked_at: float | None = None,
+    next_check_at: float | None = None,
 ) -> None:
     """Persist the latest verdicts for the app's banner."""
+    moment = checked_at if checked_at is not None else time.time()
+    if next_check_at is None:
+        next_check_at = moment + SANITY_TTL_SECONDS
     store.save_metadata(
         REPORT_KEY,
         json.dumps(
             {
-                "checked_at": checked_at if checked_at is not None else time.time(),
+                "checked_at": moment,
+                "next_check_at": next_check_at,
                 "results": [asdict(result) for result in results],
             }
         ),
@@ -514,6 +520,20 @@ def report_is_fresh(report: dict | None, *, now: float | None = None) -> bool:
     return (now if now is not None else time.time()) - checked_at < SANITY_TTL_SECONDS
 
 
+def _next_check_text(raw: Any, *, now: float) -> str:
+    """How long until the recorded next check, clamped to one interval."""
+    try:
+        next_at = float(raw)
+    except (TypeError, ValueError):
+        return ""
+    remaining = min(max(0.0, next_at - now), SANITY_TTL_SECONDS)
+    if remaining <= 0:
+        return " Next check due now."
+    if remaining < 60:
+        return " Next check in <1m."
+    return f" Next check in {int(remaining // 60)}m."
+
+
 def compatibility(report: dict[str, Any] | None, *, now: float | None = None) -> Badge:
     """Summarize a sanity report as a one-line, evidence-backed badge."""
     moment = now if now is not None else time.time()
@@ -524,7 +544,10 @@ def compatibility(report: dict[str, Any] | None, *, now: float | None = None) ->
     checked_at = report.get("checked_at")
     if not isinstance(checked_at, (int, float)):
         return Badge("unknown", "Checks pending", "No check timestamp recorded.")
-    checked_text = f"Last checked {int(max(0.0, moment - checked_at) // 60)}m ago."
+    checked_text = (
+        f"Last checked {int(max(0.0, moment - checked_at) // 60)}m ago."
+        + _next_check_text(report.get("next_check_at"), now=moment)
+    )
 
     failures = [result for result in results if result.get("ok") is False]
     if failures:

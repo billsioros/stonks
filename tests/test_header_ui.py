@@ -28,3 +28,19 @@ def test_html_page_title_is_just_the_brand(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(st, "set_page_config", lambda **kwargs: calls.append(kwargs))
     _app()
     assert calls[0]["page_title"] == "Stonks"
+
+
+def test_page_icon_is_a_chart_emoji(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(st, "set_page_config", lambda **kwargs: calls.append(kwargs))
+    _app()
+    assert calls[0]["page_icon"] == "📈"
+
+
+def test_masthead_uses_a_chart_emoji_instead_of_an_image() -> None:
+    at = _app()
+    mark = next(
+        str(md.value) for md in at.markdown if 'class="sk-mark"' in str(md.value)
+    )
+    assert "📈" in mark
+    assert "<img" not in mark

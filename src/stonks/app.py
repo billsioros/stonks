@@ -3,16 +3,13 @@
 Run with: streamlit run src/stonks/app.py
 """
 
-import base64
 import logging
 import math
 import re
 import time
 from collections.abc import Sequence
 from datetime import datetime
-from functools import lru_cache
 from html import escape as _escape
-from pathlib import Path
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
@@ -32,14 +29,14 @@ from stonks.config import (
 )
 from stonks.detail_view import render_detail_page
 from stonks.presets import POPULAR_SCREENS, default_screen
-from stonks.store import SQLiteStore
+from stonks.store import SQLiteStore, is_stock_row
 
 logger = logging.getLogger(__name__)
 
 # ── Page configuration ──────────────────────────────────────────────
 st.set_page_config(
     page_title="Stonks",
-    page_icon="src/stonks/assets/favicon.png",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -126,13 +123,8 @@ h2 { border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
     place-items: center;
     border-radius: 14px;
     overflow: hidden;
-}
-
-.sk-mark img {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    image-rendering: -webkit-optimize-contrast;
+    font-size: 2.6rem;
+    line-height: 1;
 }
 
 .sk-brand h1 {
@@ -873,12 +865,18 @@ def apply_screen_state(screen: dict[str, Any]) -> None:
     st.session_state["current_page"] = 1
 
 
-@lru_cache(maxsize=1)
-def _logo_data_uri() -> str:
-    """Return the bundled favicon as a data URI for the masthead."""
-    path = Path(__file__).parent / "assets" / "favicon.png"
-    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
+def _next_attempt_text(raw: Any, *, now: float) -> str:
+    """Describe the recorded next attempt, tolerating missing or bad metadata."""
+    try:
+        when = float(raw)
+    except (TypeError, ValueError):
+        return ""
+    remaining = min(when - now, config.WORKER_INTERVAL_MINUTES * 60)
+    if remaining <= 0:
+        return " Next attempt due now."
+    if remaining < 60:
+        return " Next attempt in <1m."
+    return f" Next attempt in {int(remaining // 60)}m."
 
 
 def live_sync_state(
@@ -886,16 +884,23 @@ def live_sync_state(
 ) -> sanity.Badge:
     """Judge the worker from its last recorded attempt, not from a constant."""
     moment = now if now is not None else time.time()
+    next_text = _next_attempt_text(sync_info.get("next_sync_at"), now=moment)
     if sync_info.get("last_sync_status") == "failed":
-        return sanity.Badge("fail", "Live Sync", "Last sync attempt failed.")
+        return sanity.Badge(
+            "fail", "Live Sync", f"Last sync attempt failed.{next_text}"
+        )
 
     success_at = sync_info.get("last_successful_sync_at")
     if not success_at:
-        return sanity.Badge("unknown", "Live Sync", "No successful sync recorded.")
+        return sanity.Badge(
+            "unknown", "Live Sync", f"No successful sync recorded.{next_text}"
+        )
     try:
         age = max(0.0, moment - float(success_at))
     except (TypeError, ValueError):
-        return sanity.Badge("unknown", "Live Sync", "Unreadable sync timestamp.")
+        return sanity.Badge(
+            "unknown", "Live Sync", f"Unreadable sync timestamp.{next_text}"
+        )
 
     if age < 3600:
         age_text = f"{int(age // 60)}m ago"
@@ -904,9 +909,11 @@ def live_sync_state(
     detail = f"Last successful sync {age_text}."
     if age > config.SYNC_ACTIVE_WINDOW_MINUTES * 60:
         return sanity.Badge(
-            "fail", "Live Sync", f"{detail} Outside the active sync window."
+            "fail",
+            "Live Sync",
+            f"{detail} Outside the active sync window.{next_text}",
         )
-    return sanity.Badge("ok", "Live Sync", detail)
+    return sanity.Badge("ok", "Live Sync", f"{detail}{next_text}")
 
 
 def render_header(store: SQLiteStore) -> None:
@@ -915,6 +922,7 @@ def render_header(store: SQLiteStore) -> None:
     sync_info["last_sync_status"] = store.get_metadata("last_sync_status")
     sync_info["last_successful_sync_at"] = store.get_metadata("last_successful_sync_at")
     sync_info["last_sync_error"] = store.get_metadata("last_sync_error")
+    sync_info["next_sync_at"] = store.get_metadata("next_sync_at")
     badges = (
         live_sync_state(sync_info),
         sanity.compatibility(sanity.load_report(store)),
@@ -928,7 +936,7 @@ def render_header(store: SQLiteStore) -> None:
         f"""
     <div class="sk-head">
         <div class="sk-brand">
-            <div class="sk-mark"><img src="{_logo_data_uri()}" alt="Stonks"></div>
+            <div class="sk-mark">📈</div>
             <h1>Stonks</h1>
         </div>
         <div class="sk-meta">
@@ -1448,57 +1456,100 @@ def render_screener_table() -> None:
             st.markdown(guide)
 
 
-def render_watchlist_tab() -> None:
-    """Render the watchlist management tab."""
-    store = get_store()
-    query = st.text_input(
-        "Search symbol or company",
-        key="watchlist_search",
-        placeholder="Type a symbol or company name, e.g. AAPL or Apple...",
+def _watchlist_stock(store: SQLiteStore, ticker: str) -> dict[str, Any] | None:
+    """Look up a typed ticker in the stored universe, ignoring active filters."""
+    rows, _, _ = store.get_stocks(
+        filters={"symbol": {"values": [ticker]}},
+        page=1,
+        page_size=10,
     )
+    return next((row for row in rows if is_stock_row(row)), None)
 
-    # The universe is too large for a plain selectbox, so the typed query is
-    # resolved against the database and the best matches are offered instead.
-    matches: list[dict[str, Any]] = []
-    picked: str | None = None
-    if query.strip():
-        matches, _, _ = store.get_stocks(search_query=query, page_size=8)
-        if matches:
-            labels = [
-                f"{row['symbol']} · {row.get('description') or ''}".rstrip(" ·")
-                for row in matches
-            ]
-            choice = st.selectbox(
-                "Matches",
-                options=labels,
-                key="watchlist_match",
-                label_visibility="collapsed",
-            )
-            picked = matches[labels.index(choice)]["symbol"]
-        else:
-            st.caption("No symbol or company matches that search.")
 
-    add_clicked = st.button(
-        "⭐ Add to watchlist",
-        key="watchlist_add_btn",
-        type="primary",
-        disabled=picked is None,
-    )
-    if add_clicked and picked:
-        store.add_to_watchlist(picked)
-        st.toast(f"⭐ Added {picked} to watchlist!", icon="✅")
-        time.sleep(0.5)
-        st.rerun()
+def _clear_watchlist_editor_state() -> None:
+    for key in ("wl_symbol_ticker", "wl_edit_index"):
+        st.session_state.pop(key, None)
 
-    st.divider()
 
-    watchlist = store.get_watchlist()
-    if not watchlist:
-        st.info(
-            "Your watchlist is empty. Add stocks using the selector above or from the screener."
-        )
+def _commit_watchlist_symbol(
+    store: SQLiteStore, symbols: list[str], editing: int | None
+) -> None:
+    ticker = str(st.session_state.get("wl_symbol_ticker") or "").strip().upper()
+    if not ticker:
+        st.warning("Enter one ticker symbol.")
+        return
+    if _watchlist_stock(store, ticker) is None:
+        st.warning(f"{ticker} is not a stock in the stored universe.")
         return
 
+    if editing is not None and 0 <= editing < len(symbols):
+        previous = symbols[editing]
+        if ticker != previous and ticker in symbols:
+            st.warning(f"{ticker} is already on the watchlist.")
+            return
+        if ticker != previous:
+            store.remove_from_watchlist(previous)
+    elif ticker in symbols:
+        st.warning(f"{ticker} is already on the watchlist.")
+        return
+
+    store.add_to_watchlist(ticker)
+    _clear_watchlist_editor_state()
+    st.rerun()
+
+
+def _render_watchlist_editor(store: SQLiteStore, symbols: list[str]) -> None:
+    """Backtest-style symbol list with inline edit/delete and an add panel."""
+    st.caption(f"{len(symbols)} symbols")
+    if not symbols:
+        st.caption("No symbols yet. Add one below.")
+
+    for index, symbol in enumerate(symbols):
+        info_col, edit_col, delete_col = st.columns([3, 1, 1])
+        info_col.markdown(f"**{symbol}**")
+        if edit_col.button("✏️", key=f"wl_edit_symbol_{index}", help="Edit this symbol"):
+            st.session_state["wl_symbol_ticker"] = symbol
+            st.session_state["wl_edit_index"] = index
+            st.rerun()
+        if delete_col.button(
+            "🗑", key=f"wl_delete_symbol_{index}", help="Remove this symbol"
+        ):
+            store.remove_from_watchlist(symbol)
+            _clear_watchlist_editor_state()
+            st.rerun()
+
+    editing = st.session_state.get("wl_edit_index")
+    editing = int(editing) if editing is not None else None
+    if editing is not None and not 0 <= editing < len(symbols):
+        editing = None
+    label = "Edit symbol" if editing is not None else "Add symbol"
+
+    with st.expander(
+        label, expanded=editing is not None, key="watchlist_symbol_editor"
+    ):
+        st.text_input(
+            "Ticker",
+            key="wl_symbol_ticker",
+            placeholder="AAPL",
+        )
+        action_col, cancel_col = st.columns([1, 1])
+        with action_col:
+            if st.button(
+                "Save changes" if editing is not None else "Add",
+                key="wl_symbol_save",
+            ):
+                _commit_watchlist_symbol(store, symbols, editing)
+        if editing is not None:
+            with cancel_col:
+                if st.button("Cancel", key="wl_symbol_cancel"):
+                    _clear_watchlist_editor_state()
+                    st.rerun()
+
+
+def render_watchlist_tab() -> None:
+    """Render the watchlist table and its symbol editor."""
+    store = get_store()
+    watchlist = store.get_watchlist()
     watchlist_symbols = [item["symbol"] for item in watchlist]
 
     if watchlist_symbols:
@@ -1507,48 +1558,39 @@ def render_watchlist_tab() -> None:
             page=1,
             page_size=len(watchlist_symbols),
         )
-        watchlist_df = pd.DataFrame(page_rows)
+        stock_rows = [row for row in page_rows if is_stock_row(row)]
+        watchlist_symbols = [row["symbol"] for row in stock_rows]
+        watchlist_df = pd.DataFrame(stock_rows)
     else:
         watchlist_df = pd.DataFrame()
 
     if not watchlist_df.empty:
+        preset = st.selectbox(
+            "📋 View",
+            options=list(VIEW_PRESETS.keys()),
+            index=list(VIEW_PRESETS.keys()).index(
+                st.session_state.get("watchlist_view_preset", "Overview")
+            ),
+            key="watchlist_view_preset_select",
+        )
+        st.session_state["watchlist_view_preset"] = preset
+
         # A symbol with unread alerts is marked here, so the badge's count has
         # somewhere to point once the banner is dismissed.
         alert_counts = store.unread_alert_counts()
         view_cols = [
-            "symbol",
-            "description",
-            "market_cap",
-            "pe_ratio",
-            "roe_pct",
-            "dividend_yield_pct",
-            "price",
-            "beta",
-            "dcf_fair_value",
-            "dcf_upside_pct",
-            "lynch_fair_value",
-            "lynch_upside_pct",
+            c for c in VIEW_PRESETS.get(preset, []) if c in watchlist_df.columns
         ]
-        view_cols = [c for c in view_cols if c in watchlist_df.columns]
-        display_wl = watchlist_df[view_cols].copy()
-
-        rename_map = {c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
-        display_wl = display_wl.rename(columns=rename_map)
-
+        display_wl = watchlist_df[view_cols].rename(
+            columns={c: COLUMN_DISPLAY_NAMES.get(c, c) for c in view_cols}
+        )
         if "Symbol" in display_wl.columns:
             marker = [
                 str(alert_counts[symbol]) if alert_counts.get(symbol) else "—"
                 for symbol in watchlist_df["symbol"]
             ]
             display_wl.insert(1, "Alerts", marker)
-
-        if "Market Cap" in display_wl.columns:
-            display_wl["Market Cap"] = display_wl["Market Cap"].apply(_fmt_market_cap)
-        for col in display_wl.columns:
-            if "%" in col:
-                display_wl[col] = display_wl[col].apply(_fmt_pct)
-            elif col in ("P/E", "Beta", "DCF Fair Value", "Lynch Fair Value"):
-                display_wl[col] = display_wl[col].apply(lambda x: _fmt_number(x, 2))
+        display_wl = _format_display_frame(display_wl)
 
         watchlist_selection = st.dataframe(
             display_wl,
@@ -1578,16 +1620,7 @@ def render_watchlist_tab() -> None:
         )
 
     st.divider()
-    st.markdown("**Remove from watchlist:**")
-    cols_per_row = 6
-    for i in range(0, len(watchlist_symbols), cols_per_row):
-        row_syms = watchlist_symbols[i : i + cols_per_row]
-        cols = st.columns(cols_per_row)
-        for j, sym in enumerate(row_syms):
-            with cols[j]:
-                if st.button(f"❌ {sym}", key=f"remove_wl_{sym}"):
-                    store.remove_from_watchlist(sym)
-                    st.rerun()
+    _render_watchlist_editor(store, watchlist_symbols)
 
 
 # ── Main App ─────────────────────────────────────────────────────────
@@ -1954,11 +1987,10 @@ def main() -> None:
         render_detail_page(store, st.session_state["detail_symbol"])
         return
 
-    # Main content tabs; unread alerts are visible from anywhere in the app.
-    unread = store.count_unread_alerts()
-    watchlist_label = f"⭐ Watchlist ({unread})" if unread else "⭐ Watchlist"
+    # Main content tabs; alerts live in the collapsed Notifications surface
+    # and only for symbols in the active screener or the watchlist.
     tab_screener, tab_watchlist, tab_backtest = st.tabs(
-        ["📊 Screener", watchlist_label, "🧪 Backtest"]
+        ["📊 Screener", "⭐ Watchlist", "🧪 Backtest"]
     )
 
     with tab_screener:

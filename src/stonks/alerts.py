@@ -22,7 +22,8 @@ VALUE_UPSIDE_PCT = 25.0
 TARGET_UPSIDE_PCT = 25.0
 # Short interest is a percentage of float, so this is percentage points.
 SHORT_RISE_POINTS = 2.0
-BIG_MOVE_RATIO = 0.05
+# Move from the first price seen for a symbol on a given calendar day.
+DAILY_MOVE_PCT = 5.0
 BUY_OPPORTUNITY_ALERTS_PER_SYNC = 5
 
 
@@ -43,6 +44,11 @@ def week_bucket(now: datetime | None = None) -> str:
     moment = now or datetime.now()
     iso = moment.isocalendar()
     return f"{iso.year}-W{iso.week:02d}"
+
+
+def day_bucket(now: datetime | None = None) -> str:
+    """Local calendar date, so a daily move alerts at most once per day."""
+    return (now or datetime.now()).date().isoformat()
 
 
 def _number(row: dict[str, Any] | None, key: str) -> float | None:
@@ -147,6 +153,52 @@ def _alert(
         detail=detail,
         dedupe_key=f"{symbol}:{kind}:{bucket}",
     )
+
+
+def daily_move_alerts(
+    rows: list[dict[str, Any]], state: dict[str, Any] | None, *, day: str
+) -> tuple[list[Alert], dict[str, Any]]:
+    """Compare today's first price with each new price, and keep the baseline.
+
+    The first row of a day only seeds the baseline: without a full day of
+    history there is no earlier price to call a sudden move from.
+    """
+    prices: dict[str, float] = {}
+    if (
+        isinstance(state, dict)
+        and state.get("day") == day
+        and isinstance(state.get("prices"), dict)
+    ):
+        prices = dict(state["prices"])
+
+    alerts: list[Alert] = []
+    for row in rows:
+        symbol = str(row.get("symbol") or "")
+        price = _number(row, "price")
+        if not symbol or price is None or price <= 0:
+            continue
+        baseline = prices.get(symbol)
+        if not isinstance(baseline, (int, float)) or baseline <= 0:
+            prices[symbol] = price
+            continue
+
+        change = (price / float(baseline) - 1) * 100
+        if abs(change) < DAILY_MOVE_PCT:
+            continue
+        rising = change > 0
+        direction = "up" if rising else "down"
+        alerts.append(
+            _alert(
+                symbol,
+                f"daily_move_{direction}",
+                "warn",
+                f"{'Up' if rising else 'Down'} {abs(change):.1f}% since the day's first price",
+                f"{float(baseline):.2f} → {price:.2f}",
+                day,
+            )
+        )
+
+    return alerts, {"day": day, "prices": prices}
 
 
 def evaluate_alerts(
@@ -282,20 +334,6 @@ def evaluate_alerts(
                 stamp,
             )
         )
-
-    if price is not None and prev_price:
-        move = (price / prev_price - 1) * 100
-        if abs(move) >= BIG_MOVE_RATIO * 100:
-            alerts.append(
-                _alert(
-                    symbol,
-                    "big_move",
-                    "warn",
-                    f"Price moved {move:+.1f}% since the last sync",
-                    f"{prev_price:.2f} → {price:.2f}",
-                    stamp,
-                )
-            )
 
     flag = _number(current, "hedge_fund_buys")
     prev_flag = _number(previous, "hedge_fund_buys")

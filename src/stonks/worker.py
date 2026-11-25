@@ -1,19 +1,20 @@
 """Background worker to fetch and persist stock data on a recurring interval."""
 
+import json
 import logging
+import random
+import sqlite3
 import time
 from typing import Any
 
-import schedule
-
-from stonks import sanity
-from stonks.alerts import buy_opportunity_alerts, evaluate_alerts
+from stonks import alerts, sanity
+from stonks.alerts import buy_opportunity_alerts, daily_move_alerts, evaluate_alerts
 from stonks.config import DATA_DIR, WORKER_INTERVAL_MINUTES
 from stonks.detail import load_page
 from stonks.detail_parse import parse_overview
 from stonks.hedgefollow import apply_flags, fetch_largest_buys
 from stonks.stockanalysis import current_discount_rate, fetch_rows
-from stonks.store import SQLiteStore
+from stonks.store import SQLiteStore, is_stock_row
 
 logging.basicConfig(
     level=logging.INFO,
@@ -24,6 +25,12 @@ logger = logging.getLogger("stonks.worker")
 
 # Headlines per symbol per sync; a busy news day should not bury every other alert.
 NEWS_ALERTS_PER_SYNC = 3
+
+# A failed run retries quickly, then eases off; success restores the normal cadence.
+RETRY_DELAYS_MINUTES = (1, 2, 4, 8, 15)
+RETRY_JITTER_SECONDS = 10.0
+
+_now = time.time
 
 
 def _watched_rows(store: SQLiteStore, symbols: set[str]) -> dict[str, dict[str, Any]]:
@@ -62,6 +69,33 @@ def _record_change_alerts(
     return inserted
 
 
+def _record_daily_move_alerts(
+    store: SQLiteStore, watched: set[str], rows: list[dict[str, Any]]
+) -> int:
+    """Record 5% moves from each watched symbol's first price of the day."""
+    day = alerts.day_bucket()
+    try:
+        state = json.loads(store.get_metadata("daily_move_baselines") or "null")
+    except (TypeError, ValueError):
+        state = None
+    watched_rows = [row for row in rows if row.get("symbol") in watched]
+    fired, updated = daily_move_alerts(watched_rows, state, day=day)
+    store.save_metadata("daily_move_baselines", json.dumps(updated))
+
+    inserted = 0
+    for alert in fired:
+        if store.add_alert(
+            alert.symbol,
+            alert.kind,
+            alert.severity,
+            alert.title,
+            alert.detail,
+            alert.dedupe_key,
+        ):
+            inserted += 1
+    return inserted
+
+
 def fetch_watched_news(store: SQLiteStore, symbols: list[str]) -> int:
     """Record unseen StockAnalysis headlines for the watched symbols.
 
@@ -95,16 +129,18 @@ def fetch_watched_news(store: SQLiteStore, symbols: list[str]) -> int:
 
 
 def _maybe_run_sanity_checks(store: SQLiteStore) -> None:
-    """Re-run the reference-site checks every few hours and keep the verdicts.
+    """Re-run the reference-site checks on every sync and keep the verdicts.
 
     Checks read the stored snapshot, so they can still run after a failed sync.
     A broken check must never change the sync outcome we just recorded.
     """
     try:
-        if sanity.report_is_fresh(sanity.load_report(store)):
-            return
         results = sanity.run_sanity_checks(store)
-        sanity.save_report(store, results)
+        try:
+            next_check_at = float(store.get_metadata("next_sync_at") or "")
+        except (OSError, sqlite3.Error, TypeError, ValueError):
+            next_check_at = None
+        sanity.save_report(store, results, next_check_at=next_check_at)
     except Exception:
         logger.exception("Cross-checks could not be refreshed")
         return
@@ -113,6 +149,26 @@ def _maybe_run_sanity_checks(store: SQLiteStore) -> None:
         logger.warning("⚠️ Cross-check diverged on: %s", ", ".join(diverged))
     else:
         logger.info("✅ Cross-checks agree with the reference sites")
+
+
+def retry_delay_seconds(failures: int) -> float:
+    """Seconds to wait after a run with this many consecutive failures."""
+    base = WORKER_INTERVAL_MINUTES * 60
+    if failures < 1 or failures > len(RETRY_DELAYS_MINUTES):
+        return base
+    return RETRY_DELAYS_MINUTES[failures - 1] * 60 + random.uniform(  # nosec B311
+        0.0, RETRY_JITTER_SECONDS
+    )
+
+
+def _next_sync_delay(default: float | None = None) -> float:
+    """Time left until the recorded next attempt, or a fallback delay."""
+    fallback = WORKER_INTERVAL_MINUTES * 60 if default is None else default
+    try:
+        next_at = float(SQLiteStore().get_metadata("next_sync_at"))
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        return fallback
+    return min(max(0.0, next_at - _now()), WORKER_INTERVAL_MINUTES * 60)
 
 
 def _record_sync_outcome(
@@ -124,19 +180,31 @@ def _record_sync_outcome(
     store.save_metadata("last_sync_error", error)
     if status == "success":
         store.save_metadata("last_successful_sync_at", attempted_at)
+        failures = 0
+    else:
+        try:
+            failures = int(store.get_metadata("sync_failure_count") or 0) + 1
+        except (TypeError, ValueError):
+            failures = 1
+    store.save_metadata("sync_failure_count", str(failures))
+    store.save_metadata("next_sync_at", str(_now() + retry_delay_seconds(failures)))
 
 
 def job() -> None:
     """Sync the full StockAnalysis screener dataset into the local store."""
     logger.info("🚀 Starting data sync...")
     store: SQLiteStore | None = None
-    attempted_at = str(time.time())
+    attempted_at = str(_now())
     try:
         store = SQLiteStore()
+        # Hold a conservative lease until the outcome is known, so a restart
+        # mid-fetch cannot immediately hit the providers again.
+        store.save_metadata("next_sync_at", str(_now() + WORKER_INTERVAL_MINUTES * 60))
         # Alerts are transient; nothing older than the retention window is useful.
         store.prune_alerts()
-        watched = set(store.get_watchlist_symbols())
-        previous = _watched_rows(store, watched)
+        stored = _watched_rows(store, set(store.get_watchlist_symbols()))
+        watched = {symbol for symbol, row in stored.items() if is_stock_row(row)}
+        previous = {symbol: stored[symbol] for symbol in watched}
 
         try:
             discount_rate = current_discount_rate()
@@ -188,6 +256,9 @@ def job() -> None:
                 alert.dedupe_key,
             ):
                 buy_opps += 1
+        daily_moves = _record_daily_move_alerts(store, watched, rows)
+        if daily_moves:
+            logger.info("🔔 %s daily-move alerts", daily_moves)
         if changed or news or buy_opps:
             logger.info(
                 "🔔 %s change alerts, %s news alerts, %s buy-opportunity alerts",
@@ -207,16 +278,16 @@ def job() -> None:
 
 
 def run_worker() -> None:
-    """Run the worker loop."""
+    """Run the worker loop, waiting only as long as the last outcome requires."""
     logger.info("🏁 Worker initialized.")
 
-    job()
-
-    schedule.every(WORKER_INTERVAL_MINUTES).minutes.do(job)
+    pending = _next_sync_delay(default=0.0)
+    if pending > 0:
+        time.sleep(pending)
 
     while True:
-        schedule.run_pending()
-        time.sleep(60)
+        job()
+        time.sleep(_next_sync_delay())
 
 
 if __name__ == "__main__":

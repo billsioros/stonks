@@ -40,6 +40,15 @@ _NEW_COLUMN_TYPES = {
     "valuation_upside_capped_pct": "REAL",
 }
 
+
+def is_stock_row(row: dict[str, Any]) -> bool:
+    """Whether a stored row represents a stock, not an ETF or another fund."""
+    value = str(row.get("type") or "").strip().lower()
+    if not value:
+        return True
+    return "stock" in value or "equity" in value or "share" in value
+
+
 STOCK_FIELDS = [
     "symbol",
     "description",

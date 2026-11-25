@@ -55,7 +55,7 @@ def test_worker_runs_sanity_checks_even_when_sync_fails(monkeypatch) -> None:
         sanity, "run_sanity_checks", lambda store: ran.append(1) or checks
     )
     monkeypatch.setattr(
-        sanity, "save_report", lambda store, results: saved.append(results)
+        sanity, "save_report", lambda store, results, **kwargs: saved.append(results)
     )
 
     worker.job()
@@ -100,7 +100,7 @@ def test_sync_failure_names_the_provider(monkeypatch, source, expected) -> None:
         )
 
     monkeypatch.setattr(sanity, "run_sanity_checks", lambda store: [])
-    monkeypatch.setattr(sanity, "save_report", lambda store, results: None)
+    monkeypatch.setattr(sanity, "save_report", lambda store, results, **kwargs: None)
 
     worker.job()
 

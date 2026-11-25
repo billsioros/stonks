@@ -1,12 +1,17 @@
 """Tests for the StockAnalysis-backed background worker."""
 
+import json
+import time
 from unittest.mock import MagicMock
 
 import pytest
 
-from stonks import sanity, worker
+from stonks import alerts, sanity, worker
 from stonks.store import SQLiteStore
 from stonks.worker import fetch_watched_news, job
+
+_REAL_SANITY_LOAD_REPORT = sanity.load_report
+_REAL_SANITY_SAVE_REPORT = sanity.save_report
 
 
 @pytest.fixture(autouse=True)
@@ -14,7 +19,7 @@ def _offline_sanity(monkeypatch):
     """The job's cross-checks hit four live sites; tests stub them out."""
     monkeypatch.setattr(sanity, "load_report", lambda store: None)
     monkeypatch.setattr(sanity, "run_sanity_checks", lambda store: [])
-    monkeypatch.setattr(sanity, "save_report", lambda store, results: None)
+    monkeypatch.setattr(sanity, "save_report", lambda store, results, **kwargs: None)
 
 
 def _stub_store(monkeypatch) -> MagicMock:
@@ -141,6 +146,44 @@ def test_job_records_alert_when_watched_symbol_drops_off_its_high(
     assert [a["kind"] for a in store.get_alerts()] == ["off_high"]
 
 
+def test_job_records_daily_move_alert_from_the_first_price(monkeypatch, tmp_path):
+    store = _real_store(monkeypatch, tmp_path)
+    store.add_to_watchlist("AAA")
+    store.replace_stocks([{"symbol": "AAA", "price": 100.0}])
+    store.save_metadata(
+        "daily_move_baselines",
+        json.dumps({"day": "2026-11-25", "prices": {"AAA": 100.0}}),
+    )
+    monkeypatch.setattr(alerts, "day_bucket", lambda *a, **k: "2026-11-25")
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    _stub_market(monkeypatch, [{"symbol": "AAA", "price": 107.0}])
+
+    job()
+
+    recorded = store.get_alerts(unread_only=False)
+    assert [a["kind"] for a in recorded] == ["daily_move_up"]
+    assert recorded[0]["dedupe_key"] == "AAA:daily_move_up:2026-11-25"
+
+
+def test_job_ignores_a_legacy_etf_on_the_watchlist(monkeypatch, tmp_path) -> None:
+    store = _real_store(monkeypatch, tmp_path)
+    store.add_to_watchlist("VUAA")
+    store.replace_stocks([{"symbol": "VUAA", "price": 100.0, "type": "ETF"}])
+    store.save_metadata(
+        "daily_move_baselines",
+        json.dumps({"day": "2026-11-25", "prices": {"VUAA": 100.0}}),
+    )
+    monkeypatch.setattr(alerts, "day_bucket", lambda *a, **k: "2026-11-25")
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    _stub_market(monkeypatch, [{"symbol": "VUAA", "price": 107.0, "type": "ETF"}])
+
+    job()
+
+    assert store.get_alerts(unread_only=False) == []
+
+
 def test_job_ignores_unwatched_symbols(monkeypatch, tmp_path):
     store = _real_store(monkeypatch, tmp_path)
     store.replace_stocks([{"symbol": "AAA", "price": 161.0, "week_52_high": 200.0}])
@@ -260,12 +303,32 @@ def test_sanity_checks_run_when_the_report_is_stale(monkeypatch) -> None:
     monkeypatch.setattr(
         sanity,
         "save_report",
-        lambda store, results: saved.update(count=len(results)),
+        lambda store, results, **kwargs: saved.update(count=len(results)),
     )
 
     worker._maybe_run_sanity_checks(store)
 
     assert saved == {"count": 1}
+
+
+def test_job_leaves_a_future_lease_when_it_is_interrupted(
+    monkeypatch, tmp_path
+) -> None:
+    store = _real_store(monkeypatch, tmp_path)
+    now = 1000.0
+    monkeypatch.setattr(worker, "_now", lambda: now, raising=False)
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+
+    def interrupt(*args, **kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(worker, "fetch_rows", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        job()
+
+    assert float(store.get_metadata("next_sync_at")) == now + 15 * 60
 
 
 def test_job_persists_failure_metadata_on_exception(monkeypatch, tmp_path) -> None:
@@ -308,6 +371,169 @@ def test_job_persists_success_metadata(monkeypatch, tmp_path) -> None:
     assert store.get_metadata("last_successful_sync_at") is not None
 
 
+def test_failed_sync_schedules_a_near_term_retry(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "retry.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "fetch_rows",
+        lambda *a, **k: (_ for _ in ()).throw(ConnectionError("provider offline")),
+    )
+
+    job()
+
+    wait = float(store.get_metadata("next_sync_at")) - time.time()
+    assert 60 <= wait <= 90
+    assert store.get_metadata("sync_failure_count") == "1"
+
+
+def test_repeated_failures_keep_extending_the_wait(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "retry.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "fetch_rows",
+        lambda *a, **k: (_ for _ in ()).throw(ConnectionError("provider offline")),
+    )
+
+    job()
+    first_wait = float(store.get_metadata("next_sync_at")) - time.time()
+    job()
+    second_wait = float(store.get_metadata("next_sync_at")) - time.time()
+
+    assert second_wait > first_wait
+    assert 120 <= second_wait <= 150
+
+
+def test_a_successful_sync_returns_to_the_fifteen_minute_cadence(
+    monkeypatch, tmp_path
+) -> None:
+    store = SQLiteStore(db_path=tmp_path / "retry.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "fetch_rows",
+        lambda *a, **k: (_ for _ in ()).throw(ConnectionError("provider offline")),
+    )
+    job()
+    monkeypatch.setattr(
+        worker, "fetch_rows", lambda *a, **k: [{"symbol": "AAPL", "price": 1.0}]
+    )
+
+    job()
+
+    wait = float(store.get_metadata("next_sync_at")) - time.time()
+    assert 880 <= wait <= 900
+    assert store.get_metadata("sync_failure_count") == "0"
+
+
+def test_worker_loop_waits_for_the_recorded_next_attempt(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "loop.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    scheduled = iter([60.0, 120.0])
+    waits: list[float] = []
+
+    class StopLoop(Exception):
+        pass
+
+    def fake_job() -> None:
+        store.save_metadata("next_sync_at", str(time.time() + next(scheduled)))
+
+    def fake_sleep(seconds: float) -> None:
+        waits.append(seconds)
+        if len(waits) == 2:
+            raise StopLoop
+
+    monkeypatch.setattr(worker, "job", fake_job)
+    monkeypatch.setattr(worker.time, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        worker.run_worker()
+
+    assert len(waits) == 2
+    assert 59 <= waits[0] <= 60
+    assert 119 <= waits[1] <= 120
+
+
+def test_a_slow_failed_sync_still_pauses_before_retrying(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "slow.db")
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr(
+        worker,
+        "fetch_rows",
+        lambda *a, **k: (_ for _ in ()).throw(ConnectionError("slow provider")),
+    )
+    monkeypatch.setattr(worker.random, "uniform", lambda low, high: 0.0)
+    clock = iter([1000.0, 1000.0, 1090.0])
+    monkeypatch.setattr(worker, "_now", lambda: next(clock), raising=False)
+
+    job()
+
+    assert float(store.get_metadata("next_sync_at")) == 1150.0
+
+
+def test_worker_honors_a_pending_backoff_before_the_first_job(
+    monkeypatch, tmp_path
+) -> None:
+    store = SQLiteStore(db_path=tmp_path / "restart.db")
+    now = 1000.0
+    store.save_metadata("next_sync_at", str(now + 120))
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    monkeypatch.setattr(worker, "_now", lambda: now, raising=False)
+    calls: list[str] = []
+    monkeypatch.setattr(worker, "job", lambda: calls.append("job"))
+
+    class StopLoop(Exception):
+        pass
+
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        raise StopLoop
+
+    monkeypatch.setattr(worker.time, "sleep", fake_sleep)
+
+    with pytest.raises(StopLoop):
+        worker.run_worker()
+
+    assert calls == []
+    assert sleeps == [120.0]
+
+
+def test_retry_ladder_caps_at_the_normal_interval(monkeypatch) -> None:
+    monkeypatch.setattr(worker.random, "uniform", lambda low, high: 0.0)
+
+    assert worker.retry_delay_seconds(5) == 15 * 60
+    assert worker.retry_delay_seconds(6) == 15 * 60
+
+
+def test_retry_jitter_stays_under_ten_seconds(monkeypatch) -> None:
+    monkeypatch.setattr(worker.random, "uniform", lambda low, high: high)
+
+    assert worker.retry_delay_seconds(1) <= 70
+
+
+def test_stale_future_schedule_is_clamped_to_the_interval(
+    monkeypatch, tmp_path
+) -> None:
+    store = SQLiteStore(db_path=tmp_path / "clamp.db")
+    now = 1000.0
+    store.save_metadata("next_sync_at", str(now + 3600))
+    monkeypatch.setattr(worker, "SQLiteStore", lambda: store)
+    monkeypatch.setattr(worker, "_now", lambda: now, raising=False)
+
+    assert worker._next_sync_delay(default=0.0) == 15 * 60
+
+
 def test_screener_report_prompt_explains_the_13f_flag() -> None:
     from stonks import report
 
@@ -320,17 +546,26 @@ def test_screener_report_prompt_explains_the_13f_flag() -> None:
     assert "do not penalize" in lowered
 
 
-def test_sanity_checks_skip_a_fresh_report(monkeypatch) -> None:
-    store = MagicMock(spec=SQLiteStore)
-    monkeypatch.setattr(sanity, "load_report", lambda store: {"checked_at": 1.0})
-    monkeypatch.setattr(sanity, "report_is_fresh", lambda report: True)
-
-    def fail(store):
-        raise AssertionError("checks should not run while the report is fresh")
-
-    monkeypatch.setattr(sanity, "run_sanity_checks", fail)
+def test_sanity_checks_record_the_next_sync_attempt(monkeypatch, tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    now = 1000.0
+    store.save_metadata("next_sync_at", str(now + 90))
+    monkeypatch.setattr(sanity, "load_report", _REAL_SANITY_LOAD_REPORT)
+    monkeypatch.setattr(sanity, "save_report", _REAL_SANITY_SAVE_REPORT)
+    monkeypatch.setattr(sanity.time, "time", lambda: now)
+    monkeypatch.setattr(
+        sanity,
+        "run_sanity_checks",
+        lambda store: [sanity.CheckResult("A", "b", True, "c")],
+    )
 
     worker._maybe_run_sanity_checks(store)
+
+    report = sanity.load_report(store)
+    assert report is not None
+    assert report["checked_at"] == now
+    assert report["next_check_at"] == now + 90
+    assert "Next check in 1m." in sanity.compatibility(report, now=now).detail
 
 
 def test_job_persists_buy_opportunity_alerts(monkeypatch, tmp_path) -> None:
