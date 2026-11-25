@@ -1831,8 +1831,9 @@ def _notification_groups(
     alerts: list[dict[str, Any]],
     opportunities: list[dict[str, Any]],
     watchlist_symbols: set[str],
+    held_symbols: set[str],
 ) -> list[tuple[str, dict[str, list[dict[str, Any]]]]]:
-    """Collect every notification under its symbol; watchlisted tickers come first."""
+    """Collect every notification under its symbol; tracked tickers come first."""
     groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for alert in alerts:
         groups.setdefault(alert["symbol"], {"alerts": [], "opportunities": []})[
@@ -1845,7 +1846,7 @@ def _notification_groups(
     return sorted(
         groups.items(),
         key=lambda item: (
-            item[0] not in watchlist_symbols,
+            item[0] not in (watchlist_symbols | held_symbols),
             not item[1]["opportunities"],
             -max((alert["created_at"] for alert in item[1]["alerts"]), default=0),
         ),
@@ -1866,17 +1867,15 @@ def _group_severity_icon(group: dict[str, list[dict[str, Any]]]) -> str:
 
 
 def render_notifications(store: SQLiteStore) -> None:
-    """Show current screener and watchlist notifications in one collapsible surface."""
+    """Show screener, watchlist and portfolio notifications together."""
+    held_symbols = set(store.get_position_symbols())
     watchlist_symbols = set(store.get_watchlist_symbols())
-    visible_symbols = (
-        set(
-            store.get_stock_symbols(
-                filters=st.session_state.get("active_filters") or {},
-                search_query=st.session_state.get("search_query") or "",
-            )
+    visible_symbols = set(
+        store.get_stock_symbols(
+            filters=st.session_state.get("active_filters") or {},
+            search_query=st.session_state.get("search_query") or "",
         )
-        | watchlist_symbols
-    )
+    ) | set(store.get_monitored_symbols())
     alerts = [
         alert for alert in store.get_alerts() if alert["symbol"] in visible_symbols
     ]
@@ -1922,6 +1921,9 @@ def render_notifications(store: SQLiteStore) -> None:
             )
             if watch_count:
                 headline += f" · {watch_count} on your watchlist"
+            held_count = sum(row["symbol"] in held_symbols for row in snapshot_buys)
+            if held_count:
+                headline += f" · {held_count} in your portfolio"
             st.success(headline, icon="📉")
 
         if alerts:
@@ -1933,7 +1935,7 @@ def render_notifications(store: SQLiteStore) -> None:
 
         severity_icons = {"good": "🟢", "warn": "🟠", "info": "🔵"}
         for symbol, group in _notification_groups(
-            alerts, snapshot_buys, watchlist_symbols
+            alerts, snapshot_buys, watchlist_symbols, held_symbols
         ):
             symbol_col, text_col = st.columns([1, 7])
             with symbol_col:
@@ -1952,6 +1954,8 @@ def render_notifications(store: SQLiteStore) -> None:
                         header += f" · {description}"
                     if symbol in watchlist_symbols:
                         header += " · ⭐ on watchlist"
+                if symbol in held_symbols:
+                    header += " · 💼 in portfolio"
                 st.markdown(header)
                 for row in group["opportunities"]:
                     st.caption(" · ".join(_buy_opportunity_lines(row)))

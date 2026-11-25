@@ -310,3 +310,33 @@ def test_notifications_group_header_tolerates_unknown_severity(
     assert not at.exception
     notification = next(item for item in at.expander if "Notifications" in item.label)
     assert "NVDA" in str(notification.markdown[0].value)
+
+
+def test_notifications_show_holdings_outside_the_active_screen(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks(
+        [
+            {"symbol": "SCREEN", "description": "In the active screen"},
+            {"symbol": "VUAA", "description": "Held ETF", "type": "ETF"},
+        ]
+    )
+    seeded.add_position("VUAA", 1, 100.0)
+    seeded.add_alert("VUAA", "news", "info", "ETF headline", None, "VUAA:news:test")
+
+    at = _run_app(
+        db_path,
+        monkeypatch,
+        session_state={"active_filters": {"symbol": {"values": ["SCREEN"]}}},
+    )
+
+    assert not at.exception
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    text = " ".join(
+        str(getattr(value, "value", value))
+        for value in [*notification.markdown, *notification.caption]
+    )
+    assert "VUAA" in text
+    assert "in portfolio" in text
