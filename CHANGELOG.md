@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.9.0 (2026-11-25)
+
+### Features
+
+- Group watchlist notifications by symbol
+  ([`c7d0d4d`](https://github.com/billsioros/stonks/commit/c7d0d4d0d7a752f83a73cca7a25554fd6b6676eb))
+
+
 ## v2.8.0 (2026-11-25)
 
 ### Features
