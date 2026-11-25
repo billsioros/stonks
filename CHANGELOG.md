@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v2.8.0 (2026-11-25)
+
+### Features
+
+- Add failure-aware sync cadence and UI polish
+  ([`ed1fc78`](https://github.com/billsioros/stonks/commit/ed1fc78279200eb84def29b3f80c1db2d045c03d))
+
+
 ## v2.7.0 (2026-11-24)
 
 ### Features
