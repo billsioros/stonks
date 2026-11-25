@@ -187,3 +187,9 @@ def test_notifications_hide_non_screener_symbols_unless_watchlisted(
     assert "GHOST ▸" not in labels
     assert "GHOST" not in text
     assert "Notifications (2)" in notification.label
+
+    # Nothing outside the visible screener/watchlist may surface elsewhere.
+    all_labels = [button.label for button in at.button]
+    assert "OUT ▸" not in all_labels
+    assert "GHOST ▸" not in all_labels
+    assert not any("Watchlist (" in tab.label for tab in at.tabs)

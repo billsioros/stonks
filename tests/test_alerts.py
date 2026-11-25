@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Any
 
+from stonks import alerts
 from stonks.alerts import evaluate_alerts, week_bucket
 
 
@@ -26,6 +27,51 @@ def _row(**kw: Any) -> dict[str, Any]:
 
 def test_week_bucket() -> None:
     assert week_bucket(datetime(2026, 11, 21)) == "2026-W47"
+
+
+def test_day_bucket_uses_the_local_calendar_date() -> None:
+    assert alerts.day_bucket(datetime(2026, 11, 25, 23, 30)) == "2026-11-25"
+
+
+def test_daily_move_alerts_fire_at_five_percent_from_the_first_price() -> None:
+    day = "2026-11-25"
+    state = {"day": day, "prices": {"AAA": 100.0, "BBB": 100.0, "CCC": 100.0}}
+
+    fired, updated = alerts.daily_move_alerts(
+        [
+            _row(symbol="AAA", price=105.0),
+            _row(symbol="BBB", price=95.0),
+            _row(symbol="CCC", price=104.0),
+        ],
+        state,
+        day=day,
+    )
+
+    assert [(a.symbol, a.kind, a.dedupe_key) for a in fired] == [
+        ("AAA", "daily_move_up", "AAA:daily_move_up:2026-11-25"),
+        ("BBB", "daily_move_down", "BBB:daily_move_down:2026-11-25"),
+    ]
+    assert updated["prices"]["AAA"] == 100.0
+
+
+def test_daily_move_alerts_seed_the_first_price_without_alerting() -> None:
+    fired, updated = alerts.daily_move_alerts(
+        [_row(price=110.0)], None, day="2026-11-25"
+    )
+
+    assert fired == []
+    assert updated == {"day": "2026-11-25", "prices": {"AAA": 110.0}}
+
+
+def test_daily_move_alerts_reset_baselines_on_a_new_day() -> None:
+    fired, updated = alerts.daily_move_alerts(
+        [_row(price=105.0)],
+        {"day": "2026-11-24", "prices": {"AAA": 100.0}},
+        day="2026-11-25",
+    )
+
+    assert fired == []
+    assert updated["prices"]["AAA"] == 105.0
 
 
 def test_off_high_fires_only_on_crossing() -> None:
@@ -60,11 +106,9 @@ def test_fair_value_and_target_upside() -> None:
     )
 
 
-def test_short_rise_and_big_move_are_warnings() -> None:
+def test_short_rise_is_a_warning() -> None:
     short = evaluate_alerts(_row(short_pct=1.0), _row(short_pct=4.0), bucket="b")
     assert [(a.kind, a.severity) for a in short] == [("short_rise", "warn")]
-    moved = evaluate_alerts(_row(price=100.0), _row(price=108.0), bucket="b")
-    assert [(a.kind, a.severity) for a in moved] == [("big_move", "warn")]
 
 
 def test_hedge_fund_flag_turns_on() -> None:

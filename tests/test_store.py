@@ -4,12 +4,21 @@ from pathlib import Path
 
 import pytest
 
+import stonks.store as store_module
 from stonks.store import SQLiteStore
 
 
 @pytest.fixture
 def store(tmp_path: Path) -> SQLiteStore:
     return SQLiteStore(db_path=tmp_path / "test.db")
+
+
+def test_is_stock_row_accepts_missing_type_and_rejects_funds() -> None:
+    assert store_module.is_stock_row({"type": None}) is True
+    assert store_module.is_stock_row({"type": "  "}) is True
+    assert store_module.is_stock_row({"type": "Common Stock"}) is True
+    assert store_module.is_stock_row({"type": "ETF"}) is False
+    assert store_module.is_stock_row({"type": "Fund"}) is False
 
 
 class TestSQLiteStore:

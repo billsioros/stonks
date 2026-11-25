@@ -31,7 +31,11 @@ def _app(settings: dict | None = None) -> AppTest:
 
 
 def _add_expander(at: AppTest):
-    return next(item for item in at.expander if "Add symbol" in item.label)
+    return next(
+        item
+        for item in at.expander
+        if any(text_input.placeholder == "VUAA" for text_input in item.text_input)
+    )
 
 
 def test_backtest_lists_symbols_with_edit_and_delete_actions() -> None:

@@ -269,15 +269,32 @@ def test_report_round_trip_and_freshness(tmp_path) -> None:
     assert report is not None
     assert report["results"][0]["platform"] == "A"
     assert sanity.report_is_fresh(report, now=200.0) is True
-    assert (
-        sanity.report_is_fresh(report, now=100.0 + sanity.SANITY_TTL_SECONDS + 1)
-        is False
-    )
+    assert sanity.report_is_fresh(report, now=1000.0) is False
 
     store.save_metadata(sanity.REPORT_KEY, "not json")
     assert sanity.load_report(store) is None
     store.save_metadata(sanity.REPORT_KEY, json.dumps({"results": "nope"}))
     assert sanity.load_report(store) is None
+
+
+def test_save_report_records_the_next_check_time(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+
+    sanity.save_report(store, [], checked_at=1000.0)
+
+    report = sanity.load_report(store)
+    assert report is not None
+    assert report["next_check_at"] == 1900.0
+
+
+def test_save_report_uses_the_supplied_next_check_time(tmp_path) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+
+    sanity.save_report(store, [], checked_at=1000.0, next_check_at=1090.0)
+
+    report = sanity.load_report(store)
+    assert report is not None
+    assert report["next_check_at"] == 1090.0
 
 
 def _report(results: list[dict[str, Any]], checked_at: float) -> dict[str, Any]:
@@ -291,6 +308,25 @@ def test_compatibility_uses_fresh_sanity_report() -> None:
     badge = sanity.compatibility(report)
     assert badge.level == "ok"
     assert badge.label == "Platforms in sync"
+
+
+def test_compatibility_hover_shows_when_the_next_check_is_due() -> None:
+    report = _report([{"platform": "A", "ok": True, "detail": "ok"}], 1000.0)
+    report["next_check_at"] = 1900.0
+
+    badge = sanity.compatibility(report, now=1300.0)
+
+    assert "Last checked 5m ago." in badge.detail
+    assert "Next check in 10m." in badge.detail
+
+
+def test_compatibility_describes_a_sub_minute_wait() -> None:
+    report = _report([{"platform": "A", "ok": True, "detail": "ok"}], 1000.0)
+    report["next_check_at"] = 1045.0
+
+    badge = sanity.compatibility(report, now=1000.0)
+
+    assert "Next check in <1m." in badge.detail
 
 
 def test_compatibility_names_a_diverged_platform() -> None:
@@ -314,7 +350,7 @@ def test_compatibility_ignores_unverifiable_checks() -> None:
 def test_compatibility_is_unknown_for_a_stale_or_missing_report() -> None:
     stale = _report(
         [{"platform": "StockAnalysis", "ok": True, "detail": "ok"}],
-        time.time() - sanity.SANITY_TTL_SECONDS - 1,
+        time.time() - 15 * 60 - 1,
     )
     assert sanity.compatibility(stale).label == "Checks pending"
     assert sanity.compatibility(None).level == "unknown"

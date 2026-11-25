@@ -59,13 +59,13 @@ def test_live_sync_state_is_green_only_for_a_recent_success() -> None:
     badge = app.live_sync_state(_sync("success", FRESH_SECONDS))
     assert badge.level == "ok"
     assert badge.label == "Live Sync"
-    assert "1h 59m" in badge.detail
+    assert f"{int(FRESH_SECONDS // 60)}m" in badge.detail
 
 
 def test_live_sync_state_is_red_when_success_is_stale() -> None:
     badge = app.live_sync_state(_sync("success", STALE_SECONDS))
     assert badge.level == "fail"
-    assert "121m" in badge.detail or "2h" in badge.detail
+    assert f"{int(STALE_SECONDS // 60)}m" in badge.detail
 
 
 def test_failed_last_attempt_overrides_a_recent_success() -> None:
@@ -80,6 +80,47 @@ def test_no_sync_is_unknown() -> None:
     assert badge.label == "Live Sync"
 
 
+def test_failed_badge_tells_you_when_the_next_attempt_is() -> None:
+    now = time.time()
+    info = _sync("failed", FRESH_SECONDS)
+    info["next_sync_at"] = now + 90
+
+    badge = app.live_sync_state(info, now=now)
+
+    assert badge.level == "fail"
+    assert "Next attempt in 1m" in badge.detail
+
+
+def test_failed_badge_describes_a_sub_minute_wait() -> None:
+    now = time.time()
+    info = _sync("failed", FRESH_SECONDS)
+    info["next_sync_at"] = now + 45
+
+    badge = app.live_sync_state(info, now=now)
+
+    assert "Next attempt in <1m" in badge.detail
+
+
+def test_badge_clamps_a_stale_future_attempt_to_the_interval() -> None:
+    now = time.time()
+    info = _sync("failed", FRESH_SECONDS)
+    info["next_sync_at"] = now + 3600
+
+    badge = app.live_sync_state(info, now=now)
+
+    assert "Next attempt in 15m" in badge.detail
+
+
+def test_healthy_badge_tells_you_when_the_next_sync_is() -> None:
+    now = time.time()
+    info = _sync("success", 10)
+    info["next_sync_at"] = now + 120
+
+    badge = app.live_sync_state(info, now=now)
+
+    assert "Next attempt in 2m" in badge.detail
+
+
 def test_masthead_shows_both_badges_and_no_hardcoded_sync_claim(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -90,6 +131,18 @@ def test_masthead_shows_both_badges_and_no_hardcoded_sync_claim(
     assert "Live Sync" in html
     assert "Checks pending" in html
     assert "Live Sync Active" not in html
+
+
+def test_masthead_shows_the_recorded_next_attempt(tmp_path: Path, monkeypatch) -> None:
+    store = SQLiteStore(db_path=tmp_path / "stonks.db")
+    store.save_metadata("last_sync_status", "failed")
+    store.save_metadata("next_sync_at", str(time.time() + 90))
+
+    at = _app(tmp_path, monkeypatch)
+
+    assert not at.exception
+    html = " ".join(str(md.value) for md in at.markdown)
+    assert "Next attempt in 1m" in html
 
 
 def test_masthead_badges_reflect_a_seeded_report(tmp_path: Path, monkeypatch) -> None:
