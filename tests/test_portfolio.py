@@ -101,3 +101,66 @@ def test_backtest_allocation_normalises_to_percent() -> None:
     }
     summary = portfolio.build_portfolio_summary(positions, quotes, {}, {"USD": 1.0})
     assert portfolio.backtest_allocation(summary) == (["AAA", "BBB"], [25.0, 75.0])
+
+
+def test_summary_excludes_missing_price_from_usd_totals() -> None:
+    positions = [
+        {"symbol": "AAA", "quantity": 2, "price": 10.0, "currency": "USD"},
+        {"symbol": "BBB", "quantity": 1, "price": 100.0, "currency": "USD"},
+    ]
+    quotes = {
+        "AAA": {"price": None, "currency": "USD"},
+        "BBB": {"price": 120.0, "currency": "USD"},
+    }
+    summary = portfolio.build_portfolio_summary(positions, quotes, {}, {"USD": 1.0})
+    assert summary.excluded_symbols == ("AAA",)
+    assert summary.total_cost_usd == pytest.approx(100.0)
+    assert summary.total_value_usd == pytest.approx(120.0)
+    assert summary.unrealized_pnl_usd == pytest.approx(20.0)
+    assert summary.unrealized_pct == pytest.approx(20.0)
+    assert portfolio.backtest_allocation(summary) == (["BBB"], [100.0])
+
+
+def test_summary_clears_usd_fields_when_lot_rate_missing() -> None:
+    positions = [
+        {"symbol": "AAA", "quantity": 2, "price": 10.0, "currency": "EUR"},
+        {"symbol": "BBB", "quantity": 1, "price": 100.0, "currency": "USD"},
+    ]
+    quotes = {
+        "AAA": {"price": 12.0, "currency": "USD"},
+        "BBB": {"price": 110.0, "currency": "USD"},
+    }
+    summary = portfolio.build_portfolio_summary(
+        positions, quotes, {"AAA": 10.0}, {"USD": 1.0}
+    )
+    holding = summary.holdings[0]
+    assert holding.last == 12.0
+    for field in (
+        "cost_native",
+        "cost_usd",
+        "avg_price",
+        "market_native",
+        "market_usd",
+        "daily_pnl_native",
+        "daily_pnl_usd",
+        "unrealized_native",
+        "unrealized_usd",
+    ):
+        assert getattr(holding, field) is None, field
+    assert summary.excluded_symbols == ("AAA",)
+    assert summary.total_cost_usd == pytest.approx(100.0)
+    assert summary.total_value_usd == pytest.approx(110.0)
+    assert portfolio.backtest_allocation(summary) == (["BBB"], [100.0])
+
+
+def test_summary_keeps_valuation_without_prior_close() -> None:
+    positions = [{"symbol": "AAA", "quantity": 2, "price": 100.0, "currency": "USD"}]
+    quotes = {"AAA": {"price": 110.0, "currency": "USD"}}
+    summary = portfolio.build_portfolio_summary(positions, quotes, {}, {"USD": 1.0})
+    holding = summary.holdings[0]
+    assert holding.change_pct is None
+    assert holding.daily_pnl_native is None
+    assert holding.daily_pnl_usd is None
+    assert summary.excluded_symbols == ()
+    assert summary.total_value_usd == pytest.approx(220.0)
+    assert portfolio.backtest_allocation(summary) == (["AAA"], [100.0])

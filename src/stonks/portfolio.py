@@ -160,33 +160,35 @@ def build_portfolio_summary(
         quantity = sum(float(lot["quantity"]) for lot in lots)
         display_rate = _rate(rates, currency)
         cost_native, cost_usd = _lot_costs(lots, currency, rates)
+        rate_ok = cost_native is not None and cost_usd is not None
         last = _positive_number(quote.get("price"))
         prior = _positive_number(prior_closes.get(symbol))
 
-        market_native = quantity * last if last is not None else None
+        market_native = quantity * last if rate_ok and last is not None else None
         market_usd = (
             market_native * display_rate
-            if market_native is not None and display_rate is not None
+            if rate_ok and market_native is not None and display_rate is not None
             else None
         )
         change_pct = None
         daily_native = None
         if last is not None and prior is not None:
             change_pct = (last / prior - 1) * 100
-            daily_native = quantity * (last - prior)
+            if rate_ok:
+                daily_native = quantity * (last - prior)
         daily_usd = (
             daily_native * display_rate
-            if daily_native is not None and display_rate is not None
+            if rate_ok and daily_native is not None and display_rate is not None
             else None
         )
         unrealized_native = (
             market_native - cost_native
-            if market_native is not None and cost_native is not None
+            if rate_ok and market_native is not None and cost_native is not None
             else None
         )
         unrealized_usd = (
             market_usd - cost_usd
-            if market_usd is not None and cost_usd is not None
+            if rate_ok and market_usd is not None and cost_usd is not None
             else None
         )
 
@@ -213,14 +215,16 @@ def build_portfolio_summary(
                 unrealized_usd=unrealized_usd,
             )
         )
-        if cost_native is None or cost_usd is None or last is None:
+        if not rate_ok or last is None:
             excluded.append(symbol)
 
-    total_cost = sum(h.cost_usd for h in holdings if h.cost_usd is not None)
-    total_value = sum(h.market_usd for h in holdings if h.market_usd is not None)
-    total_daily = sum(h.daily_pnl_usd for h in holdings if h.daily_pnl_usd is not None)
+    excluded_set = set(excluded)
+    included = [h for h in holdings if h.symbol not in excluded_set]
+    total_cost = sum(h.cost_usd for h in included if h.cost_usd is not None)
+    total_value = sum(h.market_usd for h in included if h.market_usd is not None)
+    total_daily = sum(h.daily_pnl_usd for h in included if h.daily_pnl_usd is not None)
     total_unrealized = sum(
-        h.unrealized_usd for h in holdings if h.unrealized_usd is not None
+        h.unrealized_usd for h in included if h.unrealized_usd is not None
     )
     return PortfolioSummary(
         holdings=tuple(holdings),
@@ -238,7 +242,10 @@ def build_portfolio_summary(
 def backtest_allocation(summary: PortfolioSummary) -> tuple[list[str], list[float]]:
     """Turn priced holdings into weights that sum to 100 percent."""
     values: list[tuple[str, float]] = []
+    excluded = set(summary.excluded_symbols)
     for holding in summary.holdings:
+        if holding.symbol in excluded:
+            continue
         if holding.market_usd is not None and holding.market_usd > 0:
             values.append((holding.symbol, holding.market_usd))
     if not values:
