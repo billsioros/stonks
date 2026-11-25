@@ -2,6 +2,11 @@
 from stonks.cache import LocalCache
 
 from stonks.alerts import Alert, evaluate_alerts, week_bucket
+from stonks.correlation import (
+    is_high_correlation,
+    portfolio_correlation,
+    portfolio_correlation_factor,
+)
 from stonks.backtest_view import parse_symbols, parse_weights
 from stonks.detail import load_page
 from stonks.detail_parse import (
@@ -127,6 +132,9 @@ PortfolioSummary.excluded_symbols  # noqa: B018
 validate_lot  # noqa: B018
 backtest_allocation  # noqa: B018
 portfolio_snapshot  # noqa: B018
+is_high_correlation  # noqa: B018
+portfolio_correlation  # noqa: B018
+portfolio_correlation_factor  # noqa: B018
 
 buy_opportunity  # noqa: B018, F821
 get_buy_opportunities  # noqa: B018, F821
