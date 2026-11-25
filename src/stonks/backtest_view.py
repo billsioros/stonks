@@ -18,11 +18,13 @@ import streamlit as st
 
 from stonks.backtest import CONTRIBUTION_MONTHS, REBALANCE_LABELS, run_backtest
 from stonks.charts import growth_figure
+from stonks.correlation import portfolio_correlation_factor
+from stonks.portfolio import PortfolioSummary, backtest_allocation, portfolio_snapshot
 from stonks.store import SQLiteStore
 
 PORTFOLIO_VISUALIZER_URL = "https://www.portfoliovisualizer.com/backtest-portfolio"
 DEFAULT_SYMBOLS: tuple[str, ...] = ("VUAA", "GOOGL", "NVDA", "CROX")
-DEFAULT_BENCHMARK = "VUAA"
+DEFAULT_BENCHMARKS: tuple[str, ...] = ("VUAA", "QQQ")
 _RESULT_KEY = "backtest_result"
 _SETTINGS_KEY = "backtest_settings"
 _PENDING_LOAD_KEY = "backtest_pending_load"
@@ -155,7 +157,7 @@ def default_settings() -> dict[str, Any]:
     return {
         "symbols": list(DEFAULT_SYMBOLS),
         "weights": None,
-        "benchmark": DEFAULT_BENCHMARK,
+        "benchmark": ", ".join(DEFAULT_BENCHMARKS),
         "initial": 10_000.0,
         "start": dt.date(2017, 1, 1),
         "end": dt.date.today(),
@@ -223,6 +225,54 @@ def _as_date(value: Any, fallback: dt.date) -> dt.date:
         return fallback
 
 
+def holdings_settings_from_summary(summary: PortfolioSummary) -> dict[str, Any] | None:
+    """Seed editable backtest settings from priced holdings' market values."""
+    symbols, weights = backtest_allocation(summary)
+    if not symbols:
+        return None
+    return {**default_settings(), "symbols": symbols, "weights": weights}
+
+
+def holdings_settings(store: SQLiteStore) -> dict[str, Any] | None:
+    """Seed settings from stored lots, without fetching daily history."""
+    summary, _ = portfolio_snapshot(store, include_history=False)
+    return holdings_settings_from_summary(summary)
+
+
+def run_configured_backtest(
+    store: SQLiteStore, settings: dict[str, Any]
+) -> dict[str, Any]:
+    """Run the form's settings and attach the allocation's correlation factor."""
+    contributions = _contribution_amounts(settings)
+    initial = float(settings["initial"])
+    if initial <= 0 and not contributions:
+        raise ValueError("Add an initial amount or a recurring contribution.")
+    current = {
+        **settings,
+        "contribution": float(sum(contributions)) if contributions else 0.0,
+    }
+    result = run_backtest(
+        store,
+        current["symbols"],
+        current["weights"],
+        rebalance=current["rebalance"],
+        start=_as_date(current["start"], dt.date(2017, 1, 1)).isoformat(),
+        end=_as_date(current["end"], dt.date.today()).isoformat(),
+        initial=initial,
+        benchmark=current.get("benchmark") or None,
+        contributions=contributions,
+        frequency=current.get("contribution_frequency", "monthly"),
+    )
+    result["allocation_mode"] = current.get("allocation_mode", "percent")
+    if "error" not in result:
+        result["correlation_factor"] = portfolio_correlation_factor(
+            store,
+            result["symbols"],
+            [result["weights"][symbol] for symbol in result["symbols"]],
+        )
+    return result
+
+
 def _describe_settings(settings: dict[str, Any]) -> str:
     """One-line summary for a saved portfolio card."""
     weights = settings.get("weights")
@@ -252,8 +302,8 @@ def _describe_settings(settings: dict[str, Any]) -> str:
 
 
 def _html(markup: str) -> None:
-    """Render card markup as HTML (markdown would treat it as code)."""
-    st.html(markup.strip())
+    """Render card markup as raw HTML, as the other views do."""
+    st.markdown(markup.strip(), unsafe_allow_html=True)
 
 
 def _pill(label: str, value: str, direction: str = "") -> str:
@@ -279,8 +329,14 @@ def _render_result(result: dict[str, Any]) -> None:
     frequency = result.get("frequency", "none")
     active = frequency != "none" and result.get("contribution", 0.0) > 0
     contributions = f" · {_cadence_label(frequency)} contributions" if active else ""
-    benchmark = result.get("benchmark")
-    comparison = f" · vs {benchmark['symbol']}" if benchmark else ""
+    benchmarks = result.get("benchmarks") or (
+        [result["benchmark"]] if result.get("benchmark") else []
+    )
+    comparison = (
+        " · vs " + ", ".join(item["symbol"] for item in benchmarks)
+        if benchmarks
+        else ""
+    )
     st.caption(
         f"{result['start']} → {result['end']} · {allocation} · "
         f"{REBALANCE_LABELS[result['rebalance']]}{contributions} · "
@@ -290,6 +346,7 @@ def _render_result(result: dict[str, Any]) -> None:
         st.warning(result["benchmark_error"])
 
     yearly = result["yearly"]
+    correlation = result.get("correlation_factor")
     prefix = "Time-weighted " if active else ""
     st.markdown('<div class="bt-section">Key metrics</div>', unsafe_allow_html=True)
     pills = (
@@ -313,6 +370,11 @@ def _render_result(result: dict[str, Any]) -> None:
             f"{result['stdev_pct']:.1f}%" if result["stdev_pct"] is not None else "—",
         )
         + _pill(
+            "Portfolio correlation",
+            f"{correlation:+.2f}" if correlation is not None else "—",
+            _direction(correlation),
+        )
+        + _pill(
             "Max drawdown",
             f"{result['max_drawdown_pct']:.1f}%",
             _direction(result["max_drawdown_pct"]),
@@ -329,7 +391,7 @@ def _render_result(result: dict[str, Any]) -> None:
             f"{money_weighted:+.2f}%" if money_weighted is not None else "—",
             _direction(money_weighted),
         )
-    if benchmark:
+    for benchmark in benchmarks:
         spread = result["cagr_pct"] - benchmark["cagr_pct"]
         pills += _pill(
             f"{benchmark['symbol']} CAGR",
@@ -346,19 +408,18 @@ def _render_result(result: dict[str, Any]) -> None:
     st.plotly_chart(growth_figure(result), width="stretch")
 
     if yearly:
-        bench_yearly = (
-            {row["year"]: row["return_pct"] for row in benchmark["yearly"]}
-            if benchmark
-            else {}
-        )
+        bench_yearly = [
+            {row["year"]: row["return_pct"] for row in item["yearly"]}
+            for item in benchmarks
+        ]
         rows: list[dict[str, Any]] = []
         for row in yearly:
             entry: dict[str, Any] = {
                 "Year": row["year"],
                 "Portfolio %": round(row["return_pct"], 2),
             }
-            if benchmark:
-                bench_value = bench_yearly.get(row["year"])
+            for benchmark, values in zip(benchmarks, bench_yearly):
+                bench_value = values.get(row["year"])
                 entry[f"{benchmark['symbol']} %"] = (
                     round(bench_value, 2) if bench_value is not None else None
                 )
@@ -564,6 +625,8 @@ def render_backtest_tab(store: SQLiteStore) -> None:
             "start": _as_date(pending.get("start"), dt.date(2017, 1, 1)),
             "end": _as_date(pending.get("end"), dt.date.today()),
         }
+    if _SETTINGS_KEY not in st.session_state:
+        st.session_state[_SETTINGS_KEY] = holdings_settings(store) or default_settings()
     settings = st.session_state.get(_SETTINGS_KEY) or default_settings()
     if settings.get("allocation_mode") not in _ALLOCATION_MODES:
         settings["allocation_mode"] = "percent"
@@ -608,9 +671,10 @@ def render_backtest_tab(store: SQLiteStore) -> None:
         )
         benchmark_col, initial_col = st.columns(2)
         benchmark = benchmark_col.text_input(
-            "Benchmark",
+            "Benchmarks",
             value=str(settings.get("benchmark") or ""),
-            help="Compared on the same window; blank to skip",
+            help="Comma-separated tickers compared on the same window; blank to skip",
+            key="bt_benchmark",
         )
         initial = initial_col.number_input(
             "Initial amount",
@@ -659,19 +723,7 @@ def render_backtest_tab(store: SQLiteStore) -> None:
             st.error(str(exc))
         else:
             with st.spinner("Backtesting…"):
-                result = run_backtest(
-                    store,
-                    current["symbols"],
-                    current["weights"],
-                    rebalance=current["rebalance"],
-                    start=start.isoformat(),
-                    end=end.isoformat(),
-                    initial=current["initial"],
-                    benchmark=current["benchmark"] or None,
-                    contributions=contributions,
-                    frequency=frequency,
-                )
-                result["allocation_mode"] = current_mode
+                result = run_configured_backtest(store, current)
                 st.session_state[_RESULT_KEY] = result
             st.session_state[_SETTINGS_KEY] = current
 

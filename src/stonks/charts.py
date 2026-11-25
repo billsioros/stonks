@@ -83,8 +83,10 @@ def growth_figure(result: dict[str, Any]) -> go.Figure:
             area=True,
         )
     )
-    benchmark = result.get("benchmark")
-    if benchmark:
+    benchmarks = result.get("benchmarks") or (
+        [result["benchmark"]] if result.get("benchmark") else []
+    )
+    for benchmark in benchmarks:
         by_month = {
             str(point["date"]): float(point["value"]) for point in benchmark["curve"]
         }
@@ -97,4 +99,4 @@ def growth_figure(result: dict[str, Any]) -> go.Figure:
                 dash="dash",
             )
         )
-    return _style(fig, showlegend=benchmark is not None)
+    return _style(fig, showlegend=bool(benchmarks))

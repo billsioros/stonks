@@ -230,7 +230,7 @@ def test_parse_portfolio_rows() -> None:
 def test_default_portfolio_is_the_editable_four_symbol_preset() -> None:
     settings = default_settings()
     assert settings["symbols"] == ["VUAA", "GOOGL", "NVDA", "CROX"]
-    assert settings["benchmark"] == "VUAA"
+    assert settings["benchmark"] == "VUAA, QQQ"
     assert settings["weights"] is None
 
 
@@ -436,3 +436,25 @@ def test_new_settings_round_trip_and_old_settings_default() -> None:
         "rebalance": "none",
     }
     assert _portfolio_rows(legacy)[0]["Allocation"] == 60.0
+
+
+def test_run_backtest_accepts_comma_separated_benchmarks(tmp_path, monkeypatch) -> None:
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+    months = _months(2020, 13)
+    prices = {
+        "AAA": {month: 100.0 + index for index, month in enumerate(months)},
+        "VOO": {month: 100.0 + index for index, month in enumerate(months)},
+        "QQQ": {month: 200.0 + 2 * index for index, month in enumerate(months)},
+    }
+    monkeypatch.setattr(
+        "stonks.backtest.monthly_prices",
+        lambda _store, symbol, **kwargs: prices[symbol],
+    )
+
+    result = run_backtest(
+        store, ["AAA"], benchmark="VUAA, QQQ", start=months[0], end=months[-1]
+    )
+
+    assert "benchmark_error" not in result
+    assert [item["symbol"] for item in result["benchmarks"]] == ["VOO", "QQQ"]
+    assert result["benchmark"]["symbol"] == "VOO"
