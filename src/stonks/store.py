@@ -199,7 +199,8 @@ class SQLiteStore:
                     symbol TEXT NOT NULL,
                     quantity REAL NOT NULL CHECK (quantity > 0),
                     price REAL NOT NULL CHECK (price > 0),
-                    currency TEXT NOT NULL DEFAULT 'USD',
+                    currency TEXT NOT NULL DEFAULT 'USD'
+                        CHECK (currency IN ('USD', 'EUR')),
                     added_at REAL NOT NULL,
                     notes TEXT DEFAULT ''
                 )
@@ -536,6 +537,8 @@ class SQLiteStore:
         if not math.isfinite(price_value) or price_value <= 0:
             raise ValueError("Price must be a positive finite number")
         currency_code = currency.strip().upper()
+        if currency_code not in {"USD", "EUR"}:
+            raise ValueError("Currency must be USD or EUR")
         with self._connect() as conn:
             conn.execute(
                 """INSERT INTO positions

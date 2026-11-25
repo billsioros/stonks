@@ -1,5 +1,6 @@
 """Tests for the SQLiteStore module."""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -234,6 +235,15 @@ class TestSQLiteStore:
 
         rows = store.get_positions()
 
+        assert set(rows[0]) == {
+            "id",
+            "symbol",
+            "quantity",
+            "price",
+            "currency",
+            "added_at",
+            "notes",
+        }
         assert [(row["symbol"], row["quantity"], row["currency"]) for row in rows] == [
             ("CROX", 2.0, "USD"),
             ("GOOGL", 5.0, "USD"),
@@ -257,6 +267,29 @@ class TestSQLiteStore:
             store.add_position("AAA", 1, -1.0)
         with pytest.raises(ValueError):
             store.add_position("AAA", float("nan"), 10.0)
+        with pytest.raises(ValueError):
+            store.add_position("AAA", 1, 10.0, "GBP")
+        with pytest.raises(ValueError):
+            store.add_position("AAA", 1, 10.0, "")
+
+    def test_add_position_normalizes_lowercase_currency(
+        self, store: SQLiteStore
+    ) -> None:
+        store.add_position("AAA", 1, 10.0, "usd")
+
+        assert store.get_positions()[0]["currency"] == "USD"
+
+    def test_positions_schema_rejects_unsupported_currency(
+        self, store: SQLiteStore
+    ) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            with store._connect() as conn:
+                conn.execute(
+                    """INSERT INTO positions
+                       (symbol, quantity, price, currency, added_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    ("AAA", 1.0, 10.0, "GBP", 0.0),
+                )
 
     def test_get_monitored_symbols_unions_watchlist_and_positions(
         self, store: SQLiteStore
