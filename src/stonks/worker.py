@@ -70,7 +70,10 @@ def _record_change_alerts(
 
 
 def _record_daily_move_alerts(
-    store: SQLiteStore, watched: set[str], rows: list[dict[str, Any]]
+    store: SQLiteStore,
+    watched: set[str],
+    rows: list[dict[str, Any]],
+    previous: dict[str, dict[str, Any]] | None = None,
 ) -> int:
     """Record 5% moves from each watched symbol's first price of the day."""
     day = alerts.day_bucket()
@@ -78,6 +81,18 @@ def _record_daily_move_alerts(
         state = json.loads(store.get_metadata("daily_move_baselines") or "null")
     except (TypeError, ValueError):
         state = None
+    if state is None and previous:
+        # No baseline has ever been recorded (fresh store, or a database from
+        # before this feature): the snapshot this run replaces is the only
+        # earlier price available, so treat it as the day's first price.
+        state = {
+            "day": day,
+            "prices": {
+                symbol: row["price"]
+                for symbol, row in previous.items()
+                if row.get("price") is not None
+            },
+        }
     watched_rows = [row for row in rows if row.get("symbol") in watched]
     fired, updated = daily_move_alerts(watched_rows, state, day=day)
     store.save_metadata("daily_move_baselines", json.dumps(updated))
@@ -202,9 +217,18 @@ def job() -> None:
         store.save_metadata("next_sync_at", str(_now() + WORKER_INTERVAL_MINUTES * 60))
         # Alerts are transient; nothing older than the retention window is useful.
         store.prune_alerts()
-        stored = _watched_rows(store, set(store.get_watchlist_symbols()))
-        watched = {symbol for symbol, row in stored.items() if is_stock_row(row)}
-        previous = {symbol: stored[symbol] for symbol in watched}
+        held = set(store.get_position_symbols())
+        stored = _watched_rows(store, set(store.get_monitored_symbols()))
+        priced = {
+            symbol
+            for symbol, row in stored.items()
+            if is_stock_row(row) or symbol in held
+        }
+        previous = {symbol: stored[symbol] for symbol in priced}
+        news_symbols = sorted(set(store.get_watchlist_symbols()) | held)
+        # Headlines come from the cached overview page, not the screener
+        # snapshot, so a failed refresh must not starve news alerts.
+        news = fetch_watched_news(store, news_symbols)
 
         try:
             discount_rate = current_discount_rate()
@@ -243,8 +267,7 @@ def job() -> None:
         store.save_metadata("universe_size", len(rows))
         _record_sync_outcome(store, attempted_at, "success", "")
 
-        changed = _record_change_alerts(store, watched, previous, rows)
-        news = fetch_watched_news(store, sorted(watched))
+        changed = _record_change_alerts(store, priced, previous, rows)
         buy_opps = 0
         for alert in buy_opportunity_alerts(rows):
             if store.add_alert(
@@ -256,7 +279,7 @@ def job() -> None:
                 alert.dedupe_key,
             ):
                 buy_opps += 1
-        daily_moves = _record_daily_move_alerts(store, watched, rows)
+        daily_moves = _record_daily_move_alerts(store, priced, rows, previous)
         if daily_moves:
             logger.info("🔔 %s daily-move alerts", daily_moves)
         if changed or news or buy_opps:
