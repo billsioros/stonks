@@ -41,35 +41,20 @@ def _run_app(
     return at
 
 
-def _seed_opportunities(store: SQLiteStore) -> None:
-    store.replace_stocks(
-        [
-            {
-                "symbol": "BOTH",
-                "description": "Below both estimates",
-                "price": 101.0,
-                "week_52_low": 100.0,
-                "dcf_fair_value": 120.0,
-                "lynch_fair_value": 130.0,
-            },
-            {
-                "symbol": "LOW",
-                "description": "Near the low only",
-                "price": 101.0,
-                "week_52_low": 100.0,
-                "dcf_fair_value": None,
-                "lynch_fair_value": None,
-            },
-        ]
-    )
-
-
 def test_buy_opportunities_live_in_a_collapsed_notifications_expander_above_masthead(
     tmp_path: Path, monkeypatch
 ) -> None:
     db_path = tmp_path / "stonks.db"
     seeded = SQLiteStore(db_path=db_path)
-    _seed_opportunities(seeded)
+    seeded.replace_stocks([{"symbol": "BOTH", "description": "Below both estimates"}])
+    seeded.add_alert(
+        "BOTH",
+        "buy_opportunity",
+        "good",
+        "Near its 52-week low",
+        "Price 101.00 vs 52w low 100.00",
+        "BOTH:buy_opportunity:test",
+    )
     at = _run_app(db_path, monkeypatch)
 
     assert not at.exception
@@ -101,7 +86,7 @@ def test_notifications_deduplicate_persisted_buy_opportunity_alerts(
 ) -> None:
     db_path = tmp_path / "stonks.db"
     seeded = SQLiteStore(db_path=db_path)
-    _seed_opportunities(seeded)
+    seeded.replace_stocks([{"symbol": "BOTH", "description": "Below both estimates"}])
     seeded.add_alert(
         "BOTH",
         "buy_opportunity",
@@ -109,6 +94,14 @@ def test_notifications_deduplicate_persisted_buy_opportunity_alerts(
         "Buy opportunity",
         "Below DCF and Lynch",
         "BOTH:buy_opportunity:test",
+    )
+    seeded.add_alert(
+        "BOTH",
+        "buy_opportunity",
+        "good",
+        "Buy opportunity",
+        "Below DCF and Lynch",
+        "BOTH:buy_opportunity:other-test",
     )
 
     at = _run_app(db_path, monkeypatch)
@@ -118,7 +111,40 @@ def test_notifications_deduplicate_persisted_buy_opportunity_alerts(
     labels = [button.label for button in notification.button]
 
     assert labels.count("BOTH ▸") == 1
-    assert labels.count("LOW ▸") == 1
+
+
+def test_notifications_come_from_stored_alerts_not_live_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks(
+        [
+            {
+                "symbol": "SNAP",
+                "description": "Near low",
+                "price": 101.0,
+                "week_52_low": 100.0,
+                "dcf_fair_value": None,
+                "lynch_fair_value": None,
+            }
+        ]
+    )
+    at = _run_app(db_path, monkeypatch)
+    assert not [item for item in at.expander if "Notifications" in item.label]
+
+    seeded.add_alert(
+        "SNAP",
+        "buy_opportunity",
+        "good",
+        "Near its 52-week low",
+        "Price 101.00 vs 52w low 100.00",
+        "SNAP:buy_opportunity:test",
+    )
+    at = _run_app(db_path, monkeypatch)
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    assert "SNAP ▸" in [b.label for b in notification.button]
+    assert any("buy opportunities" in str(item.value) for item in at.success)
 
 
 def test_notifications_hide_non_screener_symbols_unless_watchlisted(
@@ -242,20 +268,17 @@ def test_notifications_group_alerts_by_symbol(tmp_path: Path, monkeypatch) -> No
 def test_notifications_merge_a_screener_buy_with_alerts_for_the_same_symbol(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A live buy signal and its alerts belong to one ticker card."""
+    """A stored buy signal and its alerts belong to one ticker card."""
     db_path = tmp_path / "stonks.db"
     seeded = SQLiteStore(db_path=db_path)
-    seeded.replace_stocks(
-        [
-            {
-                "symbol": "BOTH",
-                "description": "Below both estimates",
-                "price": 101.0,
-                "week_52_low": 100.0,
-                "dcf_fair_value": 120.0,
-                "lynch_fair_value": 130.0,
-            }
-        ]
+    seeded.replace_stocks([{"symbol": "BOTH", "description": "Below both estimates"}])
+    seeded.add_alert(
+        "BOTH",
+        "buy_opportunity",
+        "good",
+        "Near its 52-week low",
+        "Price 101.00 vs 52w low 100.00",
+        "BOTH:buy_opportunity:test",
     )
     seeded.add_alert(
         "BOTH", "news", "info", "First headline", "TipRanks", "BOTH:news:1"
