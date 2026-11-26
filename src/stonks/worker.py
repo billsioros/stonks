@@ -263,6 +263,15 @@ def job() -> None:
                 len(largest_buys),
             )
 
+        # Held symbols can sit outside the screener universe (for example an
+        # ETF). Keep their last known quote so valuation and alerts survive a
+        # refresh that does not return them.
+        fetched_symbols = {row.get("symbol") for row in rows}
+        rows.extend(
+            stored[symbol]
+            for symbol in sorted(held)
+            if symbol in stored and symbol not in fetched_symbols
+        )
         store.replace_stocks(rows)
         store.save_metadata("universe_size", len(rows))
         _record_sync_outcome(store, attempted_at, "success", "")

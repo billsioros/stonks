@@ -690,3 +690,36 @@ def test_job_fetches_news_for_held_etf_but_not_watchlist_only_etf(
     job()
 
     assert seen == [["AAA", "VUAA"]]
+
+
+def test_job_preserves_held_rows_absent_from_the_fresh_universe(
+    monkeypatch, tmp_path
+) -> None:
+    store = _real_store(monkeypatch, tmp_path)
+    store.add_position("VUAA", 1, 100.0, currency="EUR")
+    store.replace_stocks(
+        [
+            {"symbol": "AAA", "price": 10.0, "type": "Stock"},
+            {
+                "symbol": "VUAA",
+                "price": 127.54,
+                "currency": "EUR",
+                "type": "ETF",
+            },
+        ]
+    )
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr("stonks.worker.fetch_watched_news", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        "stonks.worker.fetch_rows",
+        lambda discount_rate=None: [{"symbol": "AAA", "price": 11.0, "type": "Stock"}],
+    )
+
+    job()
+
+    rows, _, _ = store.get_stocks(
+        filters={"symbol": {"values": ["VUAA"]}}, page=1, page_size=5
+    )
+    assert [row["symbol"] for row in rows] == ["VUAA"]
+    assert rows[0]["price"] == 127.54
