@@ -49,6 +49,7 @@ class PortfolioSummary:
     unrealized_pnl_usd: float | None
     unrealized_pct: float | None
     excluded_symbols: tuple[str, ...]
+    usd_per_eur: float | None
 
 
 def _positive_number(value: Any) -> float | None:
@@ -240,6 +241,7 @@ def build_portfolio_summary(
             total_unrealized / total_cost * 100 if total_cost > 0 else None
         ),
         excluded_symbols=tuple(excluded),
+        usd_per_eur=_rate(rates, "EUR"),
     )
 
 
@@ -291,6 +293,10 @@ def portfolio_snapshot(
         rates[currency], is_stale = usd_rate(store, currency, fetch=fetch_fx)
         if is_stale:
             stale.append(currency)
+
+    # Headline totals show EUR even for USD-only portfolios. Reuse the last
+    # cached rate without triggering a fetch that the holdings do not need.
+    rates.setdefault("EUR", _positive_number(store.cache_get(FX_CACHE_KEY)))
 
     prior_closes: dict[str, float] = {}
     if include_history:

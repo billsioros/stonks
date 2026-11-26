@@ -1,5 +1,6 @@
 from typing import Any
 
+import pytest
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
@@ -70,6 +71,7 @@ def test_portfolio_table_aggregates_lots_into_one_row(tmp_path, monkeypatch) -> 
     store.replace_stocks([_stock("AAA", 110.0)])
     store.add_position("AAA", 2, 100.0, "USD")
     store.add_position("AAA", 3, 120.0, "USD")
+    store.cache_set("fx:EURUSD", 1.0, ttl_seconds=60)
     store.cache_set(
         "hist:AAA:1Y",
         [
@@ -90,24 +92,69 @@ def test_portfolio_table_aggregates_lots_into_one_row(tmp_path, monkeypatch) -> 
     assert row["Cost Basis"] == "560.00 USD"
     assert row["Market Value"] == "550.00 USD"
     metrics = [item.value for item in at.metric]
-    assert any("$550.00" in str(value) for value in metrics)
+    assert any("€550.00" in str(value) for value in metrics)
 
 
-def test_portfolio_correlation_card_shows_a_number(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("factor", "expected"),
+    [
+        (0.25, ":green[+0.25]"),
+        (0.55, ":orange[+0.55]"),
+        (0.85, ":red[+0.85]"),
+        (None, "—"),
+    ],
+)
+def test_portfolio_correlation_card_colors_by_level(
+    factor, expected, tmp_path, monkeypatch
+) -> None:
     db_path = tmp_path / "pf.db"
     store = SQLiteStore(db_path=db_path)
     store.replace_stocks([_stock("AAA", 110.0), _stock("BBB", 110.0)])
     store.add_position("AAA", 1, 100.0, "USD")
     store.add_position("BBB", 1, 100.0, "USD")
     monkeypatch.setattr(
-        correlation, "portfolio_correlation_factor", lambda *a, **k: 0.85
+        correlation, "portfolio_correlation_factor", lambda *a, **k: factor
     )
 
     at = _app_with_db(db_path, monkeypatch)
 
     assert not at.exception
     card = next(item for item in at.metric if item.label == "Portfolio correlation")
-    assert card.value == "+0.85"
+    assert card.value == expected
+
+
+def test_portfolio_headline_metrics_show_eur_and_rows_stay_native(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "pf.db"
+    store = SQLiteStore(db_path=db_path)
+    store.replace_stocks([_stock("AAA", 110.0), _stock("VUAA", 120.0, "EUR", "ETF")])
+    store.add_position("AAA", 2, 100.0, "USD")
+    store.add_position("VUAA", 1, 100.0, "EUR")
+    store.cache_set("fx:EURUSD", 2.0, ttl_seconds=60)
+    for symbol in ("AAA", "VUAA"):
+        store.cache_set(
+            f"hist:{symbol}:1Y",
+            [
+                {"date": "2026-11-24", "close": 100.0},
+                {"date": "2026-11-25", "close": 110.0},
+            ],
+            ttl_seconds=60,
+        )
+
+    at = _app_with_db(db_path, monkeypatch)
+
+    assert not at.exception
+    metrics = {item.label: item.value for item in at.metric}
+    assert metrics["Total value (EUR)"] == "€230.00"
+    assert metrics["Cost basis (EUR)"] == "€200.00"
+    assert metrics["Unrealized P&L (EUR)"] == "+€30.00"
+    assert metrics["Daily P&L (EUR)"] == "+€30.00"
+    assert not any(label.endswith("(USD)") for label in metrics)
+    table = next(item for item in at.dataframe if "Position" in item.value.columns)
+    rows = {row["Instrument"][:3]: row for row in table.value.to_dict("records")}
+    assert rows["AAA"]["Market Value"] == "220.00 USD"
+    assert rows["VUA"]["Market Value"] == "120.00 EUR"
 
 
 def test_portfolio_adds_an_etf_lot(tmp_path, monkeypatch) -> None:
@@ -194,7 +241,9 @@ def test_portfolio_warns_about_stale_fx_and_excluded_holding(
     assert not at.exception
     warnings = [str(item.value) for item in at.warning]
     assert any("Stale EUR→USD rate" in text for text in warnings)
-    assert any("1 holding excluded from USD totals: AAA" in text for text in warnings)
+    assert any(
+        "1 holding excluded from portfolio totals: AAA" in text for text in warnings
+    )
 
 
 def test_portfolio_blanks_daily_fields_when_history_is_missing(
@@ -204,6 +253,7 @@ def test_portfolio_blanks_daily_fields_when_history_is_missing(
     store = SQLiteStore(db_path=db_path)
     store.replace_stocks([_stock("AAA", 110.0)])
     store.add_position("AAA", 2, 100.0, "USD")
+    store.cache_set("fx:EURUSD", 1.0, ttl_seconds=60)
     monkeypatch.setattr(detail, "fetch_json", _offline)
 
     at = _app_with_db(db_path, monkeypatch)
@@ -215,8 +265,8 @@ def test_portfolio_blanks_daily_fields_when_history_is_missing(
     assert row["Daily P&L"] == "—"
     assert row["Market Value"] == "220.00 USD"
     assert row["USD Value"] == "220.00 USD"
-    assert any("$220.00" in str(item.value) for item in at.metric)
-    card = next(item for item in at.metric if item.label == "Daily P&L (USD)")
+    assert any("€220.00" in str(item.value) for item in at.metric)
+    card = next(item for item in at.metric if item.label == "Daily P&L (EUR)")
     assert card.value == "—"
 
 
@@ -239,7 +289,7 @@ def test_portfolio_daily_headline_blanks_partial_history(tmp_path, monkeypatch) 
     at = _app_with_db(db_path, monkeypatch)
 
     assert not at.exception
-    card = next(item for item in at.metric if item.label == "Daily P&L (USD)")
+    card = next(item for item in at.metric if item.label == "Daily P&L (EUR)")
     assert card.value == "—"
     table = next(item for item in at.dataframe if "Position" in item.value.columns)
     rows = {row["Instrument"][:3]: row for row in table.value.to_dict("records")}

@@ -824,11 +824,35 @@ def _money(val: float | None, currency: str) -> str:
     return "—" if val is None or _is_missing(val) else f"{val:,.2f} {currency}"
 
 
-def _signed_money(val: float | None) -> str:
-    """Format a USD gain or loss with an explicit sign."""
-    if val is None or _is_missing(val):
+def _eur_money(usd: float | None, rate: float | None) -> str:
+    """Format a USD total as EUR with the snapshot's EUR→USD rate."""
+    if usd is None or rate is None or _is_missing(usd):
         return "—"
-    return f"{'-' if val < 0 else '+'}${abs(val):,.2f}"
+    return f"€{usd / rate:,.2f}"
+
+
+def _signed_eur_money(usd: float | None, rate: float | None) -> str:
+    """Format a USD gain or loss as signed EUR with the snapshot's rate."""
+    if usd is None or rate is None or _is_missing(usd):
+        return "—"
+    amount = usd / rate
+    return f"{'-' if amount < 0 else '+'}€{abs(amount):,.2f}"
+
+
+_LOW_CORRELATION_THRESHOLD = 0.40
+
+
+def _correlation_value(value: float | None) -> str:
+    """Format the correlation card's value in a green/orange/red level band."""
+    if value is None or _is_missing(value):
+        return "—"
+    if value >= HIGH_CORRELATION_THRESHOLD:
+        color = "red"
+    elif value >= _LOW_CORRELATION_THRESHOLD:
+        color = "orange"
+    else:
+        color = "green"
+    return f":{color}[{value:+.2f}]"
 
 
 def _fmt_cyclical_risk(val: object) -> str:
@@ -1706,7 +1730,7 @@ def _clear_portfolio_editor_state() -> None:
 
 
 def render_portfolio_tab() -> None:
-    """Show USD holdings totals, manual lots and a one-click holdings backtest."""
+    """Show EUR headline totals, native-currency lots and a one-click backtest."""
     store = get_store()
     summary, stale = portfolio_snapshot(store)
     for currency in stale:
@@ -1714,41 +1738,35 @@ def render_portfolio_tab() -> None:
     if summary.excluded_symbols:
         count = len(summary.excluded_symbols)
         st.warning(
-            f"{count} holding{'s' if count != 1 else ''} excluded from USD totals: "
+            f"{count} holding{'s' if count != 1 else ''} excluded from portfolio totals: "
             f"{', '.join(summary.excluded_symbols)} — price or FX rate unavailable."
         )
 
     symbols, weights = backtest_allocation(summary)
     factor = portfolio_correlation_factor(store, symbols, weights)
+    eur_rate = summary.usd_per_eur
     value_col, pnl_col, daily_col, cost_col, corr_col = st.columns(5)
-    value_col.metric(
-        "Total value (USD)",
-        f"${summary.total_value_usd:,.2f}"
-        if summary.total_value_usd is not None
-        else "—",
-    )
+    value_col.metric("Total value (EUR)", _eur_money(summary.total_value_usd, eur_rate))
     pnl_col.metric(
-        "Unrealized P&L (USD)",
-        _signed_money(summary.unrealized_pnl_usd),
+        "Unrealized P&L (EUR)",
+        _signed_eur_money(summary.unrealized_pnl_usd, eur_rate),
         delta=(
             f"{summary.unrealized_pct:+.2f}%"
             if summary.unrealized_pct is not None
             else None
         ),
     )
-    daily_col.metric("Daily P&L (USD)", _signed_money(summary.daily_pnl_usd))
-    cost_col.metric(
-        "Cost basis (USD)",
-        f"${summary.total_cost_usd:,.2f}"
-        if summary.total_cost_usd is not None
-        else "—",
+    daily_col.metric(
+        "Daily P&L (EUR)", _signed_eur_money(summary.daily_pnl_usd, eur_rate)
     )
+    cost_col.metric("Cost basis (EUR)", _eur_money(summary.total_cost_usd, eur_rate))
     corr_col.metric(
         "Portfolio correlation",
-        f"{factor:+.2f}" if factor is not None else "—",
+        _correlation_value(factor),
         help=(
             "Weighted average pairwise correlation of monthly returns; "
-            "higher means holdings move together."
+            "green < 0.40, orange 0.40–0.69, red ≥ 0.70. Higher means "
+            "holdings move together."
         ),
     )
 
