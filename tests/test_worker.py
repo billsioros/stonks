@@ -655,3 +655,38 @@ def test_job_fetches_news_for_holdings_outside_the_stored_universe(monkeypatch) 
     job()
 
     assert seen == [["GHOST"]]
+
+
+def test_job_fetches_news_for_held_etf_but_not_watchlist_only_etf(
+    monkeypatch, tmp_path
+) -> None:
+    store = _real_store(monkeypatch, tmp_path)
+    store.add_to_watchlist("AAA")
+    store.add_to_watchlist("WET")
+    store.add_position("VUAA", 1, 100.0)
+    store.replace_stocks(
+        [
+            {"symbol": "AAA", "price": 100.0, "type": "Stock"},
+            {"symbol": "WET", "price": 100.0, "type": "ETF"},
+            {"symbol": "VUAA", "price": 100.0, "type": "ETF"},
+        ]
+    )
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr(
+        "stonks.worker.fetch_rows",
+        lambda discount_rate=None: [
+            {"symbol": "AAA", "price": 100.0, "type": "Stock"},
+            {"symbol": "WET", "price": 100.0, "type": "ETF"},
+            {"symbol": "VUAA", "price": 100.0, "type": "ETF"},
+        ],
+    )
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        "stonks.worker.fetch_watched_news",
+        lambda _store, symbols: seen.append(symbols) or 0,
+    )
+
+    job()
+
+    assert seen == [["AAA", "VUAA"]]

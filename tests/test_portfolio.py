@@ -163,4 +163,33 @@ def test_summary_keeps_valuation_without_prior_close() -> None:
     assert holding.daily_pnl_usd is None
     assert summary.excluded_symbols == ()
     assert summary.total_value_usd == pytest.approx(220.0)
+    assert summary.daily_pnl_usd is None
     assert portfolio.backtest_allocation(summary) == (["AAA"], [100.0])
+
+
+def test_summary_daily_total_is_available_only_with_complete_history() -> None:
+    positions = [
+        {"symbol": "AAA", "quantity": 2, "price": 100.0, "currency": "USD"},
+        {"symbol": "BBB", "quantity": 1, "price": 100.0, "currency": "USD"},
+    ]
+    quotes = {
+        "AAA": {"price": 110.0, "currency": "USD"},
+        "BBB": {"price": 120.0, "currency": "USD"},
+    }
+    rates = {"USD": 1.0}
+
+    missing = portfolio.build_portfolio_summary(positions, quotes, {}, rates)
+    assert all(h.daily_pnl_usd is None for h in missing.holdings)
+    assert missing.daily_pnl_usd is None
+
+    partial = portfolio.build_portfolio_summary(
+        positions, quotes, {"AAA": 100.0}, rates
+    )
+    assert partial.holdings[0].daily_pnl_usd == pytest.approx(20.0)
+    assert partial.holdings[1].daily_pnl_usd is None
+    assert partial.daily_pnl_usd is None
+
+    complete = portfolio.build_portfolio_summary(
+        positions, quotes, {"AAA": 100.0, "BBB": 100.0}, rates
+    )
+    assert complete.daily_pnl_usd == pytest.approx(40.0)

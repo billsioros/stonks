@@ -225,7 +225,7 @@ def job() -> None:
             if is_stock_row(row) or symbol in held
         }
         previous = {symbol: stored[symbol] for symbol in priced}
-        news_symbols = sorted(set(store.get_watchlist_symbols()) | held)
+        news_symbols = sorted((set(store.get_watchlist_symbols()) & priced) | held)
         # Headlines come from the cached overview page, not the screener
         # snapshot, so a failed refresh must not starve news alerts.
         news = fetch_watched_news(store, news_symbols)

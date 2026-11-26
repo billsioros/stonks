@@ -222,7 +222,11 @@ def build_portfolio_summary(
     included = [h for h in holdings if h.symbol not in excluded_set]
     total_cost = sum(h.cost_usd for h in included if h.cost_usd is not None)
     total_value = sum(h.market_usd for h in included if h.market_usd is not None)
-    total_daily = sum(h.daily_pnl_usd for h in included if h.daily_pnl_usd is not None)
+    total_daily = (
+        sum(h.daily_pnl_usd for h in included if h.daily_pnl_usd is not None)
+        if included and all(h.daily_pnl_usd is not None for h in included)
+        else None
+    )
     total_unrealized = sum(
         h.unrealized_usd for h in included if h.unrealized_usd is not None
     )

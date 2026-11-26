@@ -216,3 +216,32 @@ def test_portfolio_blanks_daily_fields_when_history_is_missing(
     assert row["Market Value"] == "220.00 USD"
     assert row["USD Value"] == "220.00 USD"
     assert any("$220.00" in str(item.value) for item in at.metric)
+    card = next(item for item in at.metric if item.label == "Daily P&L (USD)")
+    assert card.value == "—"
+
+
+def test_portfolio_daily_headline_blanks_partial_history(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "pf.db"
+    store = SQLiteStore(db_path=db_path)
+    store.replace_stocks([_stock("AAA", 110.0), _stock("BBB", 110.0)])
+    store.add_position("AAA", 1, 100.0, "USD")
+    store.add_position("BBB", 1, 100.0, "USD")
+    store.cache_set(
+        "hist:AAA:1Y",
+        [
+            {"date": "2026-11-24", "close": 100.0},
+            {"date": "2026-11-25", "close": 110.0},
+        ],
+        ttl_seconds=60,
+    )
+    monkeypatch.setattr(detail, "fetch_json", _offline)
+
+    at = _app_with_db(db_path, monkeypatch)
+
+    assert not at.exception
+    card = next(item for item in at.metric if item.label == "Daily P&L (USD)")
+    assert card.value == "—"
+    table = next(item for item in at.dataframe if "Position" in item.value.columns)
+    rows = {row["Instrument"][:3]: row for row in table.value.to_dict("records")}
+    assert rows["AAA"]["Daily P&L"] == "10.00 USD"
+    assert rows["BBB"]["Daily P&L"] == "—"
