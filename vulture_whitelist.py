@@ -3,6 +3,12 @@ from stonks.cache import LocalCache
 
 from stonks.alerts import Alert, evaluate_alerts, week_bucket
 from stonks.backtest_view import parse_symbols, parse_weights
+from stonks.config import VIRTUAL_COLUMNS
+from stonks.correlation import (
+    is_high_correlation,
+    portfolio_correlation,
+    portfolio_correlation_factor,
+)
 from stonks.detail import load_page
 from stonks.detail_parse import (
     parse_forecast,
@@ -35,6 +41,13 @@ from stonks.dossier import (
 from stonks.edgar import EdgarUnavailable, edgar_json, resolve_cik, user_agent
 from stonks.edgar_parse import filing_checks, latest_fact, maturity_ladder
 from stonks.filing_evidence import build_filing_evidence, search_filings
+from stonks.portfolio import (
+    Holding,
+    PortfolioSummary,
+    backtest_allocation,
+    portfolio_snapshot,
+    validate_lot,
+)
 from stonks.stockanalysis import SUPPORTED_COLUMNS
 from stonks.store import SQLiteStore
 from stonks.worker import NEWS_ALERTS_PER_SYNC, fetch_watched_news
@@ -95,6 +108,10 @@ week_bucket  # noqa: B018
 evaluate_alerts  # noqa: B018
 format_pct  # noqa: B018
 SQLiteStore.unread_alert_counts  # noqa: B018
+SQLiteStore.add_position  # noqa: B018
+SQLiteStore.delete_position  # noqa: B018
+SQLiteStore.get_positions  # noqa: B018
+SQLiteStore.get_monitored_symbols  # noqa: B018
 fetch_watched_news  # noqa: B018
 NEWS_ALERTS_PER_SYNC  # noqa: B018
 parse_symbols  # noqa: B018
@@ -106,6 +123,20 @@ user_agent  # noqa: B018
 filing_checks  # noqa: B018
 latest_fact  # noqa: B018
 maturity_ladder  # noqa: B018
+Holding.avg_price  # noqa: B018
+Holding.daily_pnl_native  # noqa: B018
+PortfolioSummary.total_cost_usd  # noqa: B018
+PortfolioSummary.total_value_usd  # noqa: B018
+PortfolioSummary.unrealized_pnl_usd  # noqa: B018
+PortfolioSummary.unrealized_pct  # noqa: B018
+PortfolioSummary.excluded_symbols  # noqa: B018
+validate_lot  # noqa: B018
+backtest_allocation  # noqa: B018
+portfolio_snapshot  # noqa: B018
+is_high_correlation  # noqa: B018
+portfolio_correlation  # noqa: B018
+portfolio_correlation_factor  # noqa: B018
+VIRTUAL_COLUMNS  # noqa: B018
 
 buy_opportunity  # noqa: B018, F821
 get_buy_opportunities  # noqa: B018, F821

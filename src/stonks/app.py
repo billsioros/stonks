@@ -16,7 +16,13 @@ import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
 from stonks import config, report, report_view, sanity
-from stonks.backtest_view import render_backtest_tab
+from stonks.backtest_view import (
+    _RESULT_KEY,
+    _SETTINGS_KEY,
+    holdings_settings_from_summary,
+    render_backtest_tab,
+    run_configured_backtest,
+)
 from stonks.config import (
     COLUMN_DISPLAY_NAMES,
     COLUMN_HELP,
@@ -27,7 +33,19 @@ from stonks.config import (
     SCREENER_TABLE_MAX_HEIGHT,
     VIEW_PRESETS,
 )
+from stonks.correlation import (
+    HIGH_CORRELATION_THRESHOLD,
+    is_high_correlation,
+    portfolio_correlation,
+    portfolio_correlation_factor,
+)
 from stonks.detail_view import render_detail_page
+from stonks.portfolio import (
+    CONVERTIBLE_CURRENCIES,
+    backtest_allocation,
+    portfolio_snapshot,
+    validate_lot,
+)
 from stonks.presets import POPULAR_SCREENS, default_screen
 from stonks.store import SQLiteStore, is_stock_row
 
@@ -801,11 +819,60 @@ def _fmt_number(val: float | None, decimals: int = 2) -> str:
     return f"{val:,.{decimals}f}"
 
 
+def _money(val: float | None, currency: str) -> str:
+    """Format an amount in its own currency, or a dash when unavailable."""
+    return "—" if val is None or _is_missing(val) else f"{val:,.2f} {currency}"
+
+
+def _eur_money(usd: float | None, rate: float | None) -> str:
+    """Format a USD total as EUR with the snapshot's EUR→USD rate."""
+    if usd is None or rate is None or _is_missing(usd):
+        return "—"
+    return f"€{usd / rate:,.2f}"
+
+
+def _signed_eur_money(usd: float | None, rate: float | None) -> str:
+    """Format a USD gain or loss as signed EUR with the snapshot's rate."""
+    if usd is None or rate is None or _is_missing(usd):
+        return "—"
+    amount = usd / rate
+    return f"{'-' if amount < 0 else '+'}€{abs(amount):,.2f}"
+
+
+_LOW_CORRELATION_THRESHOLD = 0.40
+
+
+def _correlation_value(value: float | None) -> str:
+    """Format the correlation card's value in a green/orange/red level band."""
+    if value is None or _is_missing(value):
+        return "—"
+    if value >= HIGH_CORRELATION_THRESHOLD:
+        color = "red"
+    elif value >= _LOW_CORRELATION_THRESHOLD:
+        color = "orange"
+    else:
+        color = "green"
+    return f":{color}[{value:+.2f}]"
+
+
 def _fmt_cyclical_risk(val: object) -> str:
     """Render the cyclical peak flag as a warning badge."""
     if _is_missing(val) or val is None:
         return "—"
     return "⚠️ Peak" if val else ""
+
+
+def _fmt_correlation(value: object) -> str:
+    """Render a coefficient, flagging values at or above the high-correlation cutoff."""
+    if (
+        _is_missing(value)
+        or isinstance(value, bool)
+        or not isinstance(value, (int, float))
+    ):
+        return "—"
+    number = float(value)
+    prefix = "⚠️ " if is_high_correlation(number) else ""
+    return f"{prefix}{number:+.2f}"
 
 
 def _format_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
@@ -822,6 +889,8 @@ def _format_display_frame(frame: pd.DataFrame) -> pd.DataFrame:
             display[col] = display[col].apply(_fmt_upside)
         elif col == "Current Ratio":
             display[col] = display[col].apply(_fmt_current_ratio)
+        elif col == "Portfolio Correlation":
+            display[col] = display[col].apply(_fmt_correlation)
         elif "%" in col or "Upside" in col or "Short" in col:
             display[col] = display[col].apply(_fmt_pct)
         elif col in (
@@ -1351,6 +1420,22 @@ def render_screener_table() -> None:
 
     raw_symbols = [row.get("symbol") for row in page_rows]
 
+    # Correlation is a per-page virtual column: never a SQL filter or a sort key.
+    if "portfolio_correlation" in visible_cols:
+        positions = store.get_positions()
+        if positions:
+            st.caption(
+                f"⚠️ marks correlation at or above {HIGH_CORRELATION_THRESHOLD:.2f} "
+                "with the portfolio."
+            )
+            summary, _ = portfolio_snapshot(store, include_history=False)
+            correlations = {
+                symbol: portfolio_correlation(store, symbol, summary, positions)
+                for symbol in raw_symbols
+                if symbol
+            }
+            page_df["portfolio_correlation"] = page_df["symbol"].map(correlations)
+
     watchlist_symbols = set(store.get_watchlist_symbols())
     if "symbol" in page_df.columns:
         page_df["symbol"] = page_df["symbol"].apply(
@@ -1623,6 +1708,181 @@ def render_watchlist_tab() -> None:
     _render_watchlist_editor(store, watchlist_symbols)
 
 
+def _portfolio_instrument(store: SQLiteStore, ticker: str) -> dict[str, Any] | None:
+    """Look up a typed ticker in the stored universe, ETFs included."""
+    rows, _, _ = store.get_stocks(
+        filters={"symbol": {"values": [ticker]}},
+        page=1,
+        page_size=10,
+    )
+    return next((row for row in rows if row["symbol"] == ticker), None)
+
+
+def _clear_portfolio_editor_state() -> None:
+    for key in (
+        "pf_symbol_ticker",
+        "pf_quantity",
+        "pf_price",
+        "pf_currency",
+        "pf_notes",
+    ):
+        st.session_state.pop(key, None)
+
+
+def render_portfolio_tab() -> None:
+    """Show EUR headline totals, native-currency lots and a one-click backtest."""
+    store = get_store()
+    summary, stale = portfolio_snapshot(store)
+    for currency in stale:
+        st.warning(f"⚠️ Stale {currency}→USD rate; values may be out of date.")
+    if summary.excluded_symbols:
+        count = len(summary.excluded_symbols)
+        st.warning(
+            f"{count} holding{'s' if count != 1 else ''} excluded from portfolio totals: "
+            f"{', '.join(summary.excluded_symbols)} — price or FX rate unavailable."
+        )
+
+    symbols, weights = backtest_allocation(summary)
+    factor = portfolio_correlation_factor(store, symbols, weights)
+    eur_rate = summary.usd_per_eur
+    value_col, pnl_col, daily_col, cost_col, corr_col = st.columns(5)
+    value_col.metric("Total value (EUR)", _eur_money(summary.total_value_usd, eur_rate))
+    pnl_col.metric(
+        "Unrealized P&L (EUR)",
+        _signed_eur_money(summary.unrealized_pnl_usd, eur_rate),
+        delta=(
+            f"{summary.unrealized_pct:+.2f}%"
+            if summary.unrealized_pct is not None
+            else None
+        ),
+    )
+    daily_col.metric(
+        "Daily P&L (EUR)", _signed_eur_money(summary.daily_pnl_usd, eur_rate)
+    )
+    cost_col.metric("Cost basis (EUR)", _eur_money(summary.total_cost_usd, eur_rate))
+    corr_col.metric(
+        "Portfolio correlation",
+        _correlation_value(factor),
+        help=(
+            "Weighted average pairwise correlation of monthly returns; "
+            "green < 0.40, orange 0.40–0.69, red ≥ 0.70. Higher means "
+            "holdings move together."
+        ),
+    )
+
+    rows: list[dict[str, Any]] = []
+    for holding in summary.holdings:
+        rows.append(
+            {
+                "Instrument": f"{holding.symbol} — {holding.description}",
+                "Position": holding.quantity,
+                "Last": _money(holding.last, holding.currency),
+                "Change %": _fmt_pct(holding.change_pct),
+                "Cost Basis": _money(holding.cost_native, holding.currency),
+                "Market Value": _money(holding.market_native, holding.currency),
+                "Avg Price": _money(holding.avg_price, holding.currency),
+                "Daily P&L": _money(holding.daily_pnl_native, holding.currency),
+                "Unrealized P&L": _money(holding.unrealized_native, holding.currency),
+                "Currency": holding.currency,
+                "USD Value": _money(holding.market_usd, "USD"),
+            }
+        )
+    if rows:
+        frame = pd.DataFrame(rows)
+        selection = st.dataframe(
+            frame,
+            width="stretch",
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key=_table_key("portfolio_table"),
+        )
+        picked = getattr(getattr(selection, "selection", None), "rows", None) or []
+        if picked and 0 <= picked[0] < len(rows):
+            open_symbol(summary.holdings[picked[0]].symbol)
+            st.rerun()
+        st.download_button(
+            "📥 Download Portfolio CSV",
+            data=frame.to_csv(index=False).encode("utf-8"),
+            file_name=f"stonks_portfolio_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+            mime="text/csv",
+            key="download_portfolio",
+        )
+    else:
+        st.caption("No holdings yet. Add a lot below.")
+
+    if st.button("⚡ Backtest my portfolio", key="pf_backtest"):
+        settings = holdings_settings_from_summary(summary)
+        if settings is None:
+            st.warning("No priced holdings to backtest yet.")
+        else:
+            try:
+                result = run_configured_backtest(store, settings)
+            except (OSError, ValueError) as exc:
+                st.error(f"Backtest failed: {exc}")
+            else:
+                st.session_state[_RESULT_KEY] = result
+                st.session_state[_SETTINGS_KEY] = settings
+                st.session_state["page"] = "backtest"
+                st.rerun()
+
+    positions = store.get_positions()
+    with st.expander("💼 Lots", expanded=False):
+        if not positions:
+            st.caption("No lots yet. Add one below.")
+        for lot in positions:
+            info_col, action_col = st.columns([5, 1])
+            added = datetime.fromtimestamp(float(lot["added_at"])).strftime("%Y-%m-%d")
+            info_col.markdown(
+                f"**{lot['symbol']}** · {lot['quantity']:g} × "
+                f"{_money(lot['price'], lot['currency'])} · {added}"
+            )
+            if lot["notes"]:
+                info_col.caption(lot["notes"])
+            if action_col.button(
+                "🗑", key=f"pf_delete_{lot['id']}", help="Delete this lot"
+            ):
+                store.delete_position(lot["id"])
+                st.rerun()
+
+    with st.expander("Add lot", expanded=False):
+        st.text_input("Ticker", key="pf_symbol_ticker", placeholder="MSFT")
+        st.number_input(
+            "Quantity", min_value=0.0, value=1.0, step=1.0, key="pf_quantity"
+        )
+        st.number_input(
+            "Price paid",
+            min_value=0.0,
+            value=0.0,
+            step=0.01,
+            format="%.2f",
+            key="pf_price",
+        )
+        st.selectbox(
+            "Trade currency",
+            ["USD", *sorted(CONVERTIBLE_CURRENCIES - {"USD"})],
+            key="pf_currency",
+        )
+        st.text_input("Notes (optional)", key="pf_notes")
+        if st.button("Add lot", key="pf_add_lot"):
+            ticker = str(st.session_state.get("pf_symbol_ticker") or "").strip().upper()
+            quantity = float(st.session_state.get("pf_quantity") or 0.0)
+            price = float(st.session_state.get("pf_price") or 0.0)
+            currency = str(st.session_state.get("pf_currency") or "USD").strip().upper()
+            notes = str(st.session_state.get("pf_notes") or "").strip()
+            try:
+                validate_lot(ticker, quantity, price, currency)
+            except ValueError as exc:
+                st.warning(str(exc))
+            else:
+                if _portfolio_instrument(store, ticker) is None:
+                    st.warning(f"{ticker} is not in the stored universe.")
+                else:
+                    store.add_position(ticker, quantity, price, currency, notes)
+                    _clear_portfolio_editor_state()
+                    st.rerun()
+
+
 # ── Main App ─────────────────────────────────────────────────────────
 
 
@@ -1831,8 +2091,9 @@ def _notification_groups(
     alerts: list[dict[str, Any]],
     opportunities: list[dict[str, Any]],
     watchlist_symbols: set[str],
+    held_symbols: set[str],
 ) -> list[tuple[str, dict[str, list[dict[str, Any]]]]]:
-    """Collect every notification under its symbol; watchlisted tickers come first."""
+    """Collect every notification under its symbol; tracked tickers come first."""
     groups: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for alert in alerts:
         groups.setdefault(alert["symbol"], {"alerts": [], "opportunities": []})[
@@ -1845,7 +2106,7 @@ def _notification_groups(
     return sorted(
         groups.items(),
         key=lambda item: (
-            item[0] not in watchlist_symbols,
+            item[0] not in (watchlist_symbols | held_symbols),
             not item[1]["opportunities"],
             -max((alert["created_at"] for alert in item[1]["alerts"]), default=0),
         ),
@@ -1866,17 +2127,15 @@ def _group_severity_icon(group: dict[str, list[dict[str, Any]]]) -> str:
 
 
 def render_notifications(store: SQLiteStore) -> None:
-    """Show current screener and watchlist notifications in one collapsible surface."""
+    """Show screener, watchlist and portfolio notifications together."""
+    held_symbols = set(store.get_position_symbols())
     watchlist_symbols = set(store.get_watchlist_symbols())
-    visible_symbols = (
-        set(
-            store.get_stock_symbols(
-                filters=st.session_state.get("active_filters") or {},
-                search_query=st.session_state.get("search_query") or "",
-            )
+    visible_symbols = set(
+        store.get_stock_symbols(
+            filters=st.session_state.get("active_filters") or {},
+            search_query=st.session_state.get("search_query") or "",
         )
-        | watchlist_symbols
-    )
+    ) | set(store.get_monitored_symbols())
     alerts = [
         alert for alert in store.get_alerts() if alert["symbol"] in visible_symbols
     ]
@@ -1922,6 +2181,9 @@ def render_notifications(store: SQLiteStore) -> None:
             )
             if watch_count:
                 headline += f" · {watch_count} on your watchlist"
+            held_count = sum(row["symbol"] in held_symbols for row in snapshot_buys)
+            if held_count:
+                headline += f" · {held_count} in your portfolio"
             st.success(headline, icon="📉")
 
         if alerts:
@@ -1933,7 +2195,7 @@ def render_notifications(store: SQLiteStore) -> None:
 
         severity_icons = {"good": "🟢", "warn": "🟠", "info": "🔵"}
         for symbol, group in _notification_groups(
-            alerts, snapshot_buys, watchlist_symbols
+            alerts, snapshot_buys, watchlist_symbols, held_symbols
         ):
             symbol_col, text_col = st.columns([1, 7])
             with symbol_col:
@@ -1952,6 +2214,8 @@ def render_notifications(store: SQLiteStore) -> None:
                         header += f" · {description}"
                     if symbol in watchlist_symbols:
                         header += " · ⭐ on watchlist"
+                if symbol in held_symbols:
+                    header += " · 💼 in portfolio"
                 st.markdown(header)
                 for row in group["opportunities"]:
                     st.caption(" · ".join(_buy_opportunity_lines(row)))
@@ -1999,10 +2263,17 @@ def main() -> None:
         render_detail_page(store, st.session_state["detail_symbol"])
         return
 
+    if st.session_state.get("page") == "backtest":
+        if st.button("← Back to screener", key="backtest_back"):
+            st.session_state["page"] = "screener"
+            st.rerun()
+        render_backtest_tab(store)
+        return
+
     # Main content tabs; alerts live in the collapsed Notifications surface
-    # and only for symbols in the active screener or the watchlist.
-    tab_screener, tab_watchlist, tab_backtest = st.tabs(
-        ["📊 Screener", "⭐ Watchlist", "🧪 Backtest"]
+    # and cover the active screen, the watchlist and portfolio holdings.
+    tab_screener, tab_watchlist, tab_portfolio, tab_backtest = st.tabs(
+        ["📊 Screener", "⭐ Watchlist", "💼 Portfolio", "🧪 Backtest"]
     )
 
     with tab_screener:
@@ -2015,6 +2286,9 @@ def main() -> None:
 
     with tab_watchlist:
         render_watchlist_tab()
+
+    with tab_portfolio:
+        render_portfolio_tab()
 
     with tab_backtest:
         render_backtest_tab(store)

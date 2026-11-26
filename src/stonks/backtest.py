@@ -9,7 +9,7 @@ provider's cap, so that is the window offered here.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from stonks.detail_parse import parse_history
@@ -342,7 +342,7 @@ def run_backtest(
     start: str | None = None,
     end: str | None = None,
     initial: float = 10_000.0,
-    benchmark: str | None = None,
+    benchmark: str | Sequence[str] | None = None,
     contributions: list[float] | None = None,
     frequency: str = "none",
     fetch: Callable[[str], dict[str, Any]] | None = None,
@@ -358,6 +358,8 @@ def run_backtest(
         start: Optional first month, inclusive, as ``YYYY-MM`` or ``YYYY-MM-DD``.
         end: Optional last month, inclusive, same format.
         initial: Starting portfolio value.
+        benchmark: One ticker, a comma-separated string or a sequence of
+            tickers; each is compared over the same window.
         contributions: Amount added per contribution, one per symbol.
         frequency: One of :data:`CONTRIBUTION_MONTHS`; ``none`` disables deposits.
         fetch: Optional JSON fetcher, for tests.
@@ -420,10 +422,32 @@ def run_backtest(
         ticker: weight / sum(chosen.values()) * 100 for ticker, weight in chosen.items()
     }
     result["rebalance"] = rebalance
-    if benchmark:
-        result.update(
-            _benchmark_result(
-                store, benchmark, result, initial, contribution_map, frequency
-            )
+
+    raw_benchmarks = (
+        benchmark.replace(",", " ").split()
+        if isinstance(benchmark, str)
+        else [str(item) for item in benchmark or ()]
+    )
+    tickers: list[str] = []
+    for item in raw_benchmarks:
+        ticker = provider_symbol(item.strip().upper())
+        if ticker and ticker not in tickers:
+            tickers.append(ticker)
+
+    benchmark_results: list[dict[str, Any]] = []
+    benchmark_errors: list[str] = []
+    for ticker in tickers:
+        outcome = _benchmark_result(
+            store, ticker, result, initial, contribution_map, frequency
         )
+        if "benchmark_error" in outcome:
+            benchmark_errors.append(outcome["benchmark_error"])
+        else:
+            benchmark_results.append(outcome["benchmark"])
+    result["benchmarks"] = benchmark_results
+    result["benchmark_errors"] = benchmark_errors
+    if benchmark_results:
+        result["benchmark"] = benchmark_results[0]
+    if benchmark_errors:
+        result["benchmark_error"] = "; ".join(benchmark_errors)
     return result

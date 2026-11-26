@@ -22,9 +22,14 @@ def _offline_sanity(monkeypatch):
     monkeypatch.setattr(sanity, "save_report", lambda store, results, **kwargs: None)
 
 
-def _stub_store(monkeypatch) -> MagicMock:
+def _stub_store(
+    monkeypatch, monitored: list[str] | None = None, held: list[str] | None = None
+) -> MagicMock:
     store = MagicMock(spec=SQLiteStore)
     store.get_watchlist_symbols.return_value = []
+    store.get_monitored_symbols.return_value = monitored or []
+    store.get_position_symbols.return_value = held or []
+    store.get_stocks.return_value = ([], 0, 0)
     monkeypatch.setattr("stonks.worker.SQLiteStore", lambda: store)
     return store
 
@@ -603,3 +608,118 @@ def test_job_persists_buy_opportunity_alerts(monkeypatch, tmp_path) -> None:
     buy_alerts = [a for a in alerts if a["kind"] == "buy_opportunity"]
     assert len(buy_alerts) == 1
     assert buy_alerts[0]["symbol"] == "BOTH"
+
+
+def test_job_alerts_a_held_etf_but_not_a_watchlist_only_etf(
+    monkeypatch, tmp_path
+) -> None:
+    store = _real_store(monkeypatch, tmp_path)
+    store.add_to_watchlist("WET")
+    store.add_position("VUAA", 1, 100.0)
+    store.replace_stocks(
+        [
+            {"symbol": "WET", "price": 100.0, "type": "ETF"},
+            {"symbol": "VUAA", "price": 100.0, "type": "ETF"},
+        ]
+    )
+    monkeypatch.setattr(alerts, "day_bucket", lambda *a, **k: "2026-11-25")
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr("stonks.worker.fetch_watched_news", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        "stonks.worker.fetch_rows",
+        lambda discount_rate=None: [
+            {"symbol": "WET", "price": 107.0, "type": "ETF"},
+            {"symbol": "VUAA", "price": 107.0, "type": "ETF"},
+        ],
+    )
+
+    job()
+
+    kinds = [alert["kind"] for alert in store.get_alerts(unread_only=False)]
+    assert kinds == ["daily_move_up"]
+    assert store.get_alerts(unread_only=False)[0]["symbol"] == "VUAA"
+
+
+def test_job_fetches_news_for_holdings_outside_the_stored_universe(monkeypatch) -> None:
+    _stub_store(monkeypatch, monitored=["GHOST"], held=["GHOST"])
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr("stonks.worker.fetch_rows", lambda discount_rate=None: [])
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        "stonks.worker.fetch_watched_news",
+        lambda _store, symbols: seen.append(symbols) or 0,
+    )
+
+    job()
+
+    assert seen == [["GHOST"]]
+
+
+def test_job_fetches_news_for_held_etf_but_not_watchlist_only_etf(
+    monkeypatch, tmp_path
+) -> None:
+    store = _real_store(monkeypatch, tmp_path)
+    store.add_to_watchlist("AAA")
+    store.add_to_watchlist("WET")
+    store.add_position("VUAA", 1, 100.0)
+    store.replace_stocks(
+        [
+            {"symbol": "AAA", "price": 100.0, "type": "Stock"},
+            {"symbol": "WET", "price": 100.0, "type": "ETF"},
+            {"symbol": "VUAA", "price": 100.0, "type": "ETF"},
+        ]
+    )
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr(
+        "stonks.worker.fetch_rows",
+        lambda discount_rate=None: [
+            {"symbol": "AAA", "price": 100.0, "type": "Stock"},
+            {"symbol": "WET", "price": 100.0, "type": "ETF"},
+            {"symbol": "VUAA", "price": 100.0, "type": "ETF"},
+        ],
+    )
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        "stonks.worker.fetch_watched_news",
+        lambda _store, symbols: seen.append(symbols) or 0,
+    )
+
+    job()
+
+    assert seen == [["AAA", "VUAA"]]
+
+
+def test_job_preserves_held_rows_absent_from_the_fresh_universe(
+    monkeypatch, tmp_path
+) -> None:
+    store = _real_store(monkeypatch, tmp_path)
+    store.add_position("VUAA", 1, 100.0, currency="EUR")
+    store.replace_stocks(
+        [
+            {"symbol": "AAA", "price": 10.0, "type": "Stock"},
+            {
+                "symbol": "VUAA",
+                "price": 127.54,
+                "currency": "EUR",
+                "type": "ETF",
+            },
+        ]
+    )
+    _stub_discount_rate(monkeypatch)
+    _stub_largest_buys(monkeypatch)
+    monkeypatch.setattr("stonks.worker.fetch_watched_news", lambda *a, **k: 0)
+    monkeypatch.setattr(
+        "stonks.worker.fetch_rows",
+        lambda discount_rate=None: [{"symbol": "AAA", "price": 11.0, "type": "Stock"}],
+    )
+
+    job()
+
+    rows, _, _ = store.get_stocks(
+        filters={"symbol": {"values": ["VUAA"]}}, page=1, page_size=5
+    )
+    assert [row["symbol"] for row in rows] == ["VUAA"]
+    assert rows[0]["price"] == 127.54

@@ -194,6 +194,21 @@ class SQLiteStore:
                 )
             """)
             conn.execute("""
+                CREATE TABLE IF NOT EXISTS positions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    quantity REAL NOT NULL CHECK (quantity > 0),
+                    price REAL NOT NULL CHECK (price > 0),
+                    currency TEXT NOT NULL DEFAULT 'USD'
+                        CHECK (currency IN ('USD', 'EUR')),
+                    added_at REAL NOT NULL,
+                    notes TEXT DEFAULT ''
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_positions_symbol ON positions(symbol)
+            """)
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS sync_status (
                     symbol TEXT,
                     sync_type TEXT,
@@ -500,6 +515,85 @@ class SQLiteStore:
                 "SELECT symbol FROM stocks WHERE hedge_fund_buys = 1"
             ).fetchall()
         return [r[0] for r in rows]
+
+    # ── Positions ────────────────────────────────────────────────────
+
+    def add_position(
+        self,
+        symbol: str,
+        quantity: float,
+        price: float,
+        currency: str = "USD",
+        notes: str = "",
+    ) -> None:
+        """Record one portfolio lot."""
+        ticker = symbol.strip().upper()
+        if not ticker:
+            raise ValueError("Symbol is required")
+        quantity_value = float(quantity)
+        if not math.isfinite(quantity_value) or quantity_value <= 0:
+            raise ValueError("Quantity must be a positive finite number")
+        price_value = float(price)
+        if not math.isfinite(price_value) or price_value <= 0:
+            raise ValueError("Price must be a positive finite number")
+        currency_code = currency.strip().upper()
+        if currency_code not in {"USD", "EUR"}:
+            raise ValueError("Currency must be USD or EUR")
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO positions
+                   (symbol, quantity, price, currency, added_at, notes)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    ticker,
+                    quantity_value,
+                    price_value,
+                    currency_code,
+                    time.time(),
+                    notes,
+                ),
+            )
+            conn.commit()
+
+    def delete_position(self, position_id: int) -> None:
+        """Delete a single portfolio lot."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM positions WHERE id=?", (position_id,))
+            conn.commit()
+
+    def get_positions(self) -> list[dict[str, Any]]:
+        """Return every portfolio lot ordered by symbol, then oldest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, symbol, quantity, price, currency, added_at, notes
+                   FROM positions ORDER BY symbol, added_at, id"""
+            ).fetchall()
+        return [
+            {
+                "id": r[0],
+                "symbol": r[1],
+                "quantity": r[2],
+                "price": r[3],
+                "currency": r[4],
+                "added_at": r[5],
+                "notes": r[6],
+            }
+            for r in rows
+        ]
+
+    def get_position_symbols(self) -> list[str]:
+        """Return the distinct symbols held in the portfolio."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT symbol FROM positions ORDER BY symbol"
+            ).fetchall()
+        return [r[0] for r in rows]
+
+    def get_monitored_symbols(self) -> list[str]:
+        """Return every symbol on the watchlist or held in the portfolio."""
+        return sorted(
+            set(self.get_watchlist_symbols()) | set(self.get_position_symbols())
+        )
 
     # ── Sync Status ──────────────────────────────────────────────────
 

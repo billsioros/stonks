@@ -1,5 +1,6 @@
 """Tests for the SQLiteStore module."""
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -222,6 +223,82 @@ class TestSQLiteStore:
 
         store.save_metadata("version", "1.1.0")
         assert store.get_metadata("version") == "1.1.0"
+
+    # ── Positions ────────────────────────────────────────────────
+
+    def test_get_positions_orders_lots_and_keeps_them_separate(
+        self, store: SQLiteStore
+    ) -> None:
+        store.add_position("googl", 5, 100.0, "usd")
+        store.add_position("CROX", 2, 50.0, "USD")
+        store.add_position("GOOGL", 3, 120.0, "EUR")
+
+        rows = store.get_positions()
+
+        assert set(rows[0]) == {
+            "id",
+            "symbol",
+            "quantity",
+            "price",
+            "currency",
+            "added_at",
+            "notes",
+        }
+        assert [(row["symbol"], row["quantity"], row["currency"]) for row in rows] == [
+            ("CROX", 2.0, "USD"),
+            ("GOOGL", 5.0, "USD"),
+            ("GOOGL", 3.0, "EUR"),
+        ]
+        assert store.get_position_symbols() == ["CROX", "GOOGL"]
+
+    def test_delete_position_removes_only_one_lot(self, store: SQLiteStore) -> None:
+        store.add_position("AAA", 1, 10.0)
+        store.add_position("AAA", 2, 12.0)
+        first_id = store.get_positions()[0]["id"]
+        store.delete_position(first_id)
+        assert [row["quantity"] for row in store.get_positions()] == [2.0]
+
+    def test_add_position_rejects_invalid_values(self, store: SQLiteStore) -> None:
+        with pytest.raises(ValueError):
+            store.add_position("", 1, 10.0)
+        with pytest.raises(ValueError):
+            store.add_position("AAA", 0, 10.0)
+        with pytest.raises(ValueError):
+            store.add_position("AAA", 1, -1.0)
+        with pytest.raises(ValueError):
+            store.add_position("AAA", float("nan"), 10.0)
+        with pytest.raises(ValueError):
+            store.add_position("AAA", 1, 10.0, "GBP")
+        with pytest.raises(ValueError):
+            store.add_position("AAA", 1, 10.0, "")
+
+    def test_add_position_normalizes_lowercase_currency(
+        self, store: SQLiteStore
+    ) -> None:
+        store.add_position("AAA", 1, 10.0, "usd")
+
+        assert store.get_positions()[0]["currency"] == "USD"
+
+    def test_positions_schema_rejects_unsupported_currency(
+        self, store: SQLiteStore
+    ) -> None:
+        with pytest.raises(sqlite3.IntegrityError):
+            with store._connect() as conn:
+                conn.execute(
+                    """INSERT INTO positions
+                       (symbol, quantity, price, currency, added_at)
+                       VALUES (?, ?, ?, ?, ?)""",
+                    ("AAA", 1.0, 10.0, "GBP", 0.0),
+                )
+
+    def test_get_monitored_symbols_unions_watchlist_and_positions(
+        self, store: SQLiteStore
+    ) -> None:
+        store.add_to_watchlist("WATCH")
+        store.add_to_watchlist("BOTH")
+        store.add_position("BOTH", 1, 10.0)
+        store.add_position("HELD", 2, 20.0)
+        assert store.get_monitored_symbols() == ["BOTH", "HELD", "WATCH"]
 
 
 def test_store_filters_sort_search_and_preserves_values(store: SQLiteStore) -> None:
