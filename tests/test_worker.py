@@ -606,8 +606,7 @@ def test_job_persists_buy_opportunity_alerts(monkeypatch, tmp_path) -> None:
 
     alerts = store.get_alerts(unread_only=False)
     buy_alerts = [a for a in alerts if a["kind"] == "buy_opportunity"]
-    assert len(buy_alerts) == 1
-    assert buy_alerts[0]["symbol"] == "BOTH"
+    assert sorted(a["symbol"] for a in buy_alerts) == ["BOTH", "NEAR"]
 
 
 def test_job_alerts_a_held_etf_but_not_a_watchlist_only_etf(
