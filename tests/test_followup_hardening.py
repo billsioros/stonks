@@ -8,7 +8,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from stonks import dossier, edgar, edgar_parse, report, sanity, stockanalysis, worker
+from stonks import (
+    dossier,
+    edgar,
+    edgar_parse,
+    hedgefollow,
+    report,
+    sanity,
+    stockanalysis,
+    worker,
+)
 from stonks.store import SQLiteStore
 from tests.test_edgar import _facts, _row, _statements
 
@@ -63,6 +72,29 @@ def test_worker_runs_sanity_checks_even_when_sync_fails(monkeypatch) -> None:
     assert ran == [1]
     assert saved == [checks]
     assert store.get_metadata is not None
+
+
+def test_hedgefollow_unavailable_does_not_fail_the_sync(monkeypatch) -> None:
+    """An unreachable buys page leaves flags unknown but still syncs the screen."""
+    store = _stub_worker_store(monkeypatch)
+    monkeypatch.setattr(
+        worker, "fetch_rows", lambda discount_rate=None: [{"symbol": "AAA"}]
+    )
+    monkeypatch.setattr(
+        worker,
+        "fetch_largest_buys",
+        lambda: (_ for _ in ()).throw(
+            hedgefollow.HedgeFollowUnavailable("The read operation timed out")
+        ),
+    )
+    monkeypatch.setattr(sanity, "run_sanity_checks", lambda store: [])
+    monkeypatch.setattr(sanity, "save_report", lambda store, results, **kwargs: None)
+
+    worker.job()
+
+    saved = {call.args[0]: call.args[1] for call in store.save_metadata.call_args_list}
+    assert saved["last_sync_status"] == "success"
+    assert saved["last_sync_error"] == ""
 
 
 @pytest.mark.parametrize(

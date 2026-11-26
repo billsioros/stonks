@@ -38,6 +38,10 @@ _HEADERS = {
 _TOKEN_PATTERN = re.compile(r'hf_dt = "([^"]+)"')
 
 
+class HedgeFollowUnavailable(OSError):
+    """The site could not be reached, so the buys list is unknown, not empty."""
+
+
 class _Session:
     """GET/POST through one cookie jar, as a browser would."""
 
@@ -115,7 +119,10 @@ def fetch_largest_buys(
         fetch: Optional ``fetch(url, data=None)`` callable, for tests.
 
     Returns:
-        The symbols in the list, or ``None`` when HedgeFollow could not be read.
+        The symbols in the list, or ``None`` when the page or payload changed.
+
+    Raises:
+        HedgeFollowUnavailable: the site could not be reached at all.
     """
     get = fetch or _Session()
     try:
@@ -125,8 +132,7 @@ def fetch_largest_buys(
             return None
         buys = parse_buys(get(REQUEST_URL, request_body(token)))
     except OSError as exc:
-        logger.warning("HedgeFollow buys list unavailable: %s", exc)
-        return None
+        raise HedgeFollowUnavailable(str(exc)) from exc
     if not buys:
         logger.warning("HedgeFollow buys list came back empty")
         return None

@@ -12,7 +12,11 @@ from stonks.alerts import buy_opportunity_alerts, daily_move_alerts, evaluate_al
 from stonks.config import DATA_DIR, WORKER_INTERVAL_MINUTES
 from stonks.detail import load_page
 from stonks.detail_parse import parse_overview
-from stonks.hedgefollow import apply_flags, fetch_largest_buys
+from stonks.hedgefollow import (
+    HedgeFollowUnavailable,
+    apply_flags,
+    fetch_largest_buys,
+)
 from stonks.stockanalysis import current_discount_rate, fetch_rows
 from stonks.store import SQLiteStore, is_stock_row
 
@@ -251,6 +255,8 @@ def job() -> None:
 
         try:
             largest_buys = fetch_largest_buys()
+        except HedgeFollowUnavailable:
+            largest_buys = None
         except OSError as exc:
             raise OSError(f"HedgeFollow largest-buys fetch failed: {exc}") from exc
         if largest_buys is None:
