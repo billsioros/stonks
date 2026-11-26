@@ -160,3 +160,28 @@ def test_backtest_defaults_to_vuaa_and_qqq(tmp_path, monkeypatch) -> None:
     assert not at.exception
     field = next(item for item in at.text_input if item.label == "Benchmarks")
     assert field.value == "VUAA, QQQ"
+
+
+def test_backtest_contribution_per_period_defaults_to_500(
+    tmp_path, monkeypatch
+) -> None:
+    db_path = tmp_path / "bt.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks([{"symbol": "AAA", "price": 100.0, "currency": "USD"}])
+    real_init = SQLiteStore.__init__
+
+    def _init(self, *args, **kwargs):
+        kwargs.setdefault("db_path", db_path)
+        return real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(SQLiteStore, "__init__", _init)
+    monkeypatch.setattr(app, "get_store", lambda: SQLiteStore(db_path=db_path))
+    st.cache_resource.clear()
+    at = AppTest.from_file("src/stonks/app.py", default_timeout=180)
+    at.run()
+
+    assert not at.exception
+    field = next(
+        item for item in at.number_input if item.label == "Contribution per period"
+    )
+    assert field.value == 500.0

@@ -163,7 +163,7 @@ def default_settings() -> dict[str, Any]:
         "end": dt.date.today(),
         "rebalance": "annual",
         "allocation_mode": "percent",
-        "contribution": 0.0,
+        "contribution": 500.0,
         "contribution_frequency": "monthly",
     }
 

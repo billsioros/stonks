@@ -425,7 +425,7 @@ def test_parse_portfolio_amount_mode_requires_every_amount() -> None:
 def test_new_settings_round_trip_and_old_settings_default() -> None:
     settings = default_settings()
     assert settings["allocation_mode"] == "percent"
-    assert settings["contribution"] == 0.0
+    assert settings["contribution"] == 500.0
     assert settings["contribution_frequency"] == "monthly"
     rows = _portfolio_rows(settings)
     assert "Allocation" in rows[0]
