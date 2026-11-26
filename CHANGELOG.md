@@ -2,6 +2,58 @@
 
 <!-- version list -->
 
+## v2.10.0 (2026-11-26)
+
+### Bug Fixes
+
+- Correct daily P&L headline and watchlist ETF news
+  ([`6d99e03`](https://github.com/billsioros/stonks/commit/6d99e03a05dad0f4ce0fb3ffcf8eb86f4502a811))
+
+- Exclude unpriced holdings from portfolio USD totals
+  ([`0190153`](https://github.com/billsioros/stonks/commit/019015396f3e490a5f9e1395559a1ef05cc9c93d))
+
+- Preserve held quotes outside the screener universe
+  ([`e0f35d5`](https://github.com/billsioros/stonks/commit/e0f35d52090d34586fbaae3cfce335b98fd752fe))
+
+- Restore direct entry point and isolate portfolio test patches
+  ([`54344a3`](https://github.com/billsioros/stonks/commit/54344a3127322a6d80468830ecb8eb751cc69c12))
+
+- Restrict portfolio lots to USD and EUR
+  ([`5227b8d`](https://github.com/billsioros/stonks/commit/5227b8dd945b86dbdeb82460a5b25741b3b40a62))
+
+### Features
+
+- Add candidate and portfolio correlation helpers
+  ([`80614e8`](https://github.com/billsioros/stonks/commit/80614e8f05194b5493a8f8209655ee79f7e8c9b5))
+
+- Add portfolio tab with lot editor and quick backtest
+  ([`cfb6db4`](https://github.com/billsioros/stonks/commit/cfb6db4a0a6669ac371656c560364326b17fb784))
+
+- Add portfolio valuation and FX helpers
+  ([`81d7386`](https://github.com/billsioros/stonks/commit/81d7386bb2d857c617ce9f71083d27e46c7fc2b9))
+
+- Alert portfolio holdings outside the watchlist
+  ([`7623aeb`](https://github.com/billsioros/stonks/commit/7623aeb06dac81a7cc9c552c24221a1ed693ac6e))
+
+- Default backtest contribution to 500 euros
+  ([`f28a89a`](https://github.com/billsioros/stonks/commit/f28a89addb525d318ae5bf7d1b81f37576133961))
+
+- Flag screener candidates correlated with the portfolio
+  ([`ab32e4c`](https://github.com/billsioros/stonks/commit/ab32e4c8df655dbb41beb3f23ed570273c22b7b7))
+
+- Persist portfolio lots in SQLite
+  ([`a866c7b`](https://github.com/billsioros/stonks/commit/a866c7b8cdef0ee85fb5a2d7f3715214c964ce94))
+
+- Run holdings backtests with dual benchmarks and correlation
+  ([`337e47b`](https://github.com/billsioros/stonks/commit/337e47bc6a5e9812c0209c74028e0364028e1981))
+
+- Show EUR portfolio headlines and color correlation by level
+  ([`1927c0d`](https://github.com/billsioros/stonks/commit/1927c0d582d630d3f30eb48fb59291cb7e7e651d))
+
+- Surface portfolio alerts in notifications
+  ([`1a1f230`](https://github.com/billsioros/stonks/commit/1a1f23015c03b70a3479cf70ea899dcc62c42bb0))
+
+
 ## v2.9.0 (2026-11-25)
 
 ### Features
