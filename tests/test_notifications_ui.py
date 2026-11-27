@@ -265,6 +265,38 @@ def test_notifications_group_alerts_by_symbol(tmp_path: Path, monkeypatch) -> No
     assert labels.count("AMD ▸") == 1
 
 
+def test_notifications_show_more_than_the_store_default_limit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A broad sync can leave more unread alerts than the store's default page."""
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    symbols = [f"SYM{index:02d}" for index in range(55)]
+    seeded.replace_stocks(
+        [{"symbol": symbol, "description": symbol} for symbol in symbols]
+    )
+    for symbol in symbols:
+        seeded.add_alert(
+            symbol,
+            "buy_opportunity",
+            "good",
+            "Near its 52-week low",
+            None,
+            f"{symbol}:buy_opportunity:test",
+        )
+    assert len(seeded.get_alerts()) == 50
+    assert len(seeded.get_alerts(limit=None)) == 55
+
+    at = _run_app(db_path, monkeypatch)
+
+    assert not at.exception
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    assert notification.label == "🔔 Notifications (55)"
+    labels = [button.label for button in notification.button]
+    assert all(f"{symbol} ▸" in labels for symbol in symbols)
+    assert any("55 unread alerts" in str(item.value) for item in at.info)
+
+
 def test_notifications_merge_a_screener_buy_with_alerts_for_the_same_symbol(
     tmp_path: Path, monkeypatch
 ) -> None:

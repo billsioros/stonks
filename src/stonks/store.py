@@ -767,9 +767,13 @@ class SQLiteStore:
         *,
         unread_only: bool = True,
         symbol: str | None = None,
-        limit: int = 50,
+        limit: int | None = 50,
     ) -> list[dict[str, Any]]:
-        """Return alerts newest first, unread only unless told otherwise."""
+        """Return alerts newest first, unread only unless told otherwise.
+
+        Pass ``limit=None`` for every matching alert, e.g. to show all unread
+        alerts in the notifications panel.
+        """
         where = []
         params: list[Any] = []
         if unread_only:
@@ -782,10 +786,13 @@ class SQLiteStore:
             "SELECT id, symbol, kind, severity, title, detail, "
             "dedupe_key, created_at, seen_at "
             f"FROM alerts WHERE {where_sql} "  # nosec B608
-            "ORDER BY created_at DESC, id DESC LIMIT ?"
+            "ORDER BY created_at DESC, id DESC"
         )
+        if limit is not None:
+            query += " LIMIT ?"
+            params.append(limit)
         with self._connect() as conn:
-            rows = conn.execute(query, [*params, limit]).fetchall()
+            rows = conn.execute(query, params).fetchall()
         return [
             {
                 "id": r[0],

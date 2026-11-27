@@ -2108,7 +2108,9 @@ def render_notifications(store: SQLiteStore) -> None:
         )
     ) | set(store.get_monitored_symbols())
     alerts = [
-        alert for alert in store.get_alerts() if alert["symbol"] in visible_symbols
+        alert
+        for alert in store.get_alerts(limit=None)
+        if alert["symbol"] in visible_symbols
     ]
     if not alerts:
         return

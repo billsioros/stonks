@@ -432,6 +432,13 @@ def test_get_alerts_filters_by_symbol(store: SQLiteStore) -> None:
     assert [a["symbol"] for a in store.get_alerts(symbol="AAA")] == ["AAA"]
 
 
+def test_get_alerts_limit_none_returns_every_match(store: SQLiteStore) -> None:
+    for index in range(55):
+        store.add_alert(f"S{index}", "off_high", "good", "cheap", None, f"k{index}")
+    assert len(store.get_alerts()) == 50
+    assert len(store.get_alerts(limit=None)) == 55
+
+
 def test_alert_row_exposes_all_columns(store: SQLiteStore) -> None:
     store.add_alert("AAA", "off_high", "good", "cheap", "100 vs 200", "a1")
     alert = store.get_alerts()[0]
