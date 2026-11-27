@@ -60,6 +60,7 @@ def test_banner_is_hidden_when_everything_is_read(tmp_path: Path, monkeypatch) -
     assert not at.exception
     assert not [item for item in at.info if "unread alert" in str(item.value)]
     assert not [button for button in at.button if button.label == "Mark all read"]
+    assert not [button for button in at.button if button.label == "✓"]
 
 
 def test_banner_lists_alert_and_marks_all_read(tmp_path: Path, monkeypatch) -> None:

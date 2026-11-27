@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from stonks import hedgefollow
 
 SAMPLE_PAGE = """
@@ -84,11 +86,12 @@ class TestFetchLargestBuys:
 
         assert buys is None
 
-    def test_network_failure_is_none(self) -> None:
+    def test_network_failure_reports_unavailable_not_a_changed_page(self) -> None:
         def boom(url: str, data: bytes | None = None) -> str:
             raise OSError("hedgefollow unreachable")
 
-        assert hedgefollow.fetch_largest_buys(boom) is None
+        with pytest.raises(hedgefollow.HedgeFollowUnavailable, match="unreachable"):
+            hedgefollow.fetch_largest_buys(boom)
 
     def test_empty_list_is_none(self) -> None:
         def fake_fetch(url: str, data: bytes | None = None) -> str:

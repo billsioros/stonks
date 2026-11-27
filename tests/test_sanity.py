@@ -148,6 +148,21 @@ def test_hedgefollow_check_compares_flags(monkeypatch, tmp_path) -> None:
     assert "token or payload changed" in unavailable.detail
 
 
+def test_hedgefollow_network_failure_is_unverifiable_not_a_divergence(
+    tmp_path,
+) -> None:
+    """A DNS/timeout outage must never produce the app's divergence banner."""
+    store = SQLiteStore(db_path=tmp_path / "test.db")
+
+    def unreachable(url: str, data: bytes | None = None) -> str:
+        raise OSError("<urlopen error [Errno -2] Name or service not known>")
+
+    result = sanity.check_hedgefollow(store, fetch=unreachable)
+
+    assert result.ok is None
+    assert "unreachable" in result.detail
+
+
 def test_gurufocus_lynch_check_recomputes_lynch_values(tmp_path) -> None:
     store = SQLiteStore(db_path=tmp_path / "test.db")
     rows = []

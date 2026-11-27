@@ -29,7 +29,7 @@ from typing import Any
 
 from stonks.backtest import run_backtest
 from stonks.config import WORKER_INTERVAL_MINUTES
-from stonks.hedgefollow import fetch_largest_buys
+from stonks.hedgefollow import HedgeFollowUnavailable, fetch_largest_buys
 from stonks.presets import default_screen
 from stonks.stockanalysis import fetch_rows
 from stonks.store import SQLiteStore
@@ -250,7 +250,10 @@ def check_hedgefollow(
 ) -> CheckResult:
     """Compare the live largest-buys list with the flags stored for the screen."""
     platform = "HedgeFollow"
-    buys = fetch_largest_buys(fetch)
+    try:
+        buys = fetch_largest_buys(fetch)
+    except HedgeFollowUnavailable as exc:
+        return CheckResult(platform, "Largest HF Buys", None, f"unreachable: {exc}")
     if not buys:
         return CheckResult(
             platform,

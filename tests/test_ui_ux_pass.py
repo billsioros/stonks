@@ -180,25 +180,27 @@ def test_notifications_promote_and_tag_watchlist_buy_opportunities(
     store = SQLiteStore(db_path=db_path)
     store.replace_stocks(
         [
-            {
-                "symbol": "WATCH",
-                "description": "Watched company",
-                "price": 101.0,
-                "week_52_low": 100.0,
-                "dcf_fair_value": None,
-                "lynch_fair_value": None,
-            },
-            {
-                "symbol": "OTHER",
-                "description": "Below both estimates",
-                "price": 101.0,
-                "week_52_low": 100.0,
-                "dcf_fair_value": 120.0,
-                "lynch_fair_value": 130.0,
-            },
+            {"symbol": "WATCH", "description": "Watched company"},
+            {"symbol": "OTHER", "description": "Below both estimates"},
         ]
     )
     store.add_to_watchlist("WATCH")
+    store.add_alert(
+        "WATCH",
+        "buy_opportunity",
+        "good",
+        "Near its 52-week low",
+        "Price 101.00 vs 52w low 100.00",
+        "WATCH:buy_opportunity:test",
+    )
+    store.add_alert(
+        "OTHER",
+        "buy_opportunity",
+        "good",
+        "Near its 52-week low",
+        "Price 101.00 vs 52w low 100.00",
+        "OTHER:buy_opportunity:test",
+    )
 
     at = _app_with_db(db_path, monkeypatch)
     assert not at.exception

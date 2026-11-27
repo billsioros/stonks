@@ -33,3 +33,8 @@ Thumbs.db
 # Other
 .coverage
 .mypy_cache
+
+# Local planning docs and generated tooling output
+/docs/superpowers/
+/graphify-out/
+/.worktrees/

@@ -24,7 +24,6 @@ TARGET_UPSIDE_PCT = 25.0
 SHORT_RISE_POINTS = 2.0
 # Move from the first price seen for a symbol on a given calendar day.
 DAILY_MOVE_PCT = 5.0
-BUY_OPPORTUNITY_ALERTS_PER_SYNC = 5
 
 
 @dataclass(frozen=True)
@@ -100,30 +99,37 @@ def buy_opportunity_alerts(
     rows: list[dict[str, Any]],
     *,
     bucket: str | None = None,
-    cap: int = BUY_OPPORTUNITY_ALERTS_PER_SYNC,
 ) -> list[Alert]:
-    """Alerts for strong buy opportunities: near 52w low and below both fair values.
+    """Alerts for every stock near its 52-week low.
 
-    Dedupe is weekly via the dedupe key; callers should still cap per sync.
+    Rows closest to the low come first. The signal is strongest when the price
+    is also below both DCF and Peter Lynch fair value, which the title calls
+    out. Dedupe is weekly via the dedupe key, and every candidate is stored so
+    the app can show them all.
     """
     stamp = bucket or week_bucket()
     ranked: list[tuple[float, dict[str, Any]]] = []
     for row in rows:
         opportunity = buy_opportunity(row)
-        if opportunity is None or not opportunity["below_both_fair_values"]:
+        if opportunity is None:
             continue
         ranked.append((opportunity["above_low_pct"], opportunity))
 
     ranked.sort(key=lambda item: item[0])
     alerts: list[Alert] = []
-    for _, opportunity in ranked[: max(0, int(cap))]:
+    for _, opportunity in ranked:
         symbol = str(opportunity["symbol"])
+        title = (
+            f"{symbol} is near its 52-week low and below both DCF and Peter Lynch fair value"
+            if opportunity["below_both_fair_values"]
+            else "Near its 52-week low"
+        )
         alerts.append(
             _alert(
                 symbol,
                 "buy_opportunity",
                 "good",
-                f"{symbol} is near its 52-week low and below both DCF and Peter Lynch fair value",
+                title,
                 (
                     f"Price {_fmt_alert_number(opportunity['price'])} vs 52w low "
                     f"{_fmt_alert_number(opportunity['week_52_low'])}; DCF "
