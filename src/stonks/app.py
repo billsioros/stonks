@@ -2097,6 +2097,15 @@ def _group_severity_icon(alerts: list[dict[str, Any]]) -> str:
     return icons.get(strongest, "•")
 
 
+def _news_article_url(alert: dict[str, Any]) -> str | None:
+    """Recover the article URL stored in a news alert's dedupe key."""
+    parts = (alert.get("dedupe_key") or "").split(":", 2)
+    if len(parts) != 3 or parts[1] != "news":
+        return None
+    url = parts[2]
+    return url if url.startswith(("http://", "https://")) else None
+
+
 def render_notifications(store: SQLiteStore) -> None:
     """Show unread screener, watchlist and portfolio alerts together."""
     held_symbols = set(store.get_position_symbols())
@@ -2175,7 +2184,18 @@ def render_notifications(store: SQLiteStore) -> None:
                     alert_col, seen_col = st.columns([9, 1])
                     icon = severity_icons.get(alert["severity"], "•")
                     with alert_col:
-                        st.markdown(f"{icon} **{alert['title']}**")
+                        article_url = _news_article_url(alert)
+                        if article_url:
+                            st.link_button(
+                                f"{icon} **{alert['title']}**",
+                                article_url,
+                                key=f"news_article_{alert['id']}",
+                                help="Read article",
+                                type="tertiary",
+                                width="stretch",
+                            )
+                        else:
+                            st.markdown(f"{icon} **{alert['title']}**")
                     with seen_col:
                         if st.button(
                             "✓",

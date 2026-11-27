@@ -475,3 +475,46 @@ def test_mark_symbol_card_seen_leaves_other_symbols_unread(
     labels = [button.label for button in notification.button]
     assert "✓" in labels
     assert "Mark all read" in labels
+
+
+def test_news_alert_headline_links_to_article(tmp_path: Path, monkeypatch) -> None:
+    """The news headline is a link to the stored article URL."""
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks([{"symbol": "NVDA", "description": "Nvidia"}])
+    article_url = "https://example.com/news/nvda-earnings"
+    seeded.add_alert(
+        "NVDA",
+        "news",
+        "info",
+        "NVDA earnings beat",
+        "Reuters · 2h ago",
+        f"NVDA:news:{article_url}",
+    )
+    seeded.add_alert(
+        "NVDA",
+        "off_high",
+        "warn",
+        "NVDA pullback",
+        "10% off high",
+        "NVDA:off_high:1",
+    )
+
+    at = _run_app(db_path, monkeypatch)
+
+    assert not at.exception
+
+    def _elements(node):
+        for child in getattr(node, "children", {}).values():
+            yield child
+            yield from _elements(child)
+
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    links = [
+        element
+        for element in _elements(notification)
+        if getattr(getattr(element, "proto", None), "url", "") == article_url
+    ]
+    assert len(links) == 1
+    assert "NVDA earnings beat" in links[0].proto.label
+    assert "NVDA pullback" in str(notification.markdown[-1].value)
