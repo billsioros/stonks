@@ -2160,8 +2160,18 @@ def render_notifications(store: SQLiteStore) -> None:
                     header += " · 💼 in portfolio"
                 st.markdown(header)
                 for alert in group:
+                    alert_col, seen_col = st.columns([9, 1])
                     icon = severity_icons.get(alert["severity"], "•")
-                    st.markdown(f"{icon} **{alert['title']}**")
+                    with alert_col:
+                        st.markdown(f"{icon} **{alert['title']}**")
+                    with seen_col:
+                        if st.button(
+                            "✓",
+                            key=f"alert_seen_{alert['id']}",
+                            help="Mark as seen",
+                        ):
+                            store.mark_alerts_seen([alert["id"]])
+                            st.rerun()
                     meta = [alert.get("detail") or "", _ago(alert.get("created_at"))]
                     st.caption(" · ".join(part for part in meta if part))
 

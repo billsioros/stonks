@@ -333,6 +333,9 @@ def test_notifications_group_header_tolerates_unknown_severity(
     assert not at.exception
     notification = next(item for item in at.expander if "Notifications" in item.label)
     assert "NVDA" in str(notification.markdown[0].value)
+    seen = [button for button in notification.button if button.label == "✓"]
+    assert seen
+    assert seen[0].help == "Mark as seen"
 
 
 def test_notifications_show_holdings_outside_the_active_screen(
@@ -363,3 +366,33 @@ def test_notifications_show_holdings_outside_the_active_screen(
     )
     assert "VUAA" in text
     assert "in portfolio" in text
+
+
+def test_mark_one_alert_seen_leaves_other_alerts_unread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks(
+        [
+            {"symbol": "NVDA", "description": "Nvidia"},
+            {"symbol": "AMD", "description": "AMD"},
+        ]
+    )
+    seeded.add_alert("NVDA", "news", "info", "Old headline", "TipRanks", "NVDA:news:1")
+    seeded.add_alert(
+        "AMD", "off_high", "warn", "AMD pullback", "10% off high", "AMD:off_high:1"
+    )
+    seeded.add_alert(
+        "NVDA", "news", "info", "New headline", "ETF Trends", "NVDA:news:2"
+    )
+    ids = [a["id"] for a in seeded.get_alerts()]
+
+    at = _run_app(db_path, monkeypatch)
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    next(b for b in notification.button if b.label == "✓").click().run()
+
+    assert [a["id"] for a in seeded.get_alerts()] == ids[1:]
+    at = _run_app(db_path, monkeypatch)
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    assert "New headline" not in str(notification.markdown[-1].value)
