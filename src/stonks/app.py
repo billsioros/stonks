@@ -2160,7 +2160,17 @@ def render_notifications(store: SQLiteStore) -> None:
                     header += " · ⭐ on watchlist"
                 if symbol in held_symbols:
                     header += " · 💼 in portfolio"
-                st.markdown(header)
+                header_col, symbol_seen_col = st.columns([9, 1])
+                with header_col:
+                    st.markdown(header)
+                with symbol_seen_col:
+                    if st.button(
+                        "✓ all",
+                        key=f"symbol_seen_{symbol}",
+                        help=f"Mark all {symbol} notifications as seen",
+                    ):
+                        store.mark_alerts_seen([alert["id"] for alert in group])
+                        st.rerun()
                 for alert in group:
                     alert_col, seen_col = st.columns([9, 1])
                     icon = severity_icons.get(alert["severity"], "•")

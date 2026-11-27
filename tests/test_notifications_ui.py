@@ -428,3 +428,50 @@ def test_mark_one_alert_seen_leaves_other_alerts_unread(
     at = _run_app(db_path, monkeypatch)
     notification = next(item for item in at.expander if "Notifications" in item.label)
     assert "New headline" not in str(notification.markdown[-1].value)
+
+
+def test_mark_symbol_card_seen_leaves_other_symbols_unread(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A symbol-row control clears every alert in that card only."""
+    db_path = tmp_path / "stonks.db"
+    seeded = SQLiteStore(db_path=db_path)
+    seeded.replace_stocks(
+        [
+            {"symbol": "NVDA", "description": "Nvidia"},
+            {"symbol": "AMD", "description": "AMD"},
+        ]
+    )
+    seeded.add_alert("NVDA", "news", "info", "Old headline", "TipRanks", "NVDA:news:1")
+    seeded.add_alert(
+        "NVDA", "news", "info", "New headline", "ETF Trends", "NVDA:news:2"
+    )
+    seeded.add_alert(
+        "AMD", "off_high", "warn", "AMD pullback", "10% off high", "AMD:off_high:1"
+    )
+    before = seeded.get_alerts()
+    amd_id = next(alert["id"] for alert in before if alert["symbol"] == "AMD")
+
+    at = _run_app(db_path, monkeypatch)
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    symbol_buttons = [
+        button
+        for button in notification.button
+        if button.help == "Mark all NVDA notifications as seen"
+    ]
+    assert len(symbol_buttons) == 1
+    symbol_buttons[0].click().run()
+
+    assert [alert["id"] for alert in seeded.get_alerts()] == [amd_id]
+
+    at = _run_app(db_path, monkeypatch)
+    notification = next(item for item in at.expander if "Notifications" in item.label)
+    text = " ".join(
+        str(getattr(value, "value", value))
+        for value in [*notification.markdown, *notification.caption]
+    )
+    assert "NVDA" not in text
+    assert "AMD pullback" in text
+    labels = [button.label for button in notification.button]
+    assert "✓" in labels
+    assert "Mark all read" in labels
