@@ -504,17 +504,9 @@ def test_news_alert_headline_links_to_article(tmp_path: Path, monkeypatch) -> No
 
     assert not at.exception
 
-    def _elements(node):
-        for child in getattr(node, "children", {}).values():
-            yield child
-            yield from _elements(child)
-
     notification = next(item for item in at.expander if "Notifications" in item.label)
-    links = [
-        element
-        for element in _elements(notification)
-        if getattr(getattr(element, "proto", None), "url", "") == article_url
-    ]
-    assert len(links) == 1
-    assert "NVDA earnings beat" in links[0].proto.label
-    assert "NVDA pullback" in str(notification.markdown[-1].value)
+    markdown = " ".join(str(item.value) for item in notification.markdown)
+    assert f'href="{article_url}"' in markdown
+    assert 'target="_blank"' in markdown
+    assert "NVDA earnings beat" in markdown
+    assert "NVDA pullback" in markdown

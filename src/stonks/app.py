@@ -2186,13 +2186,11 @@ def render_notifications(store: SQLiteStore) -> None:
                     with alert_col:
                         article_url = _news_article_url(alert)
                         if article_url:
-                            st.link_button(
-                                f"{icon} **{alert['title']}**",
-                                article_url,
-                                key=f"news_article_{alert['id']}",
-                                help="Read article",
-                                type="tertiary",
-                                width="stretch",
+                            st.markdown(
+                                f'{icon} <a href="{_escape(article_url, quote=True)}" '
+                                'target="_blank" rel="noopener noreferrer">'
+                                f"<strong>{_escape(str(alert['title']))}</strong></a>",
+                                unsafe_allow_html=True,
                             )
                         else:
                             st.markdown(f"{icon} **{alert['title']}**")
