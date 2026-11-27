@@ -2,6 +2,42 @@
 
 <!-- version list -->
 
+## v2.11.0 (2026-11-27)
+
+### Bug Fixes
+
+- Left-align news notification article links
+  ([`9ead4d1`](https://github.com/billsioros/stonks/commit/9ead4d16fa402f23773870c0ac393696bac25062))
+
+- Show all unread alerts in notifications
+  ([`9f64571`](https://github.com/billsioros/stonks/commit/9f645715afdbbab3eb6dc779b9bc69eaa13d8fc0))
+
+- Stop reporting HedgeFollow outages as divergences
+  ([`66f73e9`](https://github.com/billsioros/stonks/commit/66f73e9e289791506a3537f4eaaa41996d8f89fe))
+
+### Chores
+
+- Clean up working tree tracking
+  ([`6c58cb1`](https://github.com/billsioros/stonks/commit/6c58cb114206e9e91fa45ef33397dd2115599bbd))
+
+### Features
+
+- Link news notification headlines to articles
+  ([`f0263f4`](https://github.com/billsioros/stonks/commit/f0263f4f92a20c93386adc934f93f629e8c96f4a))
+
+- Mark a symbol's notifications seen from its card header
+  ([`c258558`](https://github.com/billsioros/stonks/commit/c258558a400f66939400709fe63dabe87ba2118d))
+
+- Mark individual notifications as seen
+  ([`50bfc0f`](https://github.com/billsioros/stonks/commit/50bfc0fe6d7366ac74adcd32e414a8f2a6ae779e))
+
+- Source notifications only from stored alerts
+  ([`e97fe39`](https://github.com/billsioros/stonks/commit/e97fe396736a0f7809b9aeca9bbd3494973a3632))
+
+- Store every near-52-week-low opportunity as an alert
+  ([`641c726`](https://github.com/billsioros/stonks/commit/641c72686451bf4245bdebcb54f0ce7fabcd841f))
+
+
 ## v2.10.0 (2026-11-26)
 
 ### Bug Fixes
