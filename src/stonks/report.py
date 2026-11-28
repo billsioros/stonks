@@ -9,10 +9,13 @@ only when the user opts in; `report_view.py` owns the widgets.
 
 from __future__ import annotations
 
+import json
 import math
+import re
 import statistics
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -23,12 +26,19 @@ from stonks.config import COLUMN_DISPLAY_NAMES
 from stonks.dossier import Check, Dossier, gate_status
 
 __all__ = [
+    "ADVISOR_HEADINGS",
+    "ADVISOR_MAX_TOKENS",
+    "ADVISOR_SECTIONS",
+    "ADVISOR_SYSTEM_INSTRUCTION",
     "REPORT_MODEL",
     "SYMBOL_MAX_TOKENS",
     "SYMBOL_SYSTEM_INSTRUCTION",
     "SYSTEM_INSTRUCTION",
+    "AdvisorPick",
+    "AdvisorReport",
     "dossier_block",
     "explain_error",
+    "parse_advisor_reply",
     "request_report",
     "screener_report_prompt",
     "symbol_report_prompt",
@@ -172,6 +182,82 @@ SYMBOL_REPORT_SECTIONS: str = (
     "Data:\n"
 )
 
+# The advisor returns one JSON object: a markdown summary holding these six
+# headings in order, plus a ranked list of picks with weights. The parser below
+# enforces both halves so the UI never renders a half-valid recommendation.
+ADVISOR_HEADINGS: tuple[str, ...] = (
+    "Summary",
+    "Why these picks",
+    "Fit with your portfolio",
+    "Diversification and concentration changes",
+    "Risks and what would change the ranking",
+    "TL;DR",
+)
+
+ADVISOR_SECTIONS: str = (
+    "The `summary` value must be markdown with exactly these six `##` headings "
+    "in this order, and no other `##` headings:\n"
+    "\n"
+    "## Summary\n"
+    "One or two sentences on the ranked picks and the single objective: "
+    "maximize growth with diversification in mind.\n"
+    "\n"
+    "## Why these picks\n"
+    "Why each pick outranks the other candidate rows, backed by supplied "
+    "figures.\n"
+    "\n"
+    "## Fit with your portfolio\n"
+    "How the picks complement the listed holdings, using only supplied "
+    "figures.\n"
+    "\n"
+    "## Diversification and concentration changes\n"
+    "The concentration and overlap changes, described with supplied figures "
+    "only. Do not compute or invent portfolio statistics.\n"
+    "\n"
+    "## Risks and what would change the ranking\n"
+    "The strongest case against each pick and the supplied figures that "
+    "would reorder the ranking.\n"
+    "\n"
+    "## TL;DR\n"
+    "Three or four short sentences condensing the ranking and its main risk.\n"
+    "\n"
+    "Citations: inline every figure or claim with the source row and field it "
+    "came from, e.g. `[Source: AAA, pe_ratio]` or `[Source: HLD, weight_pct]`. "
+    "A heading is not a source.\n"
+)
+
+ADVISOR_SYSTEM_INSTRUCTION: str = (
+    "You are a stock-selection assistant. Return ONLY one JSON object with two "
+    "keys: `summary`, a markdown string, and `picks`, an array of objects with "
+    "`symbol`, `weight` (a finite non-negative number) and `reason` (a string). "
+    "Choose symbols only from the supplied candidate rows. Use only the "
+    "figures provided -- do not invent data, do not make price predictions, "
+    "and do not supply portfolio statistics. Cite every figure inline with "
+    "its source row and field. "
+    f"{GAP_DISCLAIMER} "
+    "This is research support, not financial advice."
+)
+
+ADVISOR_MAX_TOKENS: int = 2048
+
+
+@dataclass(frozen=True)
+class AdvisorPick:
+    """One AI-ranked candidate and its target weight in the resulting portfolio."""
+
+    symbol: str
+    weight: float
+    reason: str
+
+
+@dataclass(frozen=True)
+class AdvisorReport:
+    """A validated advisor reply: the six-section summary and ranked picks."""
+
+    summary: str
+    picks: tuple[AdvisorPick, ...]
+
+
 # The leaderboards shown below: prompt title, row key, column label.
 _LEADERBOARDS: tuple[tuple[str, str, str], ...] = (
     ("Largest analyst price-target upside", "pt_upside_pct", "PT upside"),
@@ -201,6 +287,67 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if math.isfinite(number) else None
+
+
+def parse_advisor_reply(text: str, allowed_symbols: Collection[str]) -> AdvisorReport:
+    """Validate one advisor JSON reply into an AdvisorReport.
+
+    An optional ```json fence is tolerated. The summary must contain exactly
+    ADVISOR_HEADINGS as its `##` headings, in order. Picks are uppercased,
+    restricted to `allowed_symbols`, de-duplicated keeping the first occurrence,
+    and checked for finite non-negative weights and non-empty reasons. Every
+    failure raises ValueError so the caller can show the raw reply instead of a
+    half-rendered table.
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[^\n]*\n", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned)
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"advisor reply is not valid JSON: {exc}") from exc
+    if not isinstance(data, Mapping):
+        raise ValueError(  # noqa: TRY004 - every parse failure is a ValueError for the caller
+            "advisor reply must be a JSON object with 'summary' and 'picks'"
+        )
+    summary = data.get("summary")
+    picks = data.get("picks")
+    if not isinstance(summary, str) or not isinstance(picks, list):
+        raise ValueError(  # noqa: TRY004 - every parse failure is a ValueError for the caller
+            "advisor reply must contain a 'summary' string and a 'picks' list"
+        )
+
+    headings = tuple(re.findall(r"^##\s+(.+?)\s*$", summary, re.MULTILINE))
+    if headings != ADVISOR_HEADINGS:
+        raise ValueError(f"summary headings must be exactly {ADVISOR_HEADINGS!r}")
+
+    allowed = {str(symbol).upper() for symbol in allowed_symbols}
+    parsed: list[AdvisorPick] = []
+    seen: set[str] = set()
+    for item in picks:
+        if not isinstance(item, Mapping):
+            continue
+        raw_symbol = item.get("symbol")
+        if not isinstance(raw_symbol, str):
+            continue
+        symbol = raw_symbol.strip().upper()
+        if symbol in seen or symbol not in allowed:
+            continue
+        weight = _number(item.get("weight"))
+        if weight is None or weight < 0:
+            raise ValueError(
+                f"invalid weight for {symbol}: must be finite and non-negative"
+            )
+        reason = item.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            raise ValueError(f"empty reason for {symbol}")
+        seen.add(symbol)
+        parsed.append(AdvisorPick(symbol, weight, reason.strip()))
+
+    if not parsed:
+        raise ValueError("no valid picks in advisor reply")
+    return AdvisorReport(summary=summary, picks=tuple(parsed))
 
 
 def _num(value: Any) -> str:
