@@ -33,8 +33,10 @@ UNIVERSE_PAGE_SIZE = 100_000
 
 __all__ = [
     "SYMBOL_MAX_TOKENS",
+    "render_advisor_report",
     "render_llm_report",
     "render_symbol_report",
+    "request_advisor_report",
     "symbol_report_prompt_for",
     "symbol_report_prompt_parts",
 ]
@@ -58,6 +60,60 @@ def _cached_report(
         system_instruction=system_instruction,
         max_tokens=max_tokens,
     )
+
+
+def request_advisor_report(prompt: str, api_key: str, model: str) -> str:
+    """Request one advisor reply using the dedicated advisor instruction and budget."""
+    return _cached_report(
+        prompt,
+        api_key,
+        model,
+        report.ADVISOR_SYSTEM_INSTRUCTION,
+        report.ADVISOR_MAX_TOKENS,
+    )
+
+
+def render_advisor_report(
+    *,
+    scope_key: str,
+    heading: str,
+    generate_clicked: bool,
+    generate_error: str | None,
+    cap_warning: bool = False,
+) -> None:
+    """Display-only drawer for the advisor result stored under `scope_key`.
+
+    The accepted `generate_clicked` flag is unused: generation belongs to the
+    caller, so this drawer never renders a second Generate button. It only shows
+    the stored report (or the raw reply when parsing failed), the Debug prompt
+    toggle, and the relevant warnings.
+    """
+    _ = generate_clicked  # display-only: the caller owns generation
+    model = os.environ.get("OPENROUTER_MODEL") or report.REPORT_MODEL
+    state = st.session_state.get(scope_key)
+    with st.expander(heading, expanded=bool(state), key=f"{scope_key}-report"):
+        st.caption(f"Model: {model}")
+        if generate_error:
+            st.error(generate_error)
+        if isinstance(state, dict):
+            parsed = state.get("report")
+            if parsed is not None:
+                st.markdown(parsed.summary)
+            else:
+                raw = state.get("raw") or ""
+                st.code(raw, language="text")
+            shortfall = state.get("shortfall")
+            if shortfall:
+                st.warning(
+                    f"{shortfall} requested picks were unavailable; "
+                    "the report shows what the model supplied."
+                )
+        if cap_warning:
+            st.warning(report.ADVISOR_CAP_WARNING)
+        if st.toggle("Debug: prompt sent to OpenRouter", key=f"{scope_key}-debug"):
+            shown_prompt = state.get("prompt", "") if isinstance(state, dict) else ""
+            with st.container(height=180, border=True):
+                st.code(shown_prompt, language="text")
 
 
 def render_llm_report(

@@ -11,6 +11,7 @@ numbers can be reproduced offline.
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 import pandas as pd  # type: ignore[import-untyped]
@@ -44,6 +45,22 @@ _WIDGET_KEYS = (
 )
 _LABEL_TO_KEY = {label: key for key, label in REBALANCE_LABELS.items()}
 _ALLOCATION_MODES = {"percent": "Percent", "amount": "Fixed amount"}
+
+__all__ = [
+    "DEFAULT_BENCHMARKS",
+    "DEFAULT_SYMBOLS",
+    "PORTFOLIO_VISUALIZER_URL",
+    "default_settings",
+    "format_allocation",
+    "holdings_settings",
+    "holdings_settings_from_summary",
+    "parse_portfolio",
+    "parse_symbols",
+    "parse_weights",
+    "queue_backtest_settings",
+    "render_backtest_tab",
+    "run_configured_backtest",
+]
 
 
 def _cadence_label(key: str) -> str:
@@ -165,6 +182,19 @@ def default_settings() -> dict[str, Any]:
         "allocation_mode": "percent",
         "contribution": 500.0,
         "contribution_frequency": "monthly",
+    }
+
+
+def queue_backtest_settings(
+    settings: Mapping[str, Any],
+    session_state: MutableMapping[str, Any] | None = None,
+) -> None:
+    """Stage settings for the backtest tab to load on its next render."""
+    target = st.session_state if session_state is None else session_state
+    target[_PENDING_LOAD_KEY] = {
+        **default_settings(),
+        **dict(settings),
+        "allocation_mode": "percent",
     }
 
 
