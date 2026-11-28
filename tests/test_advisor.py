@@ -65,3 +65,28 @@ def test_parse_advisor_reply_rejects_empty_picks():
     text = _reply(_summary(), [{"symbol": "ZZZ", "weight": 10, "reason": "unknown"}])
     with pytest.raises(ValueError, match="no valid picks"):
         parse_advisor_reply(text, {"AAA"})
+
+
+from stonks.report import advisor_report_prompt
+
+
+def test_advisor_prompt_uses_only_supplied_universe_and_holdings():
+    rows = [
+        {"symbol": "AAA", "price": 10, "pe_ratio": 12, "industry": "Software"},
+        {"symbol": "BBB", "price": 20, "pe_ratio": 18, "industry": "Hardware"},
+    ]
+    holdings = [
+        {
+            "symbol": "HLD",
+            "weight_pct": 60.0,
+            "industry": "Energy",
+            "correlation": None,
+        },
+    ]
+    prompt = advisor_report_prompt(rows, 5, holdings, 0.42)
+    assert "AAA" in prompt and "BBB" in prompt and "HLD" in prompt
+    assert "ZZZ" not in prompt
+    assert "5" in prompt
+    assert "0.42" in prompt
+    assert "JSON" in prompt
+    assert all(heading in prompt for heading in ADVISOR_HEADINGS)

@@ -36,6 +36,7 @@ __all__ = [
     "SYSTEM_INSTRUCTION",
     "AdvisorPick",
     "AdvisorReport",
+    "advisor_report_prompt",
     "dossier_block",
     "explain_error",
     "parse_advisor_reply",
@@ -525,6 +526,75 @@ def screener_report_prompt(
     for title, key, label in _LEADERBOARDS:
         sections.extend([f"{title} (highest first):", _leaderboard(rows, key, label)])
     return REPORT_SECTIONS + "\n".join(sections)
+
+
+def advisor_report_prompt(
+    rows: Sequence[Mapping[str, Any]],
+    pick_count: int,
+    holdings: Sequence[Mapping[str, Any]],
+    correlation_factor: float | None,
+) -> str:
+    """The candidate universe, requested picks and holdings as prompt tables.
+
+    Only the supplied candidate rows and holdings reach the prompt, so the
+    advisor cannot rank a symbol the user never supplied. A missing screener
+    field is named rather than guessed, and the correlation factor is passed
+    through verbatim -- including `None` -- so the advisor cannot invent one.
+    """
+    fields = [
+        (key, label)
+        for key, label in _screener_columns()
+        if any(key in row for row in rows)
+    ]
+    request = _md_table(
+        ["Metric", "Value"],
+        [
+            ("Requested picks", str(pick_count)),
+            ("Candidate rows", str(len(rows))),
+            ("Holding rows", str(len(holdings))),
+            (
+                "Correlation factor",
+                "None" if correlation_factor is None else str(correlation_factor),
+            ),
+        ],
+    )
+    candidates = _md_table(
+        ["Symbol", *[label for _, label in fields]],
+        [
+            (
+                str(row.get("symbol") or "-"),
+                *[_value_text(row.get(key)) for key, _ in fields],
+            )
+            for row in rows
+        ],
+    )
+    holdings_table = _md_table(
+        ["Symbol", "Weight %", "Industry", "Correlation"],
+        [
+            (
+                str(holding.get("symbol") or "-"),
+                _value_text(holding.get("weight_pct")),
+                _value_text(holding.get("industry")),
+                _value_text(holding.get("correlation")),
+            )
+            for holding in holdings
+        ],
+    )
+    instruction = (
+        "Return ONLY one JSON object with exactly two keys: `summary` (a "
+        "markdown string) and `picks` (an array of objects with `symbol`, "
+        "`weight` and `reason`). Choose picks only from the candidate symbols "
+        "below; do not introduce any other symbol. Cite every figure with its "
+        "source row and field.\n\n"
+    )
+    data = "\n\n".join(
+        [
+            "Request:\n" + request,
+            "Candidates:\n" + candidates,
+            "Holdings:\n" + holdings_table,
+        ]
+    )
+    return instruction + ADVISOR_SECTIONS + "\nData:\n" + data
 
 
 _STATEMENT_LABELS: dict[str, str] = {
