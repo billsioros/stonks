@@ -140,3 +140,24 @@ def test_handoff_uses_resulting_allocation_and_does_not_write_positions(
     assert settings["initial"] == pytest.approx(125.0)
     assert settings["contribution"] == 0.0
     assert store.get_positions() == before
+
+
+def test_no_priced_holdings_shows_warning_and_disabled_handoff(tmp_path, monkeypatch):
+    store = SQLiteStore(db_path=tmp_path / "adv.db")
+    store.replace_stocks([_stock("AAA")])
+    at = _app_with_db(tmp_path / "adv.db", monkeypatch)
+    at.session_state["advisor-llm-report"] = {
+        # A stored report with no picks must still reach the no-priced rail.
+        "report": AdvisorReport("## Summary\nAll six headings follow.", ()),
+        "prompt": "prompt",
+        "pick_count": 5,
+        "fingerprint": universe_fingerprint({}, ""),
+    }
+    at.run()
+    assert any(
+        "Add a priced portfolio to use what-if" in str(w.value) for w in at.warning
+    )
+    button = next(
+        button for button in at.button if button.label == "🧪 Send to backtest"
+    )
+    assert button.proto.disabled

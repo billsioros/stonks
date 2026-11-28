@@ -465,48 +465,41 @@ def render_advisor_tab(store: SQLiteStore) -> None:
         and holding.market_usd > 0
     ]
     picks = tuple(parsed.picks)[:pick_count] if parsed is not None else ()
-
-    # The cap is decided before any checkbox is read, so the drawer can show the
-    # same warning as the rail even though the table is rendered afterwards.
-    cap_probe = build_what_if(holdings, picks, [True] * len(picks))
-    report_view.render_advisor_report(
-        scope_key=_ADVISOR_SCOPE_KEY,
-        heading=_ADVISOR_HEADING,
-        generate_clicked=clicked,
-        generate_error=error,
-        cap_warning=cap_probe.cap_applied,
-    )
-    if not picks:
-        return
-
     row_by_symbol = {
         str(row.get("symbol") or "").strip().upper(): row for row in matching
     }
+
     table_col, rail_col = st.columns([3, 2], vertical_alignment="top")
     with table_col:
-        if positions:
-            st.caption(
-                f"⚠️ marks correlation at or above "
-                f"{HIGH_CORRELATION_THRESHOLD:.2f} with the portfolio."
+        checked: list[bool] = []
+        if picks:
+            if positions:
+                st.caption(
+                    f"⚠️ marks correlation at or above "
+                    f"{HIGH_CORRELATION_THRESHOLD:.2f} with the portfolio."
+                )
+            disabled = [column for column in _ADVISOR_COLUMNS if column != "Select"]
+            if stale:
+                disabled.append("Select")
+            edited = st.data_editor(
+                pd.DataFrame(
+                    _advisor_table_rows(
+                        store, picks, row_by_symbol, summary, positions
+                    ),
+                    columns=list(_ADVISOR_COLUMNS),
+                ),
+                column_config={
+                    "Select": st.column_config.CheckboxColumn("Select", default=True)
+                },
+                disabled=disabled,
+                hide_index=True,
+                width="stretch",
+                key=_ADVISOR_TABLE_KEY,
             )
-        disabled = [column for column in _ADVISOR_COLUMNS if column != "Select"]
-        if stale:
-            disabled.append("Select")
-        edited = st.data_editor(
-            pd.DataFrame(
-                _advisor_table_rows(store, picks, row_by_symbol, summary, positions),
-                columns=list(_ADVISOR_COLUMNS),
-            ),
-            column_config={
-                "Select": st.column_config.CheckboxColumn("Select", default=True)
-            },
-            disabled=disabled,
-            hide_index=True,
-            width="stretch",
-            key=_ADVISOR_TABLE_KEY,
-        )
-        checked = [bool(value) for value in edited["Select"]]
+            checked = [bool(value) for value in edited["Select"]]
 
+    # One result drives the rail, the handoff and the drawer's cap warning, so
+    # the drawer shows the same flag as the rail after checkbox edits.
     what_if = build_what_if(holdings, picks, checked)
     with rail_col:
         _render_what_if_rail(
@@ -516,6 +509,13 @@ def render_advisor_tab(store: SQLiteStore) -> None:
             stale=stale,
             any_checked=any(checked),
         )
+    report_view.render_advisor_report(
+        scope_key=_ADVISOR_SCOPE_KEY,
+        heading=_ADVISOR_HEADING,
+        generate_clicked=clicked,
+        generate_error=error,
+        cap_warning=what_if.cap_applied,
+    )
 
 
 def _current_pick_count() -> int:
