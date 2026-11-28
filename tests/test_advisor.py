@@ -273,7 +273,7 @@ def test_render_advisor_report_shows_summary_and_warnings():
     assert any("## Summary" in str(md.value) for md in at.markdown)
     assert any("Model:" in str(c.value) for c in at.caption)
     assert any("provider failed" in str(err.value) for err in at.error)
-    assert any("2 of the requested picks" in str(w.value) for w in at.warning)
+    assert any("2 requested picks were unavailable" in str(w.value) for w in at.warning)
     assert any("99%" in str(w.value) for w in at.warning)
     assert not at.button
 
@@ -291,7 +291,7 @@ def test_render_advisor_report_shows_raw_reply_when_parse_failed():
     )
     assert any(code.value == "NOT JSON" for code in at.code)
     assert not any("99%" in str(w.value) for w in at.warning)
-    assert not any("requested picks" in str(w.value) for w in at.warning)
+    assert not any("were unavailable" in str(w.value) for w in at.warning)
 
 
 def test_render_advisor_report_debug_toggle_shows_prompt():

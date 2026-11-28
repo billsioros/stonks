@@ -105,7 +105,7 @@ def render_advisor_report(
             shortfall = state.get("shortfall")
             if shortfall:
                 st.warning(
-                    f"Only {shortfall} of the requested picks were returned; "
+                    f"{shortfall} requested picks were unavailable; "
                     "the report shows what the model supplied."
                 )
         if cap_warning:
