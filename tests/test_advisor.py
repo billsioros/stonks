@@ -200,3 +200,112 @@ def test_queue_backtest_settings_defaults_to_streamlit_session_state(monkeypatch
     pending = state["backtest_pending_load"]
     assert pending["symbols"] == ["AAA"]
     assert pending["allocation_mode"] == "percent"
+
+
+from stonks import report_view
+from stonks.report import ADVISOR_MAX_TOKENS, ADVISOR_SYSTEM_INSTRUCTION
+
+
+def test_request_advisor_report_uses_advisor_instruction(monkeypatch):
+    seen = {}
+
+    def fake_cached(prompt, api_key, model, system_instruction, max_tokens):
+        seen.update(
+            prompt=prompt,
+            api_key=api_key,
+            model=model,
+            system_instruction=system_instruction,
+            max_tokens=max_tokens,
+        )
+        return "{}"
+
+    monkeypatch.setattr(report_view, "_cached_report", fake_cached)
+    assert report_view.request_advisor_report("prompt", "key", "model") == "{}"
+    assert seen == {
+        "prompt": "prompt",
+        "api_key": "key",
+        "model": "model",
+        "system_instruction": ADVISOR_SYSTEM_INSTRUCTION,
+        "max_tokens": ADVISOR_MAX_TOKENS,
+    }
+
+
+from streamlit.testing.v1 import AppTest
+
+_DRAWER_APP = """
+import streamlit as st
+from stonks.report_view import render_advisor_report
+
+render_advisor_report(
+    scope_key="advisor-llm-report",
+    heading="🤖 AI report",
+    generate_clicked=False,
+    generate_error=st.session_state["drawer_error"],
+    cap_warning=st.session_state["drawer_cap"],
+)
+"""
+
+
+def _drawer(state: dict, *, error: str | None = None, cap: bool = False) -> AppTest:
+    at = AppTest.from_string(_DRAWER_APP, default_timeout=180)
+    at.session_state["advisor-llm-report"] = state
+    at.session_state["drawer_error"] = error
+    at.session_state["drawer_cap"] = cap
+    at.run()
+    assert not at.exception, at.exception
+    return at
+
+
+def test_render_advisor_report_shows_summary_and_warnings():
+    at = _drawer(
+        {
+            "report": AdvisorReport(summary="## Summary\nPick AAA", picks=()),
+            "raw": "raw reply",
+            "prompt": "PROMPT-AAA",
+            "pick_count": 5,
+            "fingerprint": "fp",
+            "shortfall": 2,
+        },
+        error="provider failed",
+        cap=True,
+    )
+    assert any("AI report" in str(e.label) for e in at.expander)
+    assert any("## Summary" in str(md.value) for md in at.markdown)
+    assert any("Model:" in str(c.value) for c in at.caption)
+    assert any("provider failed" in str(err.value) for err in at.error)
+    assert any("2 of the requested picks" in str(w.value) for w in at.warning)
+    assert any("99%" in str(w.value) for w in at.warning)
+    assert not at.button
+
+
+def test_render_advisor_report_shows_raw_reply_when_parse_failed():
+    at = _drawer(
+        {
+            "report": None,
+            "raw": "NOT JSON",
+            "prompt": "PROMPT-RAW",
+            "pick_count": 5,
+            "fingerprint": "fp",
+            "shortfall": 0,
+        }
+    )
+    assert any(code.value == "NOT JSON" for code in at.code)
+    assert not any("99%" in str(w.value) for w in at.warning)
+    assert not any("requested picks" in str(w.value) for w in at.warning)
+
+
+def test_render_advisor_report_debug_toggle_shows_prompt():
+    at = _drawer(
+        {
+            "report": None,
+            "raw": "NOT JSON",
+            "prompt": "PROMPT-DEBUG",
+            "pick_count": 5,
+            "fingerprint": "fp",
+            "shortfall": 0,
+        }
+    )
+    toggle = next(t for t in at.toggle if "Debug" in t.label)
+    toggle.set_value(True).run()
+    assert not at.exception, at.exception
+    assert any(code.value == "PROMPT-DEBUG" for code in at.code)
