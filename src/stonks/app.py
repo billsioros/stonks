@@ -16,6 +16,7 @@ import pandas as pd  # type: ignore[import-untyped]
 import streamlit as st
 
 from stonks import config, report, report_view, sanity
+from stonks.advisor import render_advisor_tab
 from stonks.backtest_view import (
     _RESULT_KEY,
     _SETTINGS_KEY,
@@ -2252,8 +2253,8 @@ def main() -> None:
 
     # Main content tabs; alerts live in the collapsed Notifications surface
     # and cover the active screen, the watchlist and portfolio holdings.
-    tab_screener, tab_watchlist, tab_portfolio, tab_backtest = st.tabs(
-        ["📊 Screener", "⭐ Watchlist", "💼 Portfolio", "🧪 Backtest"]
+    tab_screener, tab_watchlist, tab_portfolio, tab_backtest, tab_advisor = st.tabs(
+        ["📊 Screener", "⭐ Watchlist", "💼 Portfolio", "🧪 Backtest", "🤖 Advisor"]
     )
 
     with tab_screener:
@@ -2272,6 +2273,9 @@ def main() -> None:
 
     with tab_backtest:
         render_backtest_tab(store)
+
+    with tab_advisor:
+        render_advisor_tab(store)
 
     # Footer
     st.markdown(
