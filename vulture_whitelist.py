@@ -1,6 +1,7 @@
 # Vulture whitelist for methods that are used in tests or intended for public API
 from stonks.cache import LocalCache
 
+from stonks.advisor import WhatIfResult
 from stonks.alerts import Alert, evaluate_alerts, week_bucket
 from stonks.backtest_view import parse_symbols, parse_weights
 from stonks.config import VIRTUAL_COLUMNS
@@ -137,6 +138,9 @@ is_high_correlation  # noqa: B018
 portfolio_correlation  # noqa: B018
 portfolio_correlation_factor  # noqa: B018
 VIRTUAL_COLUMNS  # noqa: B018
+WhatIfResult.after_symbols  # noqa: B018
+WhatIfResult.after_weights  # noqa: B018
+WhatIfResult.after_total  # noqa: B018
 
 buy_opportunity  # noqa: B018, F821
 get_buy_opportunities  # noqa: B018, F821

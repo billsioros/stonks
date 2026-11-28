@@ -90,3 +90,78 @@ def test_advisor_prompt_uses_only_supplied_universe_and_holdings():
     assert "0.42" in prompt
     assert "JSON" in prompt
     assert all(heading in prompt for heading in ADVISOR_HEADINGS)
+
+
+from stonks.advisor import advisor_candidate_rows, build_what_if, universe_fingerprint
+
+
+def test_build_what_if_under_100_percent():
+    result = build_what_if(
+        [("H1", 60.0), ("H2", 40.0)],
+        [AdvisorPick("AAA", 10.0, "a"), AdvisorPick("BBB", 20.0, "b")],
+        [True, True],
+    )
+    assert result.total_target_pct == pytest.approx(30.0)
+    assert result.current_total == pytest.approx(100.0)
+    assert result.added_cash == pytest.approx(42.8571428571)
+    assert result.after_total == pytest.approx(142.8571428571)
+    assert result.after_weights == pytest.approx((42.0, 28.0, 10.0, 20.0))
+    assert result.cap_applied is False
+
+
+def test_build_what_if_caps_over_100_percent():
+    result = build_what_if(
+        [("H1", 100.0)],
+        [AdvisorPick("AAA", 60.0, "a"), AdvisorPick("BBB", 60.0, "b")],
+        [True, True],
+    )
+    assert result.cap_applied is True
+    assert result.after_weights == pytest.approx((1.0, 49.5, 49.5))
+    assert result.total_target_pct == pytest.approx(99.0)
+
+
+def test_build_what_if_unchecked_pick_keeps_its_weight():
+    result = build_what_if(
+        [("H1", 60.0), ("H2", 40.0)],
+        [AdvisorPick("AAA", 10.0, "a"), AdvisorPick("BBB", 20.0, "b")],
+        [True, False],
+    )
+    assert result.after_weights == pytest.approx((54.0, 36.0, 10.0))
+    assert result.total_target_pct == pytest.approx(10.0)
+
+
+def test_build_what_if_without_holdings_has_no_rail():
+    result = build_what_if([], [AdvisorPick("AAA", 10.0, "a")], [True])
+    assert result.current_total == 0.0
+    assert result.added_cash == 0.0
+    assert result.after_symbols == ()
+
+
+def test_universe_fingerprint_tracks_filters_and_search():
+    assert universe_fingerprint({"a": 1, "b": 2}, "") == universe_fingerprint(
+        {"b": 2, "a": 1}, ""
+    )
+    assert universe_fingerprint({"a": 1}, "") != universe_fingerprint({"a": 1}, "nvda")
+
+
+def test_candidate_rows_exclude_held_symbols():
+    calls = []
+
+    class FakeStore:
+        def get_stocks(
+            self, *, filters, search_query, sort_column, sort_ascending, page, page_size
+        ):
+            calls.append((filters, search_query, page, page_size))
+            return ([{"symbol": "AAA"}, {"symbol": "HOLD"}, {"symbol": "BBB"}], 0, 3)
+
+    rows = advisor_candidate_rows(
+        FakeStore(),
+        active_filters={"pe_ratio": {"max": 20}},
+        search_query="soft",
+        sort_column=None,
+        sort_ascending=True,
+        held_symbols={"HOLD"},
+    )
+    assert [row["symbol"] for row in rows] == ["AAA", "BBB"]
+    assert calls[0][1] == "soft"
+    assert calls[0][3] >= 3
