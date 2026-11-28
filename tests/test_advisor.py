@@ -165,3 +165,38 @@ def test_candidate_rows_exclude_held_symbols():
     assert [row["symbol"] for row in rows] == ["AAA", "BBB"]
     assert calls[0][1] == "soft"
     assert calls[0][3] >= 3
+
+
+from stonks.backtest_view import queue_backtest_settings
+
+
+def test_queue_backtest_settings_merges_defaults_and_forces_percent_mode():
+    state = {}
+    queue_backtest_settings(
+        {
+            "symbols": ["H1", "AAA"],
+            "weights": [70.0, 30.0],
+            "initial": 142.857,
+            "contribution": 0.0,
+        },
+        state,
+    )
+    pending = state["backtest_pending_load"]
+    assert pending["symbols"] == ["H1", "AAA"]
+    assert pending["weights"] == [70.0, 30.0]
+    assert pending["initial"] == 142.857
+    assert pending["contribution"] == 0.0
+    assert pending["allocation_mode"] == "percent"
+    assert pending["rebalance"] == "annual"
+
+
+from stonks import backtest_view
+
+
+def test_queue_backtest_settings_defaults_to_streamlit_session_state(monkeypatch):
+    state = {}
+    monkeypatch.setattr(backtest_view.st, "session_state", state)
+    queue_backtest_settings({"symbols": ["AAA"], "allocation_mode": "amount"})
+    pending = state["backtest_pending_load"]
+    assert pending["symbols"] == ["AAA"]
+    assert pending["allocation_mode"] == "percent"
