@@ -3,8 +3,8 @@
 Candidates come from the same screener query that feeds the table, and every
 portfolio number is derived from supplied holdings so the AI never supplies
 one. `render_advisor_tab` owns the Streamlit controls and the single Generate
-button; the provider call itself stays in `report_view`, and no portfolio or
-store writes ever happen here.
+button; the provider call itself stays in `report_view`, and no stored-position
+writes happen here. Correlation helpers may populate their cache.
 """
 
 from __future__ import annotations
@@ -73,7 +73,6 @@ _ADVISOR_COLUMNS: tuple[str, ...] = (
 _ADVISOR_TABLE_KEY = "advisor_picks_table"
 _ADVISOR_BACKTEST_KEY = "advisor_send_backtest"
 _MISSING = "—"
-_CAP_WARNING = "Suggested weights totalled over 100%, so they were scaled to 99%."
 
 
 @dataclass(frozen=True)
@@ -358,7 +357,7 @@ def _render_what_if_rail(
         st.markdown("\n".join(lines))
 
     if what_if.cap_applied:
-        st.warning(_CAP_WARNING)
+        st.warning(report.ADVISOR_CAP_WARNING)
 
     can_handoff = not stale and any_checked and what_if.current_total > 0
     if st.button(
@@ -456,6 +455,13 @@ def render_advisor_tab(store: SQLiteStore) -> None:
         stale = _is_stale(state, pick_count=pick_count, fingerprint=fingerprint)
 
     parsed = state.get("report") if isinstance(state, Mapping) else None
+    # A stale result was generated for its own pick count, so keep showing all
+    # of those picks instead of truncating them to the newly selected count.
+    display_count = pick_count
+    if stale and isinstance(state, Mapping):
+        stored_count = state.get("pick_count")
+        if isinstance(stored_count, int) and not isinstance(stored_count, bool):
+            display_count = stored_count
     summary, _stale_fx = portfolio_snapshot(store, include_history=False)
     holdings = [
         (holding.symbol, holding.market_usd)
@@ -464,7 +470,7 @@ def render_advisor_tab(store: SQLiteStore) -> None:
         and math.isfinite(holding.market_usd)
         and holding.market_usd > 0
     ]
-    picks = tuple(parsed.picks)[:pick_count] if parsed is not None else ()
+    picks = tuple(parsed.picks)[:display_count] if parsed is not None else ()
     row_by_symbol = {
         str(row.get("symbol") or "").strip().upper(): row for row in matching
     }
@@ -537,6 +543,25 @@ def _is_stale(state: Any, *, pick_count: int, fingerprint: str) -> bool:
     )
 
 
+def _store_generation_failure(
+    scope_key: str,
+    *,
+    prompt: str,
+    raw: str,
+    pick_count: int,
+    fingerprint: str,
+) -> None:
+    """Store the same six keys on any failure, keeping whatever was gathered."""
+    st.session_state[scope_key] = {
+        "report": None,
+        "raw": raw,
+        "prompt": prompt,
+        "pick_count": pick_count,
+        "fingerprint": fingerprint,
+        "shortfall": pick_count,
+    }
+
+
 def _generate_advisor_report(
     store: SQLiteStore,
     *,
@@ -545,10 +570,13 @@ def _generate_advisor_report(
     positions: list[dict[str, Any]],
     fingerprint: str,
 ) -> str | None:
-    """Run one Generate click: build prompt, request, parse, store six keys.
+    """Run one Generate click through three phases: prompt, provider, parse.
 
-    Returns the drawer error string (`report.explain_error(exc)`) on provider
-    or parse failure; the raw reply and prompt are kept when available.
+    Each phase fails on its own so the drawer can name the phase that failed.
+    Only provider exceptions use `report.explain_error`; prompt-build and parse
+    failures return a phase-specific message. Every failure stores the six keys
+    with `report=None`, the `prompt`/`raw` gathered so far, and a shortfall
+    equal to the requested pick count.
     """
     scope_key = _ADVISOR_SCOPE_KEY
     prompt = ""
@@ -557,36 +585,58 @@ def _generate_advisor_report(
         prompt = _build_advisor_prompt(
             store, candidates=candidates, pick_count=pick_count, positions=positions
         )
+    except Exception as exc:  # noqa: BLE001 - keep the tab usable on any failure
+        _store_generation_failure(
+            scope_key,
+            prompt="",
+            raw="",
+            pick_count=pick_count,
+            fingerprint=fingerprint,
+        )
+        return f"Could not build advisor prompt: {exc}"
+
+    try:
         raw = report_view.request_advisor_report(
             prompt,
             api_key=os.environ.get("OPENROUTER_API_KEY") or "",
             model=os.environ.get("OPENROUTER_MODEL") or report.REPORT_MODEL,
         )
+    except Exception as exc:  # noqa: BLE001 - provider errors are shown, never raised
+        _store_generation_failure(
+            scope_key,
+            prompt=prompt,
+            raw="",
+            pick_count=pick_count,
+            fingerprint=fingerprint,
+        )
+        return report.explain_error(exc)
+
+    try:
         allowed_symbols = {
             str(row.get("symbol") or "").strip().upper()
             for row in candidates
             if str(row.get("symbol") or "").strip()
         }
         parsed = report.parse_advisor_reply(raw, allowed_symbols)
-        shortfall = max(0, pick_count - len(parsed.picks))
-        st.session_state[scope_key] = {
-            "report": parsed,
-            "raw": raw,
-            "prompt": prompt,
-            "pick_count": pick_count,
-            "fingerprint": fingerprint,
-            "shortfall": shortfall,
-        }
-    except Exception as exc:  # noqa: BLE001 - never crash the tab on provider/parse failure
-        st.session_state[scope_key] = {
-            "report": None,
-            "raw": raw,
-            "prompt": prompt,
-            "pick_count": pick_count,
-            "fingerprint": fingerprint,
-            "shortfall": pick_count,
-        }
-        return report.explain_error(exc)
+    except Exception as exc:  # noqa: BLE001 - show the raw reply plus a parse error
+        _store_generation_failure(
+            scope_key,
+            prompt=prompt,
+            raw=raw,
+            pick_count=pick_count,
+            fingerprint=fingerprint,
+        )
+        return f"Could not parse advisor response: {exc}"
+
+    shortfall = max(0, pick_count - len(parsed.picks))
+    st.session_state[scope_key] = {
+        "report": parsed,
+        "raw": raw,
+        "prompt": prompt,
+        "pick_count": pick_count,
+        "fingerprint": fingerprint,
+        "shortfall": shortfall,
+    }
     return None
 
 
@@ -605,7 +655,12 @@ def _build_advisor_prompt(
     summary, _stale = portfolio_snapshot(store, include_history=False)
     symbols, weights = backtest_allocation(summary)
     weight_by_symbol = dict(zip(symbols, weights))
-    industry_by_symbol = _screener_industry(store, symbols)
+    # Industry labels are optional prompt context; a failed lookup must not
+    # abort generation, so fall back to an empty (all-missing) map.
+    try:
+        industry_by_symbol = _screener_industry(store, symbols)
+    except Exception:  # noqa: BLE001 - industry is non-essential context
+        industry_by_symbol = {}
 
     holdings: list[dict[str, Any]] = []
     for holding in summary.holdings:

@@ -26,6 +26,7 @@ from stonks.config import COLUMN_DISPLAY_NAMES
 from stonks.dossier import Check, Dossier, gate_status
 
 __all__ = [
+    "ADVISOR_CAP_WARNING",
     "ADVISOR_HEADINGS",
     "ADVISOR_MAX_TOKENS",
     "ADVISOR_SECTIONS",
@@ -240,6 +241,7 @@ ADVISOR_SYSTEM_INSTRUCTION: str = (
 )
 
 ADVISOR_MAX_TOKENS: int = 2048
+ADVISOR_CAP_WARNING = "Suggested weights were scaled to 99%."
 
 
 @dataclass(frozen=True)

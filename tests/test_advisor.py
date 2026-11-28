@@ -67,6 +67,11 @@ def test_parse_advisor_reply_rejects_empty_picks():
         parse_advisor_reply(text, {"AAA"})
 
 
+def test_parse_advisor_reply_rejects_malformed_json():
+    with pytest.raises(ValueError, match="not valid JSON"):
+        parse_advisor_reply("{not json", {"AAA"})
+
+
 from stonks.report import advisor_report_prompt
 
 
@@ -128,6 +133,18 @@ def test_build_what_if_unchecked_pick_keeps_its_weight():
     )
     assert result.after_weights == pytest.approx((54.0, 36.0, 10.0))
     assert result.total_target_pct == pytest.approx(10.0)
+
+
+def test_build_what_if_zero_picks_leaves_allocation_unchanged():
+    result = build_what_if(
+        [("H1", 60.0), ("H2", 40.0)],
+        [AdvisorPick("AAA", 10.0, "a")],
+        [False],
+    )
+    assert result.after_symbols == result.current_symbols
+    assert result.after_weights == pytest.approx(result.current_weights)
+    assert result.added_cash == 0.0
+    assert result.cap_applied is False
 
 
 def test_build_what_if_without_holdings_has_no_rail():

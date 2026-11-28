@@ -34,6 +34,22 @@ def _app_with_db(db_path, monkeypatch) -> AppTest:
     return at
 
 
+def _stored_state(picks, *, pick_count=5) -> dict:
+    return {
+        "report": AdvisorReport("## Summary\nAll six headings follow.", tuple(picks)),
+        "raw": "raw reply",
+        "prompt": "prompt with candidate rows",
+        "pick_count": pick_count,
+        "fingerprint": universe_fingerprint({}, ""),
+        "shortfall": 0,
+    }
+
+
+def _editor_table(at):
+    editors = getattr(at, "data_editor", None) or at.dataframe
+    return next(item for item in editors if "Weight %" in item.value.columns)
+
+
 def test_advisor_tab_comes_after_backtest(tmp_path, monkeypatch):
     at = _app_with_db(tmp_path / "adv.db", monkeypatch)
     assert [tab.label for tab in at.tabs] == [
@@ -161,3 +177,142 @@ def test_no_priced_holdings_shows_warning_and_disabled_handoff(tmp_path, monkeyp
         button for button in at.button if button.label == "🧪 Send to backtest"
     )
     assert button.proto.disabled
+
+
+def test_generate_malformed_reply_shows_parse_error_and_raw(tmp_path, monkeypatch):
+    from stonks import report_view
+
+    db_path = tmp_path / "adv.db"
+    store = SQLiteStore(db_path=db_path)
+    store.replace_stocks([_stock("AAA"), _stock("BBB"), _stock("CCC")])
+    monkeypatch.setattr(
+        report_view, "request_advisor_report", lambda *a, **k: "NOT JSON"
+    )
+    at = _app_with_db(db_path, monkeypatch)
+    at.session_state["advisor_pick_count"] = 3
+    next(
+        button for button in at.button if button.label == "✨ Generate recommendations"
+    ).click().run()
+    assert not at.exception, at.exception
+
+    assert any("Could not parse advisor response" in str(e.value) for e in at.error)
+    assert any(code.value == "NOT JSON" for code in at.code)
+    state = at.session_state["advisor-llm-report"]
+    assert state["report"] is None
+    assert state["raw"] == "NOT JSON"
+    assert "AAA" in state["prompt"]
+    assert state["shortfall"] == 3
+
+
+def test_zero_matching_rows_skips_provider(tmp_path, monkeypatch):
+    from stonks import report_view
+
+    def _forbidden(*args, **kwargs):
+        raise AssertionError("provider called with zero matching rows")
+
+    monkeypatch.setattr(report_view, "request_advisor_report", _forbidden)
+    at = _app_with_db(tmp_path / "adv.db", monkeypatch)
+    assert any(
+        "No stocks match your current filters" in str(w.value) for w in at.warning
+    )
+    assert not any(
+        button.label == "✨ Generate recommendations" for button in at.button
+    )
+
+
+def test_all_matching_symbols_already_held_skips_provider(tmp_path, monkeypatch):
+    from stonks import report_view
+
+    def _forbidden(*args, **kwargs):
+        raise AssertionError("provider called with no new candidates")
+
+    db_path = tmp_path / "adv.db"
+    store = SQLiteStore(db_path=db_path)
+    store.replace_stocks([_stock("AAA"), _stock("BBB")])
+    store.add_position("AAA", 1, 100.0)
+    store.add_position("BBB", 1, 100.0)
+    monkeypatch.setattr(report_view, "request_advisor_report", _forbidden)
+    at = _app_with_db(db_path, monkeypatch)
+    assert any(
+        "No new stocks match your current filters" in str(w.value) for w in at.warning
+    )
+    assert not any(
+        button.label == "✨ Generate recommendations" for button in at.button
+    )
+
+
+def test_pick_count_change_marks_stale_disables_handoff_and_keeps_picks(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "adv.db"
+    store = SQLiteStore(db_path=db_path)
+    store.replace_stocks(
+        [
+            _stock("HLD", 100.0),
+            _stock("AAA", 50.0),
+            _stock("BBB", 50.0),
+            _stock("CCC", 50.0),
+        ]
+    )
+    store.add_position("HLD", 1, 100.0)
+    at = _app_with_db(db_path, monkeypatch)
+    at.session_state["advisor-llm-report"] = _stored_state(
+        [
+            AdvisorPick("AAA", 10.0, "a"),
+            AdvisorPick("BBB", 10.0, "b"),
+            AdvisorPick("CCC", 10.0, "c"),
+        ]
+    )
+    at.run()
+    assert not any("stale" in str(w.value).lower() for w in at.warning)
+    fresh = next(
+        button for button in at.button if button.label == "🧪 Send to backtest"
+    )
+    assert not fresh.proto.disabled
+
+    at.session_state["advisor_pick_count"] = 1
+    at.run()
+    assert any("stale" in str(w.value).lower() for w in at.warning)
+    stale = next(
+        button for button in at.button if button.label == "🧪 Send to backtest"
+    )
+    assert stale.proto.disabled
+    assert len(_editor_table(at).value) == 3
+
+
+def test_sort_change_alone_does_not_mark_results_stale(tmp_path, monkeypatch):
+    db_path = tmp_path / "adv.db"
+    store = SQLiteStore(db_path=db_path)
+    store.replace_stocks([_stock("HLD", 100.0), _stock("AAA", 50.0)])
+    store.add_position("HLD", 1, 100.0)
+    at = _app_with_db(db_path, monkeypatch)
+    at.session_state["advisor-llm-report"] = _stored_state(
+        [AdvisorPick("AAA", 20.0, "a")]
+    )
+    at.run()
+    assert not any("stale" in str(w.value).lower() for w in at.warning)
+
+    sort = next(box for box in at.selectbox if box.label == "📊 Sort by")
+    sort.set_value("Stock Price").run()
+    assert not at.exception, at.exception
+    assert not any("stale" in str(w.value).lower() for w in at.warning)
+    button = next(
+        button for button in at.button if button.label == "🧪 Send to backtest"
+    )
+    assert not button.proto.disabled
+
+
+def test_cap_warning_reaches_rail_and_drawer(tmp_path, monkeypatch):
+    db_path = tmp_path / "adv.db"
+    store = SQLiteStore(db_path=db_path)
+    store.replace_stocks(
+        [_stock("HLD", 100.0), _stock("AAA", 50.0), _stock("BBB", 50.0)]
+    )
+    store.add_position("HLD", 1, 100.0)
+    at = _app_with_db(db_path, monkeypatch)
+    at.session_state["advisor-llm-report"] = _stored_state(
+        [AdvisorPick("AAA", 60.0, "a"), AdvisorPick("BBB", 60.0, "b")]
+    )
+    at.run()
+    assert not at.exception, at.exception
+    assert len([w for w in at.warning if "99%" in str(w.value)]) == 2

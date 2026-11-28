@@ -109,9 +109,7 @@ def render_advisor_report(
                     "the report shows what the model supplied."
                 )
         if cap_warning:
-            st.warning(
-                "Suggested weights totalled over 100%, so they were scaled to 99%."
-            )
+            st.warning(report.ADVISOR_CAP_WARNING)
         if st.toggle("Debug: prompt sent to OpenRouter", key=f"{scope_key}-debug"):
             shown_prompt = state.get("prompt", "") if isinstance(state, dict) else ""
             with st.container(height=180, border=True):
